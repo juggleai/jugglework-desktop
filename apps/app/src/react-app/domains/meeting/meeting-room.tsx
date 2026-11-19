@@ -9,6 +9,7 @@ import { MeetingCode } from "./meeting-code";
 import { MeetingInvitePicker, MeetingMemberAvatar } from "./meeting-invite-picker";
 import { MeetingPermissionNotice, MeetingPermissionRestart } from "./permission-notice";
 import { chooseMeetingScreenSource, focusMeetingWindow, markMeetingMiniReady } from "@/app/lib/desktop";
+import { useMeetingAnnotation } from "./use-meeting-annotation";
 import { syncMeetingWindowStyles } from "./window-styles";
 import { guardMeetingWindowClose } from "./window-lifecycle";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -189,6 +190,8 @@ export function MeetingRoomHost() {
   // The local whiteboard replaces the local share preview in the stage.
   const localWhiteboard = s.whiteboard;
   const canShareWhiteboard = !!window.__JUGGLEWORK_ELECTRON__?.invokeDesktop;
+  // Only a whole-screen share (decided by the main process) offers annotation.
+  const annotation = useMeetingAnnotation(sharing && !localWhiteboard && s.shareKind === "screen", setMessage);
   // The share button's run() stays busy until the cancelled capture settles,
   // so this cannot go through run(); the store waits for that capture itself.
   function chooseWhiteboard() {
@@ -283,6 +286,7 @@ export function MeetingRoomHost() {
         <button title="展开会议" aria-label="展开会议" onClick={() => focusWindow("meeting")}><Icon name="expand" /></button>
         <button className={!s.mic ? "device-off" : ""} title={s.mic ? "静音" : "开启麦克风"} aria-label={s.mic ? "静音" : "开启麦克风"} disabled={deviceBusy || s.phase !== "joined"} onClick={() => void changeDevice("mic")}><Icon name="mic" off={!s.mic} /></button>
         <button className={!s.camera ? "device-off" : ""} title={s.camera ? "关闭摄像头" : "开启摄像头"} aria-label={s.camera ? "关闭摄像头" : "开启摄像头"} disabled={deviceBusy || s.phase !== "joined"} onClick={() => void changeDevice("camera")}><Icon off={!s.camera} /></button>
+        {annotation.available ? <button className={annotation.active ? "annotation-on" : ""} title={annotation.active ? "退出标注" : "标注"} aria-label={annotation.active ? "退出标注" : "标注"} aria-pressed={annotation.active} onClick={annotation.toggle}><Icon name="annotate" /></button> : null}
         <button className="compact-hangup" title="离开会议" aria-label="离开会议" onClick={() => { focusWindow("meeting"); setLeaving(true); }}><Icon name="hangup" /></button>
       </div>
       {message || s.error ? <div className="compact-error"><MeetingPermissionNotice message={message || s.error || ""} onClose={() => { setMessage(""); useMeetingStore.setState({ error: null }); }} /></div> : null}
@@ -487,6 +491,13 @@ export function MeetingRoomHost() {
             <Icon name="screen" />
             {sharing || localWhiteboard ? "停止共享" : "共享屏幕"}
           </button>
+          {annotation.available ? (
+            <button className="control" aria-pressed={annotation.active} onClick={annotation.toggle}
+              title={annotation.active ? "退出标注" : "在共享的屏幕上标注"}>
+              <Icon name="annotate" />
+              {annotation.active ? "退出标注" : "标注"}
+            </button>
+          ) : null}
           <button className="control" onClick={() => setInvite(true)} title="邀请参会成员">
             <Icon name="plus" />
             邀请

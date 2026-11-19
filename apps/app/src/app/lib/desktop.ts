@@ -842,3 +842,12 @@ export function saveMeetingWhiteboard(input: { meetingId: string; whiteboardId: 
 export function exportMeetingWhiteboard(input: { title?: string; kind: "png" | "excalidraw"; data: string }) {
   return invokeElectronHelper("meetingWhiteboardExport", input);
 }
+export function readMeetingAnnotationState() {
+  return invokeElectronHelper("meetingAnnotationState");
+}
+export function openMeetingAnnotation() {
+  return invokeElectronHelper("meetingAnnotationOpen");
+}
+export function closeMeetingAnnotation(input?: { shareStopped?: boolean }) {
+  return invokeElectronHelper("meetingAnnotationClose", input);
+}

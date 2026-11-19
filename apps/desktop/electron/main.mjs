@@ -1,4 +1,5 @@
 import { createMeetingScreenPicker } from "./meeting-screen-picker.mjs";
+import { createMeetingAnnotation } from "./meeting-annotation.mjs";
 import { createWhiteboardStore } from "./whiteboard-store.mjs";
 import { createWhiteboardCommands } from "./whiteboard-ipc.mjs";
 import { installMeetingDiagnostics } from "./meeting-diagnostics.mjs";
@@ -971,7 +972,31 @@ const meetingWhiteboard = createWhiteboardCommands({
   getMainWindow: () => mainWindow,
   getMeetingWindow: () => meetingWindow,
 });
-const meetingScreenPicker = createMeetingScreenPicker({ desktopCapturer, getMainWindow: () => mainWindow, getMeetingWindow: () => meetingWindow });
+const meetingScreenPicker = createMeetingScreenPicker({ desktopCapturer, getMainWindow: () => mainWindow, getMeetingWindow: () => meetingWindow,
+  getDisplays: () => screen.getAllDisplays() });
+const meetingAnnotation = createMeetingAnnotation({
+  BrowserWindow,
+  // `screen` is only usable after app ready; resolve it lazily.
+  screen: {
+    getAllDisplays: () => screen.getAllDisplays(),
+    on: (/** @type {any} */ name, /** @type {any} */ listener) => screen.on(name, listener),
+    removeListener: (/** @type {any} */ name, /** @type {any} */ listener) => screen.removeListener(name, listener),
+  },
+  ipcMain,
+  preloadPath: path.join(__dirname, "annotation-preload.cjs"),
+  getMainWindow: () => mainWindow,
+  getMeetingWindow: () => meetingWindow,
+  getSharedDisplayId: () => meetingScreenPicker.sharedDisplayId(),
+  clearShared: () => meetingScreenPicker.clearShared(),
+  loadPage: async (window, view) => {
+    const url = process.env.JUGGLEWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
+    if (url) {
+      const target = new URL("/annotation.html", url);
+      target.searchParams.set("view", view);
+      await window.loadURL(target.href);
+    } else await window.loadFile(app.isPackaged ? path.join(process.resourcesPath, "app-dist/annotation.html") : path.resolve(__dirname, "../../app/dist/annotation.html"), { query: { view } });
+  },
+});
 /** @type {(() => {storageAvailable: boolean, records: Array<Record<string, unknown>>}) & {record?: (event: string, data?: Record<string, unknown>) => void}} */
 let readMeetingNativeDiagnostics = () => ({ storageAvailable: false, records: [] });
 let runtimeHealthMonitor = null;
@@ -2530,6 +2555,9 @@ const desktopCommandHandlers = {
   "meetingWhiteboardOpen": (event, input) => meetingWhiteboard.open(event, input),
   "meetingWhiteboardSave": (event, input) => meetingWhiteboard.save(event, input),
   "meetingWhiteboardExport": (event, input) => meetingWhiteboard.exportFile(event, input),
+  "meetingAnnotationState": async (event) => meetingAnnotation.state(event),
+  "meetingAnnotationOpen": (event) => meetingAnnotation.open(event),
+  "meetingAnnotationClose": async (event, input) => meetingAnnotation.close(event, { shareStopped: input?.shareStopped === true }),
   "toonFactoryOpen": async (event, ...args) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可打开漫剧工厂");
     return toonFactoryRuntime.open(args[0]);

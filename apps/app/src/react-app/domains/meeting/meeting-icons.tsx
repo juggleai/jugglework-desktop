@@ -2,7 +2,7 @@ import type { SVGProps } from "react";
 import {
   Monitor, AppWindow, RefreshCw, ArrowRight, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, Copy,
   Download, LayoutGrid, Maximize2, MessageSquare, Mic, MicOff,
-  PenLine, ScreenShare, ScreenShareOff, Search, Settings, UsersRound, Video, VideoOff, X, Plus,
+  Highlighter, PenLine, ScreenShare, ScreenShareOff, Search, Settings, UsersRound, Video, VideoOff, X, Plus,
 } from "lucide-react";
 
 function HangupIcon(props: SVGProps<SVGSVGElement>) {
@@ -17,7 +17,7 @@ const icons = {
   video: Video, calendar: CalendarDays, plus: Plus, close: X, mic: Mic,
   screen: ScreenShare, chat: MessageSquare, users: UsersRound, arrow: ArrowRight,
   settings: Settings, copy: Copy, check: Check, monitor: Monitor, window: AppWindow, refresh: RefreshCw,
-  whiteboard: PenLine,
+  whiteboard: PenLine, annotate: Highlighter,
 };
 export function MeetingIcon({ name = "video", off, style, ...props }:
   SVGProps<SVGSVGElement> & { name?: keyof typeof icons; off?: boolean }) {

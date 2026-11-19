@@ -80,3 +80,26 @@ for (const reason of ['closed','render-process-gone']) test(`request released wh
   (reason==='closed'?f.main:f.main.webContents).emit(reason);
   assert.deepEqual(f.answers,[null]); assert.equal(f.meeting.listenerCount('closed'),0);
 });
+test('choosing a whole screen records its display; windows and cancels do not', async () => {
+  const displays = [{ id: 1 }, { id: 7 }];
+  const f = fixture({ getDisplays: () => displays });
+  f.setSources([
+    { id: 'screen:1:0', display_id: '1', name: 'Display', thumbnail: { isEmpty: () => true } },
+    { id: 'screen:9:0', display_id: '9', name: 'Gone', thumbnail: { isEmpty: () => true } },
+    { id: 'window:2:0', name: 'Doc', thumbnail: { isEmpty: () => true } },
+  ]);
+  assert.equal(f.picker.sharedDisplayId(), null);
+  let id = f.start(); await f.picker.list(f.event, id);
+  await f.picker.choose(f.event, id, 'screen:1:0');
+  assert.equal(f.picker.sharedDisplayId(), 1);
+  // A new request (re-share) forgets the previous source until it is chosen.
+  id = f.start(); assert.equal(f.picker.sharedDisplayId(), null);
+  await f.picker.list(f.event, id); await f.picker.choose(f.event, id, 'window:2:0');
+  assert.equal(f.picker.sharedDisplayId(), null);
+  // A screen whose display_id is not a connected display is never annotatable.
+  id = f.start(); await f.picker.list(f.event, id); await f.picker.choose(f.event, id, 'screen:9:0');
+  assert.equal(f.picker.sharedDisplayId(), null);
+  id = f.start(); await f.picker.list(f.event, id); await f.picker.choose(f.event, id, 'screen:1:0');
+  f.picker.clearShared(); assert.equal(f.picker.sharedDisplayId(), null);
+  id = f.start(); await f.picker.choose(f.event, id, null); assert.equal(f.picker.sharedDisplayId(), null);
+});

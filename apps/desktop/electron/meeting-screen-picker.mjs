@@ -2,8 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 
 // Own the pending Chromium request, not an independently armed source ID.
 // Confirming a thumbnail resolves this exact request; closing never captures.
-export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getMeetingWindow, timeoutMs = 120_000 }) {
+export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getMeetingWindow, getDisplays = () => [], timeoutMs = 120_000 }) {
   let pending = null;
+  // The source the user last confirmed. Only a whole screen that maps to a
+  // connected display can be annotated; the renderer can query, never set it.
+  let shared = null;
   function notify(channel, requestId) {
     const main = getMainWindow();
     if (main && !main.isDestroyed() && !main.webContents.isDestroyed()) main.webContents.send(channel, { requestId });
@@ -33,10 +36,14 @@ export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getM
     return pending;
   }
   return {
+    /** Display id of the whole screen currently being shared, or null. */
+    sharedDisplayId: () => shared?.displayId ?? null,
+    clearShared() { shared = null; },
     handle(request, callback) {
       const main = getMainWindow();
       const owner = [main, getMeetingWindow()].find(w => w && !w.isDestroyed() && request.frame === w.webContents.mainFrame);
       if (!owner || !main || !request.userGesture || pending) { callback(null); return; }
+      shared = null;
       const current = { id: randomUUID(), owner, main, frame: request.frame, callback, allowed: new Set(), selecting: false, timer: null, cancel: null };
       current.cancel = () => finish(current);
       pending = current;
@@ -83,6 +90,8 @@ export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getM
         const source = sources.find(s => s.id === sourceId);
         if (!source) throw new Error("所选窗口已关闭，请刷新列表后重新选择。");
         if (current.owner.isDestroyed() || current.frame !== current.owner.webContents.mainFrame) { finish(current); return false; }
+        const displayId = source.id.startsWith("screen:") ? Number(source.display_id) : NaN;
+        shared = Number.isInteger(displayId) && getDisplays().some(d => d.id === displayId) ? { displayId } : null;
         finish(current, source);
         return true;
       } finally { current.selecting = false; }

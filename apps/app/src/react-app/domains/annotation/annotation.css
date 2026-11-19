@@ -1,0 +1,37 @@
+html, body, #root { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
+body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; user-select: none; }
+
+/* Canvas: fully transparent, only strokes are captured. */
+.annotation-canvas { position: fixed; inset: 0; }
+.annotation-text-editor {
+  position: absolute; min-width: 160px; max-width: 60vw; padding: 2px 4px; margin: 0;
+  border: 1.5px dashed currentColor; border-radius: 4px; outline: none; resize: none; overflow: hidden;
+  background: rgba(255, 255, 255, 0.04); line-height: 1.25; white-space: pre; field-sizing: content;
+}
+
+/* Toolbar: a single rounded bar; the window itself is transparent. */
+.annotation-toolbar {
+  box-sizing: border-box; display: flex; align-items: center; gap: 4px; width: 100%; height: 100%;
+  padding: 0 8px; border-radius: 14px; background: rgba(28, 30, 36, 0.94); color: #f3f4f6;
+  border: 1px solid rgba(255, 255, 255, 0.12); font-size: 12px;
+}
+.annotation-toolbar button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px; flex: none;
+  min-width: 30px; height: 30px; padding: 0 6px; border: 0; border-radius: 8px;
+  background: transparent; color: inherit; font: inherit; cursor: pointer;
+}
+.annotation-toolbar button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.1); }
+.annotation-toolbar button:disabled { opacity: 0.35; cursor: default; }
+.annotation-toolbar button[aria-checked="true"] { background: #3478ff; color: #fff; }
+.annotation-toolbar .grip { min-width: 20px; padding: 0; cursor: grab; color: #9ca3af; }
+.annotation-toolbar .grip:active { cursor: grabbing; }
+.annotation-toolbar .segmented { display: flex; gap: 2px; padding: 2px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); }
+.annotation-toolbar .tools, .annotation-toolbar .colors, .annotation-toolbar .sizes { display: flex; align-items: center; gap: 1px; }
+.annotation-toolbar .sep { flex: none; width: 1px; height: 22px; margin: 0 3px; background: rgba(255, 255, 255, 0.14); }
+.annotation-toolbar .swatch { min-width: 18px; width: 18px; height: 18px; padding: 0; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25); }
+.annotation-toolbar .swatch[aria-checked="true"] { background-clip: padding-box; outline: 2px solid #fff; outline-offset: 2px; }
+.annotation-toolbar .sizes button { min-width: 24px; padding: 0; }
+.annotation-toolbar .sizes button[aria-checked="true"] { background: rgba(255, 255, 255, 0.18); }
+.annotation-toolbar .dot { display: block; border-radius: 50%; background: currentColor; }
+.annotation-toolbar .exit { margin-left: auto; background: #e85853; color: #fff; padding: 0 10px; }
+.annotation-toolbar .exit:hover:not(:disabled) { background: #d84c47; }

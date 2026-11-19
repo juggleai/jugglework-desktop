@@ -144,6 +144,7 @@ export default defineConfig({
         fileWindow: resolve(appRoot, "file-window.html"),
         pet: resolve(appRoot, "pet.html"),
         whiteboard: resolve(appRoot, "whiteboard.html"),
+        annotation: resolve(appRoot, "annotation.html"),
       },
     },
   },

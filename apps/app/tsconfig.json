@@ -23,6 +23,7 @@
     "src/index.react.tsx",
     "src/pet/**/*",
     "src/whiteboard/**/*",
+    "src/annotation/**/*",
     "src/components/**/*",
     "src/i18n/**/*",
     "src/lib/**/*",
