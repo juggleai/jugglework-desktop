@@ -91,23 +91,29 @@ export function useAddProductTaskComment(client: DenClient, scope: ProductTaskSc
 
 export function useProductTaskListMutations(client: DenClient, scope: ProductTaskScope | null) {
   const queryClient = useQueryClient();
+  const refreshTaskAccess = (scope: ProductTaskScope) => {
+    void queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(scope) });
+    void queryClient.invalidateQueries({ queryKey: productTaskKeys.details(scope) });
+  };
   const refresh = async (captured?: CapturedMutationScope | null) => { if (captured) {
     void queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeeds(captured.scope) });
     await Promise.all([false, true].map((archived) => queryClient.invalidateQueries({ queryKey: productTaskKeys.taskLists(captured.scope, archived) })));
   } };
   const create = useMutation({ retry: false, onMutate: () => captureScope(scope), mutationFn: (input: Parameters<DenClient["createProductTaskList"]>[1]) => client.createProductTaskList(scope!.organizationId, input), onSuccess: (_result, _input, captured) => refresh(captured) });
   const refreshConflict = async (error: unknown, input: { listId: string }, captured?: CapturedMutationScope | null) => { if (captured && error instanceof DenApiError && error.status === 409) await queryClient.invalidateQueries({ queryKey: productTaskKeys.taskListDetail(captured.scope, input.listId), exact: true, refetchType: "active" }); };
-  const update = useMutation({ retry: false, onMutate: () => captureScope(scope), mutationFn: (input: { listId: string; patch: Parameters<DenClient["updateProductTaskList"]>[2] }) => client.updateProductTaskList(scope!.organizationId, input.listId, input.patch), onError: refreshConflict, onSuccess: (result, _input, captured) => {
+  const update = useMutation({ retry: false, onMutate: () => captureScope(scope), mutationFn: (input: { listId: string; patch: Parameters<DenClient["updateProductTaskList"]>[2] }) => client.updateProductTaskList(scope!.organizationId, input.listId, input.patch), onError: refreshConflict, onSuccess: (result, { patch }, captured) => {
     if (captured) {
       queryClient.setQueriesData<{ items: Array<typeof result.list>; nextCursor: string }>({ queryKey: productTaskKeys.taskLists(captured.scope, false), exact: true }, (current) => current ? { ...current, items: current.items.map((list) => list.id === result.list.id ? result.list : list) } : current);
       queryClient.setQueryData(productTaskKeys.taskListDetail(captured.scope, result.list.id), result);
+      if (patch.members !== undefined || patch.visibility !== undefined || patch.enableTaskAccess) refreshTaskAccess(captured.scope);
     }
     void refresh(captured);
   } });
-  const transferOwnership = useMutation({ retry: false, onMutate: () => captureScope(scope), mutationFn: (input: { listId: string; patch: Parameters<DenClient["transferProductTaskListOwnership"]>[2] }) => client.transferProductTaskListOwnership(scope!.organizationId, input.listId, input.patch), onSuccess: (result, _input, captured) => {
+  const transferOwnership = useMutation({ retry: false, onMutate: () => captureScope(scope), mutationFn: (input: { listId: string; patch: Parameters<DenClient["transferProductTaskListOwnership"]>[2] }) => client.transferProductTaskListOwnership(scope!.organizationId, input.listId, input.patch), onError: refreshConflict, onSuccess: (result, _input, captured) => {
     if (captured) {
       queryClient.setQueriesData<{ items: Array<typeof result.list>; nextCursor: string }>({ queryKey: productTaskKeys.taskLists(captured.scope, false), exact: true }, (current) => current ? { ...current, items: current.items.map((list) => list.id === result.list.id ? result.list : list) } : current);
       queryClient.setQueryData(productTaskKeys.taskListDetail(captured.scope, result.list.id), result);
+      refreshTaskAccess(captured.scope);
     }
     void refresh(captured);
   } });

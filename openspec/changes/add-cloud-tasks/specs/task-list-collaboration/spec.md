@@ -8,7 +8,7 @@ The system SHALL allow organization members to create task lists with a name, de
 - **THEN** the list is private and the creator becomes its owner and administrator
 
 ### Requirement: Organize shared tasks without sharing the destination list
-The task creator SHALL be able to place a shared task in any active list where the creator may add tasks, including a private list. Filing the task in a private list SHALL NOT change its visibility or explicit members, or grant those members access to that list.
+The task creator SHALL be able to place a shared task in an eligible active list, including a private list, subject to filing authorization in `task-list-derived-access`. Filing SHALL NOT change direct visibility or explicit task members, or grant those members access to that list.
 
 #### Scenario: File a task assigned to a colleague in a private list
 - **WHEN** the task creator moves the task into their private list
@@ -74,7 +74,7 @@ The Share dialog SHALL initially show existing collaborator avatars and a search
 - **AND** selecting a result collapses the results and adds a removable chip without mutating the task list
 
 ### Requirement: Append collaborators on confirmation
-A member with `canManageMembers` SHALL be able to append organization members without removing existing collaborators in this flow. The Desktop SHALL preserve the current owner as administrator and all existing roles, assign the member role to new collaborators, promote private lists to members visibility, and preserve organization visibility.
+A member with `canManageMembers` SHALL be able to append organization members without removing existing collaborators in this flow, subject to task-audience review for enabled lists. The Desktop SHALL preserve the current owner as administrator and all existing roles, assign the member role to new collaborators, promote private lists to members visibility, and preserve organization visibility.
 
 #### Scenario: Share a private list with people
 - **WHEN** a permitted administrator searches, selects one or more organization members as chips, and confirms
@@ -89,25 +89,25 @@ The Desktop SHALL wait until confirmation before paging through selected groups,
 - **AND** users outside the current organization are ignored
 
 ### Requirement: Independent task filings
-A member who can view a task and add tasks to an active destination list SHALL be able to add or remove that one filing without task edit or creator privileges. Repeating the operation SHALL have the same effect. Only list IDs visible to the caller SHALL appear in API results.
+The system SHALL support adding and removing each filing independently, using the task and list permissions defined in `task-list-derived-access`. Legacy classification-only lists SHALL retain their existing filing behavior until activation. Repeating an authorized operation SHALL have the same effect. Only list IDs visible to the caller SHALL appear in API results.
 
 #### Scenario: Classify the same task twice
-- **WHEN** a reader files an existing task in a second list
+- **WHEN** an authorized user files an existing task in a second list
 - **THEN** both lists refer to the same task and completion state, and removing one filing leaves the other intact
 
 ### Requirement: Preserve legacy list-derived authorization
-The system SHALL preserve the original authorization context for existing tasks. New filings SHALL NOT grant or revoke task access or edit privileges.
+The system SHALL preserve the original authorization context of lists that have not activated `task-list-derived-access`. Activated lists use live filings rather than the historical primary-list pointer.
 
 #### Scenario: Remove list member
 - **WHEN** an administrator removes a list member who has no other task role
 - **THEN** that member immediately loses access to member-visible tasks in the list
 
-### Requirement: Filing is not sharing
-Filing a private task in a shared list SHALL NOT change its visibility, members, or who can see the task in that list.
+### Requirement: Filing preserves direct sharing
+Filing a task SHALL NOT change direct visibility or task members. Enabled lists can grant read and edit access through the filing as defined in `task-list-derived-access`.
 
-#### Scenario: Add private task to shared list
-- **WHEN** a member can see the list but has no access to the task itself
-- **THEN** the filed task does not appear in their list results
+#### Scenario: File a task without changing direct shares
+- **WHEN** an authorized user files a task in an enabled list
+- **THEN** list collaborators receive the corresponding role grant without becoming direct task members
 
 ### Requirement: Archive and restore lists
 The system SHALL allow list administrators to archive and restore lists without deleting their tasks.

@@ -103,6 +103,8 @@ export type DenProductTask = {
 };
 export type DenProductTaskPermissions = {
   canView: boolean; canEditContent: boolean; canEditTime: boolean; canManageMembers: boolean;
+  /** Absent on older servers, where assignment uses canManageMembers. */
+  canAssign?: boolean;
   canManageVisibility: boolean; canComplete: boolean; canReopen: boolean; canCancel: boolean;
   canComment: boolean; canDelete: boolean; canRestore: boolean;
 };
@@ -146,10 +148,11 @@ export type DenProductTaskMoveResult = {
   visibility: DenProductTaskVisibility;
   replayed: boolean;
 };
-export type DenProductTaskList = { id: string; creatorMemberId: string; name: string; description: string; marker: string; visibility: DenProductTaskVisibility; version: number; archivedAt: string | null; createdAt: string; updatedAt: string };
+export type DenProductTaskList = { id: string; creatorMemberId: string; name: string; description: string; marker: string; visibility: DenProductTaskVisibility; grantsTaskAccess?: boolean; version: number; archivedAt: string | null; createdAt: string; updatedAt: string };
 export type DenProductTaskListPage = { items: DenProductTaskList[]; nextCursor: string };
 export type DenProductTaskListPermissions = { canView: boolean; canEdit: boolean; canManageMembers: boolean; canTransferOwnership: boolean; canDelete: boolean; canAddTasks: boolean; canArchive: boolean; canRestore: boolean };
 export type DenProductTaskListResult = { list: DenProductTaskList; members: Array<{ memberId: string; role: "administrator" | "member" }>; permissions: DenProductTaskListPermissions; replayed: boolean };
+export type DenProductTaskListAccessPreview = { taskCount: number; digest: string };
 export type DenProductTaskListDeleteResult = { listId: string; replayed: boolean };
 export type DenProductTaskActivity = {
   comments: Array<{ id: string; authorMemberId: string; body: string; createdAt: string; updatedAt: string }>;
@@ -995,7 +998,7 @@ function normalizeProductTaskResult(value: unknown): DenProductTaskResult {
   if (members.length !== value.members.length) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
   const permissions = value.permissions;
   const permissionNames = ["canView", "canEditContent", "canEditTime", "canManageMembers", "canManageVisibility", "canComplete", "canReopen", "canCancel", "canComment", "canDelete", "canRestore"] as const;
-  if (permissionNames.some((name) => typeof permissions[name] !== "boolean")) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
+  if (permissionNames.some((name) => typeof permissions[name] !== "boolean") || ("canAssign" in permissions && typeof permissions.canAssign !== "boolean")) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
   return { task, members, permissions: permissions as DenProductTaskPermissions, tombstone: value.tombstone === true, replayed: value.replayed === true };
 }
 
@@ -1060,10 +1063,11 @@ function normalizeProductTaskList(value: unknown): DenProductTaskList | null {
   if (!isRecord(value) || typeof value.id !== "string" || typeof value.creatorMemberId !== "string" ||
     typeof value.name !== "string" || typeof value.description !== "string" || typeof value.marker !== "string" ||
     !["private", "members", "organization"].includes(String(value.visibility)) || !Number.isSafeInteger(value.version) || Number(value.version) < 1 ||
+    ("grantsTaskAccess" in value && typeof value.grantsTaskAccess !== "boolean") ||
     value.archivedAt !== null && typeof value.archivedAt !== "string" ||
     typeof value.createdAt !== "string" || typeof value.updatedAt !== "string") return null;
   return { id: value.id, creatorMemberId: value.creatorMemberId, name: value.name, description: value.description, marker: value.marker,
-    visibility: value.visibility as DenProductTaskVisibility, version: Number(value.version), archivedAt: value.archivedAt,
+    visibility: value.visibility as DenProductTaskVisibility, ...(typeof value.grantsTaskAccess === "boolean" ? { grantsTaskAccess: value.grantsTaskAccess } : {}), version: Number(value.version), archivedAt: value.archivedAt,
     createdAt: value.createdAt, updatedAt: value.updatedAt };
 }
 
@@ -4379,13 +4383,21 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return normalizeProductTaskListResult(await requestJson<unknown>(baseUrls, "/v1/task-lists", { method: "POST", token, organizationId: orgId, body: input }));
     },
 
-    async updateProductTaskList(orgId: string, listId: string, input: { expectedVersion: number; idempotencyKey: string; name?: string; description?: string; marker?: string; visibility?: DenProductTaskVisibility; members?: Array<{ memberId: string; role: "administrator" | "member" }> }): Promise<DenProductTaskListResult> {
+    async getProductTaskListAccessPreview(orgId: string, listId: string): Promise<DenProductTaskListAccessPreview> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/task-lists/${encodeURIComponent(listId)}/access-preview`, { method: "GET", token, organizationId: orgId });
+      if (!isRecord(payload) || typeof payload.taskCount !== "number" || !Number.isSafeInteger(payload.taskCount) || payload.taskCount < 0 || typeof payload.digest !== "string" || (payload.taskCount > 0 && !payload.digest.trim())) {
+        throw new DenApiError(500, "invalid_task_list_access_preview", "Task list access preview was invalid.");
+      }
+      return { taskCount: payload.taskCount, digest: payload.digest };
+    },
+
+    async updateProductTaskList(orgId: string, listId: string, input: { expectedVersion: number; idempotencyKey: string; name?: string; description?: string; marker?: string; visibility?: DenProductTaskVisibility; members?: Array<{ memberId: string; role: "administrator" | "member" }>; enableTaskAccess?: true; confirmedAccessDigest?: string }): Promise<DenProductTaskListResult> {
       const result = normalizeProductTaskListResult(await requestJson<unknown>(baseUrls, `/v1/task-lists/${encodeURIComponent(listId)}`, { method: "PATCH", token, organizationId: orgId, body: input }));
       if (result.list.id !== listId) throw new DenApiError(500, "invalid_task_list_payload", "Task list response was invalid.");
       return result;
     },
 
-    async transferProductTaskListOwnership(orgId: string, listId: string, input: { expectedVersion: number; idempotencyKey: string; newOwnerMemberId: string }): Promise<DenProductTaskListResult> {
+    async transferProductTaskListOwnership(orgId: string, listId: string, input: { expectedVersion: number; idempotencyKey: string; newOwnerMemberId: string; confirmedAccessDigest?: string }): Promise<DenProductTaskListResult> {
       const result = normalizeProductTaskListResult(await requestJson<unknown>(baseUrls, `/v1/task-lists/${encodeURIComponent(listId)}/transfer-ownership`, { method: "POST", token, organizationId: orgId, body: input }));
       if (result.list.id !== listId) throw new DenApiError(500, "invalid_task_list_payload", "Task list response was invalid.");
       return result;
@@ -4469,8 +4481,9 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return normalizeProductTaskResult(payload);
     },
 
-    async setProductTaskListMembership(orgId: string, taskId: string, listId: string, added: boolean) {
-      const result = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/lists/${encodeURIComponent(listId)}`, { method: added ? "PUT" : "DELETE", token, organizationId: orgId });
+    async setProductTaskListMembership(orgId: string, taskId: string, listId: string, added: boolean, confirmedAccessVersion?: number) {
+      const query = added && confirmedAccessVersion !== undefined ? `?${new URLSearchParams({ confirmedAccessVersion: String(confirmedAccessVersion) })}` : "";
+      const result = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/lists/${encodeURIComponent(listId)}${query}`, { method: added ? "PUT" : "DELETE", token, organizationId: orgId });
       if (!isRecord(result) || result.taskId !== taskId || result.listId !== listId || typeof result.added !== "boolean") throw new DenApiError(500, "invalid_task_list_membership", "Task list membership response was invalid.");
       return { taskId, listId, added: result.added };
     },

@@ -41,7 +41,7 @@ function EmptyTimeIcon({ field }: { field: "start" | "due" }) {
   return <CalendarDays className="size-[18px] text-dls-secondary/45" aria-label={t(fieldLabels[field])} />;
 }
 
-function AssigneeCell(props: { task: DenProductTask; ids: string[]; members: Map<string, DenOrganizationMember>; onChange?: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onCompletionPolicyChange?: (task: DenProductTask, policy: DenProductTaskCompletionPolicy) => Promise<boolean> }) {
+export function AssigneeCell(props: { task: DenProductTask; ids: string[]; members: Map<string, DenOrganizationMember>; onChange?: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onCompletionPolicyChange?: (task: DenProductTask, policy: DenProductTaskCompletionPolicy) => Promise<boolean> }) {
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState(props.ids);
   const [completionPolicy, setCompletionPolicy] = useState(props.task.completionPolicy);
@@ -55,13 +55,12 @@ function AssigneeCell(props: { task: DenProductTask; ids: string[]; members: Map
     return [member.user.name, member.user.account, member.user.email].some((value) => value?.toLocaleLowerCase().includes(query));
   });
   const toggle = async (memberId: string) => {
-    if (pending) return;
+    if (pending || !props.onChange) return;
     const next = selectedIds.includes(memberId) ? selectedIds.filter((id) => id !== memberId) : [...selectedIds, memberId];
     setPending(true);
-    if (!props.onChange) return;
-    const saved = await props.onChange(props.task, next);
-    if (saved) setSelectedIds(next);
-    setPending(false);
+    try {
+      if (await props.onChange(props.task, next)) setSelectedIds(next);
+    } finally { setPending(false); }
   };
   const updateCompletionPolicy = async (policy: DenProductTaskCompletionPolicy) => {
     if (pending || policy === completionPolicy || !props.onCompletionPolicyChange) return;
@@ -76,14 +75,14 @@ function AssigneeCell(props: { task: DenProductTask; ids: string[]; members: Map
       <div className="border-b border-dls-border px-4 pt-3"><div className="inline-flex h-10 items-center border-b-2 border-blue-9 px-0.5 font-medium text-blue-10">{t("tasks.assign_to_people")}</div></div>
       <div className="p-3"><input autoFocus data-testid={`task-assignee-search-${props.task.id}`} aria-label={t("tasks.search_assignees")} placeholder={t("tasks.add_assignee")} value={search} onInput={(event) => setSearch(event.currentTarget.value)} className="h-10 w-full rounded-lg border border-dls-border bg-dls-surface px-3 text-sm text-dls-text outline-none placeholder:text-dls-secondary focus:border-blue-8 focus:ring-2 focus:ring-blue-8/20" /></div>
       <div className="max-h-80 overflow-y-auto px-2 pb-3">{options.length ? options.map((member) => { const active = selectedIds.includes(member.id); const name = taskMemberName(member.id, props.members); return <button key={member.id} type="button" role="checkbox" data-testid={`task-assignee-option-${props.task.id}-${member.id}`} aria-checked={active} disabled={pending} onClick={() => void toggle(member.id)} className="flex h-12 w-full items-center gap-3 rounded-lg px-2 text-left text-sm text-dls-text hover:bg-dls-hover disabled:opacity-60"><Avatar><AvatarImage src={member.user.avatar ?? undefined} /><AvatarFallback>{name.slice(0, 1).toUpperCase()}</AvatarFallback></Avatar><span className={`min-w-0 flex-1 truncate ${active ? "text-blue-10" : ""}`}>{name}</span>{active ? <Check className="size-4 shrink-0 text-blue-10" /> : null}</button>; }) : <div className="px-3 py-6 text-center text-sm text-dls-secondary">{t("tasks.no_matching_members")}</div>}</div>
-      <div className="border-t border-dls-border px-3 py-3">
+      {props.onCompletionPolicyChange ? <div className="border-t border-dls-border px-3 py-3">
         <DropdownMenu>
           <DropdownMenuTrigger render={<button type="button" data-testid={`task-completion-policy-trigger-${props.task.id}`} disabled={pending || !props.onCompletionPolicyChange} className="flex h-9 max-w-full items-center gap-2 rounded-lg bg-dls-hover px-3 text-left text-sm text-dls-text outline-none transition-colors hover:bg-dls-active data-popup-open:bg-dls-active disabled:cursor-default disabled:opacity-60" />}><span className="truncate">{t(`tasks.completion_policy_${completionPolicy}`)}</span><ChevronDown className="size-4 shrink-0 text-dls-secondary" /></DropdownMenuTrigger>
           <DropdownMenuContent align="start" side="bottom" sideOffset={4} className="w-auto min-w-72 rounded-xl border border-dls-border bg-dls-surface p-1.5 shadow-xl">
             {(["all_assignees", "any_assignee"] as const).map((policy) => { const active = completionPolicy === policy; return <DropdownMenuItem key={policy} data-testid={`task-completion-policy-${props.task.id}-${policy}`} disabled={pending || !props.onCompletionPolicyChange} onClick={() => void updateCompletionPolicy(policy)} className={`flex h-10 cursor-pointer items-center rounded-lg px-3 text-sm ${active ? "bg-dls-hover text-blue-10" : "text-dls-text"}`}><span className="min-w-0 flex-1 truncate">{t(`tasks.completion_policy_${policy}`)}</span>{active ? <Check className="size-4 shrink-0 text-blue-10" /> : null}</DropdownMenuItem>; })}
           </DropdownMenuContent>
         </DropdownMenu>
-      </div>
+      </div> : null}
     </PopoverContent>
   </Popover>;
 }

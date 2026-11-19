@@ -4,7 +4,8 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
-import { DenApiError, type DenClient, type DenProductTask, type DenProductTaskActivityItem, type DenProductTaskList, type DenProductTaskResult } from "../src/app/lib/den";
+import { DenApiError, type DenClient, type DenProductTask, type DenProductTaskActivityItem, type DenProductTaskList, type DenProductTaskListResult, type DenProductTaskResult } from "../src/app/lib/den";
+import { Button } from "../src/components/ui/button";
 import { taskSectionStorageKey } from "../src/react-app/domains/tasks/task-page-state";
 import { taskWorkbenchStorageKey } from "../src/react-app/domains/tasks/task-view-state";
 
@@ -584,6 +585,8 @@ test("task-list header shares with people and expands group members into collabo
     expect(updates).toHaveLength(1);
     expect(updates[0]?.listId).toBe("list_shared");
     expect(updates[0]?.patch).toMatchObject({ expectedVersion: 3, visibility: "members", members: [{ memberId: "member_self", role: "administrator" }, { memberId: "member_four", role: "administrator" }, { memberId: "member_two", role: "member" }, { memberId: "member_three", role: "member" }], idempotencyKey: expect.any(String) });
+    expect(updates[0]?.patch).not.toHaveProperty("enableTaskAccess");
+    expect(updates[0]?.patch).not.toHaveProperty("confirmedAccessDigest");
     expect(renderer!.root.findAllByProps({ "data-testid": "task-list-share-dialog" })).toHaveLength(0);
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
@@ -667,15 +670,25 @@ test("task-list collaborator avatars open management and save role and removal c
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
-test("task-list owner can transfer ownership to an existing collaborator", async () => {
-  const list: DenProductTaskList = { id: "list_transfer", creatorMemberId: "member_self", name: "Transfer list", description: "", marker: "T", visibility: "members", version: 2, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+test.each([
+  ["legacy member", undefined, "member", false],
+  ["historical member", false, "member", false],
+  ["enabled administrator", true, "administrator", false],
+  ["enabled member", true, "member", true],
+  ["enabled member with no current tasks", true, "member", true],
+] as const)("task-list owner can transfer ownership to an existing collaborator: %s", async (mode, grantsTaskAccess, previousRole, needsConfirmation) => {
+  const list: DenProductTaskList = { id: "list_transfer", creatorMemberId: "member_self", name: "Transfer list", description: "", marker: "T", visibility: "members", version: 2, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z", ...(grantsTaskAccess === undefined ? {} : { grantsTaskAccess }) };
   const self = { id: "member_self", userId: "user_one", role: "member", user: { id: "user_one", name: "Owner", account: null, email: null, avatar: null } };
   const teammate = { id: "member_two", userId: "user_two", role: "member", user: { id: "user_two", name: "Teammate", account: null, email: null, avatar: null } };
-  let detail = { list, members: [{ memberId: "member_self", role: "administrator" as const }, { memberId: "member_two", role: "member" as const }], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: true, canDelete: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false };
+  let detail: DenProductTaskListResult = { list, members: [{ memberId: "member_self", role: "administrator" }, { memberId: "member_two", role: previousRole }], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: true, canDelete: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false };
   const transfers: Array<Record<string, unknown>> = [];
+  const previewReads: string[][] = [];
+  const prompts: string[] = [];
+  const preview = mode === "enabled member with no current tasks" ? { taskCount: 0, digest: "" } : { taskCount: 8, digest: "transfer-digest" };
   const client = connectedClient({
-    listProductTaskLists: async () => ({ items: [list], nextCursor: "" }),
+    listProductTaskLists: async () => ({ items: [detail.list], nextCursor: "" }),
     getProductTaskList: async () => detail,
+    getProductTaskListAccessPreview: async (...args) => { previewReads.push(args); return preview; },
     listOrganizationMembers: async () => ({ members: [self, teammate], total: 2, limit: 200, offset: 0 }),
     transferProductTaskListOwnership: async (_orgId, listId, patch) => {
       transfers.push({ listId, ...patch });
@@ -685,22 +698,39 @@ test("task-list owner can transfer ownership to an existing collaborator", async
   });
   let renderer: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
-  await settle();
+  const originalConfirm = globalThis.confirm;
+  let accept = false;
+  globalThis.confirm = (message) => { prompts.push(message ?? ""); return accept; };
+  const click = (id: string) => act(async () => { renderer.root.findByProps({ "data-testid": id }).props.onClick(); });
   try {
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar-list-list_transfer" }).props.onClick(); });
     await settle();
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-collaborators-trigger" }).props.onClick(); });
-    let manage = renderer!.root.findByProps({ "data-testid": "task-list-collaborators-dialog" });
-    const teammateRow = manage.findByProps({ "data-testid": "task-list-collaborator-member_two" });
-    await act(async () => { teammateRow.findAllByType("button")[0]!.props.onClick(); });
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-collaborator-owner-member_two" }).props.onClick(); });
+    await click("tasks-sidebar-list-list_transfer");
     await settle();
-    expect(transfers).toEqual([{ listId: "list_transfer", expectedVersion: 2, idempotencyKey: expect.any(String), newOwnerMemberId: "member_two" }]);
-    manage = renderer!.root.findByProps({ "data-testid": "task-list-collaborators-dialog" });
+    await click("task-list-collaborators-trigger");
+    if (grantsTaskAccess && previousRole === "member") {
+      // An unsaved role edit must not bypass the transfer confirmation.
+      await click("task-list-collaborator-edit-member_two");
+    }
+    if (needsConfirmation) {
+      await click("task-list-collaborator-owner-member_two");
+      await settle();
+      expect(previewReads).toEqual([["org_one", list.id]]);
+      expect(prompts[0]).toContain(`Tasks currently in this list: ${preview.taskCount}`);
+      expect(prompts[0]).toContain("Transfer ownership of “Transfer list” to Teammate");
+      expect(prompts[0]).toContain("edit existing tasks and tasks added later");
+      expect(transfers).toHaveLength(0);
+    }
+    accept = true;
+    await click("task-list-collaborator-owner-member_two");
+    await settle();
+    expect(previewReads).toHaveLength(needsConfirmation ? 2 : 0);
+    expect(prompts).toHaveLength(needsConfirmation ? 2 : 0);
+    expect(transfers).toEqual([{ listId: "list_transfer", expectedVersion: 2, idempotencyKey: expect.any(String), newOwnerMemberId: "member_two", ...(needsConfirmation && preview.digest ? { confirmedAccessDigest: preview.digest } : {}) }]);
+    const manage = renderer!.root.findByProps({ "data-testid": "task-list-collaborators-dialog" });
     expect(manage.findByProps({ "data-testid": "task-list-collaborator-member_two" }).findAllByProps({ children: "Owner" }).length).toBeGreaterThan(0);
     expect(manage.findAllByProps({ "data-testid": "task-list-collaborator-owner-member_self" })).toHaveLength(0);
     expect(manage.findByProps({ "data-testid": "task-list-collaborator-member_self" }).findAllByProps({ children: "Can edit" }).length).toBeGreaterThan(0);
-  } finally { await act(async () => { renderer!.unmount(); }); }
+  } finally { globalThis.confirm = originalConfirm; await act(async () => { renderer!.unmount(); }); }
 });
 
 test("task-list administrator who is not owner cannot see ownership transfer", async () => {
@@ -1007,8 +1037,13 @@ test("Assigned toolbar inline creation submits a title-only private task with no
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
-test("selected shared task-list quick creation keeps the task in the current list with compatible visibility", async () => {
-  const list: DenProductTaskList = { id: "list_quick_create", creatorMemberId: "member_self", name: "Current list", description: "", marker: "C", visibility: "members", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+test.each([
+  ["legacy", "members", undefined, "members"],
+  ["historical", "organization", false, "organization"],
+  ["enabled members", "members", true, "private"],
+  ["enabled organization", "organization", true, "private"],
+] as const)("selected %s list quick creation retains the list and uses the correct direct visibility", async (_mode, visibility, grantsTaskAccess, expectedVisibility) => {
+  const list: DenProductTaskList = { id: "list_quick_create", creatorMemberId: "member_self", name: "Current list", description: "", marker: "C", visibility, version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z", ...(grantsTaskAccess === undefined ? {} : { grantsTaskAccess }) };
   const creates: Array<Record<string, unknown>> = [];
   let created: DenProductTask | null = null;
   const client = connectedClient({
@@ -1032,7 +1067,7 @@ test("selected shared task-list quick creation keeps the task in the current lis
     await act(async () => { row.findByType("input").props.onChange({ target: { value: "List task" } }); });
     await act(async () => { row.findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
     await settle();
-    expect(creates[0]).toMatchObject({ title: "List task", listId: "list_quick_create", visibility: "members", priority: "none", members: [] });
+    expect(creates[0]).toMatchObject({ title: "List task", listId: "list_quick_create", visibility: expectedVisibility, priority: "none", members: [] });
     expect(renderer!.root.findByProps({ "data-testid": "task-title-cell-list_inline_task" })).toBeDefined();
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
@@ -1135,18 +1170,23 @@ test("shows full-create mutation failures without an unhandled rejection", async
 });
 
 test.each([
-  ["members", "member_other", "member_self", "members"],
-  ["private", "member_other", "member_self", "members"],
-  ["private", "member_self", "member_other", "members"],
-  ["private", "member_self", "member_self", "private"],
-  ["organization", "member_other", "member_self", "organization"],
-] as const)("full task creation: %s list, assignee %s and follower %s submit %s visibility", async (listVisibility, assignee, follower, expectedVisibility) => {
+  ["legacy members", "members", undefined, "member_other", "member_self", "members"],
+  ["legacy private", "private", undefined, "member_other", "member_self", "members"],
+  ["legacy private", "private", undefined, "member_self", "member_other", "members"],
+  ["legacy private", "private", undefined, "member_self", "member_self", "private"],
+  ["legacy organization", "organization", undefined, "member_other", "member_self", "organization"],
+  ["historical organization", "organization", false, "member_other", "member_self", "organization"],
+  ["enabled members", "members", true, "member_self", "member_self", "private"],
+  ["enabled organization", "organization", true, null, null, "private"],
+  ["enabled organization", "organization", true, "member_other", null, "members"],
+  ["enabled organization", "organization", true, null, "member_other", "members"],
+] as const)("full task creation: %s list, assignee and follower determine direct visibility (%s, %s, %s, %s → %s)", async (_mode, listVisibility, grantsTaskAccess, assignee, follower, expectedVisibility) => {
   const creates: Array<Record<string, unknown>> = [];
   const members = [
     { id: "member_self", userId: "user_one", role: "member", user: { id: "user_one", name: "Self", account: null, email: null, avatar: null } },
     { id: "member_other", userId: "user_two", role: "member", user: { id: "user_two", name: "Other", account: null, email: null, avatar: null } },
   ];
-  const list = { id: "list_one", creatorMemberId: "member_self", name: "Launch", description: "", marker: "L", visibility: listVisibility, version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+  const list: DenProductTaskList = { id: "list_one", creatorMemberId: "member_self", name: "Launch", description: "", marker: "L", visibility: listVisibility, version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z", ...(grantsTaskAccess === undefined ? {} : { grantsTaskAccess }) };
   const client = connectedClient({
     listOrganizationMembers: async () => ({ members, total: 2, limit: 200, offset: 0 }),
     listProductTaskLists: async () => ({ items: [list], nextCursor: "" }),
@@ -1171,9 +1211,9 @@ test.each([
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-description-format-bold" }).props.onClick(); });
     await act(async () => { renderer!.root.findAll((node) => node.props.children === "Today")[0]!.props.onClick(); });
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-option-create-dialog-draft-list_one" }).props.onClick(); });
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-assignees-option-member_self" }).props.onClick(); });
-    if (assignee !== "member_self") await act(async () => { renderer!.root.findByProps({ "data-testid": `task-create-assignees-option-${assignee}` }).props.onClick(); });
-    await act(async () => { renderer!.root.findByProps({ "data-testid": `task-create-followers-option-${follower}` }).props.onClick(); });
+    const assignees = assignee === "member_other" ? ["member_self", assignee] : assignee ? [assignee] : [];
+    for (const id of assignees) await act(async () => { renderer!.root.findByProps({ "data-testid": `task-create-assignees-option-${id}` }).props.onClick(); });
+    if (follower) await act(async () => { renderer!.root.findByProps({ "data-testid": `task-create-followers-option-${follower}` }).props.onClick(); });
     await act(async () => { dialog.findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
     await settle();
     expect(creates[0]).toMatchObject({
@@ -1182,7 +1222,7 @@ test.each([
       priority: "none",
       visibility: expectedVisibility,
       listId: "list_one",
-      members: [{ memberId: "member_self", role: "assignee" }, ...(assignee !== "member_self" ? [{ memberId: assignee, role: "assignee" }] : []), { memberId: follower, role: "follower" }],
+      members: [...assignees.map((memberId) => ({ memberId, role: "assignee" })), ...(follower ? [{ memberId: follower, role: "follower" }] : [])],
     });
     expect(typeof creates[0]?.dueAt).toBe("string");
   } finally {
@@ -1412,6 +1452,142 @@ test("workbench time update loads the latest task permission and sends a CAS pat
 const destination: DenProductTaskList = { id: "list_destination", creatorMemberId: "member_self", name: "Personal filing", description: "", marker: "P", visibility: "private", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
 const destinationResult = () => ({ list: destination, members: [], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: false, canDelete: false, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false });
 
+test.each(["new share", "new promotion", "new demotion", "historical share", "historical admin share", "standalone enable", "standalone without digest"] as const)("%s follows the task-access confirmation rules", async (mode) => {
+  const active = mode.startsWith("new");
+  const promote = mode === "new promotion";
+  const demote = mode === "new demotion";
+  const nonOwner = mode === "historical admin share";
+  const standalone = mode.startsWith("standalone");
+  const requiresConfirmation = !demote && !nonOwner;
+  const preview = { taskCount: standalone ? 0 : 3, digest: mode === "standalone without digest" ? "" : "access-digest" };
+  const target: DenProductTaskList = { ...destination, creatorMemberId: nonOwner ? "member_owner" : "member_self", grantsTaskAccess: active, version: 7, visibility: promote || demote || nonOwner ? "members" : "private" };
+  let listDetail: DenProductTaskListResult = { ...destinationResult(), list: target, members: [{ memberId: "member_self", role: "administrator" }] };
+  if (nonOwner) listDetail.members.unshift({ memberId: target.creatorMemberId, role: "administrator" });
+  if (promote || demote) listDetail.members.push({ memberId: "member_two", role: demote ? "administrator" : "member" });
+  const teammate = { id: "member_two", userId: "user_two", role: "member", user: { id: "user_two", name: "Teammate", account: null, email: null, avatar: null } };
+  const patches: Parameters<DenClient["updateProductTaskList"]>[2][] = [];
+  const previewReads: string[][] = [];
+  const prompts: string[] = [];
+  const originalConfirm = globalThis.confirm;
+  let accept = false;
+  globalThis.confirm = (message) => { prompts.push(message ?? ""); return accept; };
+  const client = connectedClient({
+    listProductTaskLists: async () => ({ items: [listDetail.list], nextCursor: "" }),
+    getProductTaskList: async () => listDetail,
+    getProductTaskListAccessPreview: async (...args) => { previewReads.push(args); return preview; },
+    listOrganizationMembers: async () => ({ members: [teammate], total: 1, limit: 200, offset: 0 }),
+    updateProductTaskList: async (_org, _id, patch) => {
+      patches.push(patch);
+      listDetail = { ...listDetail, list: { ...target, grantsTaskAccess: active || patch.enableTaskAccess === true, version: 8 }, members: patch.members ?? listDetail.members };
+      return listDetail;
+    },
+  });
+  const queryClient = createQueryClient();
+  setCloudSession(client);
+  const taskCachePrefix = ["product-tasks", "https://work.example", "user_one", "org_one"];
+  const inactiveTask = [...taskCachePrefix, "details", "inactive-task"];
+  const inactiveList = [...taskCachePrefix, "lists", { view: "completed" }];
+  queryClient.setQueryData(inactiveTask, result(task(1)));
+  queryClient.setQueryData(inactiveList, { pages: [], pageParams: [] });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(taskPage(queryClient)); });
+  const click = (id: string) => act(async () => { renderer.root.findByProps({ "data-testid": id }).props.onClick(); });
+  try {
+    await settle();
+    await click(`tasks-sidebar-list-${target.id}`);
+    await settle();
+    let saveButton = "task-list-enable-task-access";
+    if (promote || demote) {
+      await click("task-list-collaborators-trigger");
+      await click(demote ? "task-list-collaborator-read-member_two" : "task-list-collaborator-edit-member_two");
+      saveButton = "task-list-collaborators-done";
+    } else if (!standalone) {
+      await click("task-list-share-trigger");
+      const search = renderer!.root.findByProps({ "aria-label": "Search people and groups" });
+      await act(async () => { search.props.onChange({ currentTarget: { value: "Teammate" } }); });
+      await click("task-list-share-search");
+      await click("task-list-share-member-member_two");
+      saveButton = "task-list-share-confirm";
+    }
+
+    if (nonOwner) expect(renderer!.root.findAllByProps({ "data-testid": "task-list-enable-task-access" })).toHaveLength(0);
+    if (requiresConfirmation) {
+      await click(saveButton);
+      await settle();
+      expect(previewReads).toEqual([["org_one", target.id]]);
+      expect(prompts[0]).toContain(`Tasks currently in this list: ${preview.taskCount}`);
+      expect(prompts[0]).toContain(target.name);
+      expect(patches).toHaveLength(0);
+      expect(queryClient.getQueryState(inactiveTask)?.isInvalidated).toBe(false);
+    }
+
+    accept = true;
+    await click(saveButton);
+    await settle();
+    expect(previewReads).toHaveLength(requiresConfirmation ? 2 : 0);
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.expectedVersion).toBe(7);
+    if (requiresConfirmation && preview.digest) expect(patches[0]?.confirmedAccessDigest).toBe(preview.digest);
+    else expect(patches[0]).not.toHaveProperty("confirmedAccessDigest");
+    if (active || nonOwner) expect(patches[0]).not.toHaveProperty("enableTaskAccess");
+    else expect(patches[0]?.enableTaskAccess).toBe(true);
+    if (standalone) expect(patches[0]).not.toHaveProperty("members");
+    else expect(patches[0]?.members).toContainEqual({ memberId: teammate.id, role: promote ? "administrator" : "member" });
+    expect(queryClient.getQueryState(inactiveTask)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(inactiveList)?.isInvalidated).toBe(true);
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-list-enable-task-access" })).toHaveLength(0);
+  } finally { globalThis.confirm = originalConfirm; await act(async () => renderer!.unmount()); }
+});
+
+test.each(["shared", "public", "owner-only", "historical", "old server"] as const)("filing into a %s list only confirms changes that grant task access", async (mode) => {
+  const filing = task(1);
+  const requiresConfirmation = mode === "shared" || mode === "public";
+  const list: DenProductTaskList = { ...destination, version: 24, visibility: mode === "public" ? "organization" : mode === "owner-only" ? "private" : "members", ...(mode === "old server" ? {} : { grantsTaskAccess: mode !== "historical" }) };
+  const details: DenProductTaskListResult = { ...destinationResult(), list, members: [{ memberId: list.creatorMemberId, role: "administrator" }, ...(["public", "owner-only"].includes(mode) ? [] : [{ memberId: "member_two", role: "member" as const }])] };
+  let current = filing;
+  const writes: Parameters<DenClient["setProductTaskListMembership"]>[] = [];
+  const originalConfirm = globalThis.confirm;
+  const prompts: string[] = [];
+  let accept = false;
+  globalThis.confirm = (message) => { prompts.push(message ?? ""); return accept; };
+  const client = connectedClient({
+    listProductTaskLists: async () => ({ items: [{ ...list, version: 2 }], nextCursor: "" }),
+    getProductTaskList: async () => details,
+    getProductTask: async () => result(current),
+    setProductTaskListMembership: async (...args) => {
+      writes.push(args);
+      const [, taskId, listId, added] = args;
+      current = { ...current, listId: added ? listId : null };
+      return { taskId, listId, added };
+    },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, filing.id)); });
+  try {
+    await settle();
+    const option = () => renderer!.root.findByProps({ "data-testid": `task-list-option-${filing.id}-${list.id}` });
+    const toggle = () => act(async () => { option().props.onClick(); });
+    await toggle();
+    await settle();
+    if (requiresConfirmation) {
+      expect(option().props["aria-pressed"]).toBe(false);
+      expect(writes).toHaveLength(0);
+      expect(prompts[0]).toContain(mode === "public" ? "Everyone in the organization" : "People with access to the list");
+      accept = true;
+      await toggle();
+      await settle();
+    }
+    expect(option().props["aria-pressed"]).toBe(true);
+    const addArgs = ["org_one", filing.id, list.id, true];
+    expect(writes).toEqual([requiresConfirmation ? [...addArgs, 24] : addArgs]);
+    await toggle();
+    await settle();
+    expect(option().props["aria-pressed"]).toBe(false);
+    expect(writes[1]).toEqual(["org_one", filing.id, list.id, false]);
+    expect(prompts).toHaveLength(requiresConfirmation ? 2 : 0);
+  } finally { globalThis.confirm = originalConfirm; await act(async () => renderer!.unmount()); }
+});
+
 for (const surface of ["table", "detail"] as const) {
   test(`${surface}: non-creator files a visible task, reloads, and removes just one membership`, async () => {
     const original = { ...destination, id: "list_orig", name: "Original" };
@@ -1499,10 +1675,13 @@ for (const boundary of ["read-only", "archived", "org", "user", "deployment", "u
   });
 }
 
-test("workbench assignee update shares a private task in the same latest-version patch", async () => {
+test.each(["legacy workbench", "new workbench", "new detail"] as const)("%s shares a private task in the same latest-version assignment patch", async (mode) => {
   const listed = task(1, "Private task", "", "private_task");
-  const authoritative = result({ ...listed, version: 9 });
-  authoritative.members = [{ memberId: "member_one", role: "assignee" }, { memberId: "member_follower", role: "follower" }];
+  const legacy = mode === "legacy workbench";
+  const inDetail = mode === "new detail";
+  const authoritative = result({ ...listed, version: 9, ...(legacy ? {} : { listId: "listed", listIds: ["listed"] }) });
+  authoritative.members = [{ memberId: "member_one", role: "assignee" }, { memberId: "member_one", role: "follower" }, { memberId: "member_one", role: "viewer" }];
+  if (!legacy) Object.assign(authoritative.permissions, { canAssign: true, canManageMembers: false, canManageVisibility: false, canEditContent: false, canEditTime: false });
   const updates: Array<Parameters<DenClient["updateProductTask"]>[2]> = [];
   const directory = [
     { id: "member_one", userId: "user_one", role: "member", user: { id: "user_one", name: "Self", account: null, email: null, avatar: null } },
@@ -1515,20 +1694,65 @@ test("workbench assignee update shares a private task in the same latest-version
     updateProductTask: async (_orgId, _taskId, patch) => { updates.push(patch); return result({ ...authoritative.task, visibility: "members", version: 10 }); },
   });
   let renderer: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, inDetail ? listed.id : undefined)); });
   await settle();
   try {
-    const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
-    const assigned = sidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Assigned to me"))!;
-    await act(async () => { assigned.props.onClick(); });
+    if (!inDetail) {
+      const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
+      const assigned = sidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Assigned to me"))!;
+      await act(async () => { assigned.props.onClick(); });
+      await settle();
+    }
+    const editor = inDetail ? renderer!.root.findByProps({ "data-testid": "task-detail-panel" }) : renderer!.root;
+    await act(async () => { editor.findByProps({ "data-testid": "task-assignee-option-private_task-member_two" }).props.onClick(); });
     await settle();
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-assignee-option-private_task-member_two" }).props.onClick(); });
-    await settle();
-    expect(updates[0]).toMatchObject({
+    expect(updates).toEqual([{
       expectedVersion: 9,
+      idempotencyKey: expect.any(String),
       visibility: "members",
-      members: [{ memberId: "member_follower", role: "follower" }, { memberId: "member_one", role: "assignee" }, { memberId: "member_two", role: "assignee" }],
-    });
+      members: [{ memberId: "member_one", role: "follower" }, { memberId: "member_one", role: "viewer" }, { memberId: "member_one", role: "assignee" }, { memberId: "member_two", role: "assignee" }],
+    }]);
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test.each(["explicit denial", "legacy private in list"] as const)("assignee editing respects %s", async (mode) => {
+  const authoritative = result({ ...task(1), listId: "listed" });
+  if (mode === "explicit denial") authoritative.permissions.canAssign = false;
+  const updates: unknown[] = [];
+  const client = connectedClient({
+    getProductTask: async () => authoritative,
+    updateProductTask: async (_orgId, _taskId, patch) => { updates.push(patch); return authoritative; },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, authoritative.task.id)); });
+  await settle();
+  try {
+    const panel = renderer!.root.findByProps({ "data-testid": "task-detail-panel" });
+    if (mode === "explicit denial") {
+      expect(panel.findAllByProps({ "data-testid": "task-assignee-trigger-task_one" })).toHaveLength(0);
+    } else {
+      await act(async () => { panel.findByProps({ "data-testid": "task-assignee-option-task_one-member_self" }).props.onClick(); });
+      await settle();
+      expect(toastErrors).toHaveLength(1);
+    }
+    expect(updates).toHaveLength(0);
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("task detail shows the saved due date without a picker when time editing is denied", async () => {
+  const authoritative = result({ ...task(1), dueAt: new Date(2026, 10, 18).toISOString() });
+  authoritative.permissions.canEditTime = false;
+  const client = connectedClient({ getProductTask: async () => authoritative });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, authoritative.task.id)); });
+  await settle();
+  try {
+    const panel = renderer!.root.findByProps({ "data-testid": "task-detail-panel" });
+    const trigger = panel.findByProps({ "data-testid": "task-time-trigger-task_one-dueAt" });
+    expect(trigger.props.disabled).toBe(true);
+    expect(trigger.findByType("span").props.children).toBe(new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" }).format(new Date(authoritative.task.dueAt!)));
+    expect(panel.findAllByProps({ "data-testid": "task-time-picker-task_one-dueAt" })).toHaveLength(0);
+    expect(panel.findAllByType("input").find((node) => node.props.value === authoritative.task.title)?.props.readOnly).toBe(false);
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
@@ -1685,6 +1909,40 @@ test("loads the latest task and retries a preserved conflict draft", async () =>
   } finally {
     await act(async () => { renderer!.unmount(); });
   }
+});
+
+test("loading a conflict with revoked content permission keeps the draft but blocks another save", async () => {
+  let getCount = 0;
+  const updates: unknown[] = [];
+  const latest = result(task(2, "Latest title"));
+  latest.permissions.canEditContent = false;
+  const client = connectedClient({
+    getProductTask: async () => ++getCount === 1 ? result(task(1)) : latest,
+    updateProductTask: async (_orgId, _taskId, patch) => {
+      updates.push(patch);
+      throw new DenApiError(409, "task_version_conflict", "Changed elsewhere", { currentVersion: 2 });
+    },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, "task_one")); });
+  await settle();
+  try {
+    const input = () => renderer!.root.findByProps({ value: "My draft title" });
+    const submitDraft = () => renderer!.root.findByProps({ "data-testid": "task-detail-description-editor" }).props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null });
+    const button = (label: string) => renderer!.root.findAllByType("button").find((node) => node.props.children === label)!;
+    await act(async () => { renderer!.root.findByProps({ value: "Server title" }).props.onChange({ target: { value: "My draft title" } }); });
+    await act(async () => { submitDraft(); });
+    await settle();
+    await act(async () => { button("Load latest").props.onClick(); });
+    await settle();
+    expect(input().props.value).toBe("My draft title");
+    expect(input().props.readOnly).toBe(true);
+    expect(button("Retry").props.disabled).toBe(true);
+    const retryAction = renderer!.root.findAllByType(Button).find((node) => node.props.children === "Retry")!;
+    await act(async () => { retryAction.props.onClick(); submitDraft(); });
+    await settle();
+    expect(updates).toHaveLength(1);
+  } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
 test("dismissing conflict feedback preserves the draft for another save", async () => {

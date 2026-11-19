@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Cloud-authoritative tasks
-The system SHALL store private and collaborative tasks in JuggleWork Server as the sole write authority and SHALL NOT require an Agent or AI provider for core task operations.
+The system SHALL store tasks in JuggleWork Server as the sole write authority and SHALL NOT require an Agent or AI provider for core task operations. Collaboration is authorization on the same task model, not a different task type.
 
 #### Scenario: Create a task without an Agent
 - **WHEN** an authenticated organization member creates a task while no Agent is available
@@ -24,10 +24,10 @@ The system SHALL support a required title, optional description, priority, start
 - **AND THEN** the final assignee completion changes the single task state to `completed`
 
 ### Requirement: Task visibility and authorization
-The system SHALL support `private`, `members`, and `organization` visibility and SHALL authorize every read and mutation using the current organization member identity and task/list roles.
+The system SHALL support `private`, `members`, and `organization` as compatibility values for direct visibility and SHALL authorize every read and mutation using the current organization member identity and the direct and list-derived grants defined in `task-list-derived-access`.
 
 #### Scenario: Private task isolation
-- **WHEN** a member other than the creator searches for or directly requests a private task
+- **WHEN** a member other than the creator, without a list grant, searches for or directly requests a task that has not been directly shared
 - **THEN** the system denies access and does not disclose task fields
 
 #### Scenario: Members visibility
@@ -60,7 +60,7 @@ The system SHALL schedule reminders in the cloud, allow at most one active remin
 - **THEN** the system delivers it to the creator exactly once as a business event
 
 ### Requirement: Soft deletion and recovery
-The system SHALL soft-delete tasks for 30 days and SHALL allow only the original creator or current list administrator to read the tombstone and restore it.
+The system SHALL soft-delete tasks for 30 days and SHALL allow only the original creator or an administrator with a retained legacy primary-list grant to read the tombstone and restore it. An enabled filing does not grant access to tombstones.
 
 #### Scenario: Restore task
 - **WHEN** an authorized restorer restores a task within 30 days

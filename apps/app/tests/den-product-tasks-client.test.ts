@@ -50,15 +50,15 @@ test("product task client sends the delegated view token", async () => {
 test("membership writes encode both ids, send no body, and read the resulting state", async () => {
   const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
   const taskId = task.id, listId = "list/two";
-  for (const added of [true, false]) {
+  for (const [added, confirmedAccessVersion] of [[true, undefined], [true, 17], [false, 17]] as const) {
     globalThis.fetch = async (url, init) => {
-      expect(String(url)).toEndWith("/v1/tasks/task%2Fone/lists/list%2Ftwo");
+      expect(String(url)).toEndWith(`/v1/tasks/task%2Fone/lists/list%2Ftwo${added && confirmedAccessVersion ? "?confirmedAccessVersion=17" : ""}`);
       expect(init?.method).toBe(added ? "PUT" : "DELETE");
       expect(init?.body).toBeUndefined();
       expect(new Headers(init?.headers).get("x-jugglework-legacy-org-id")).toBe("org_one");
       return Response.json({ taskId, listId, added });
     };
-    expect(await client.setProductTaskListMembership("org_one", taskId, listId, added)).toEqual({ taskId, listId, added });
+    expect(await client.setProductTaskListMembership("org_one", taskId, listId, added, confirmedAccessVersion)).toEqual({ taskId, listId, added });
   }
   for (const bad of [{ taskId, listId, added: 1 }, { taskId: "other", listId, added: true }, { taskId, listId: "other", added: true }]) {
     globalThis.fetch = async () => Response.json(bad);
@@ -76,6 +76,18 @@ test("detail and list honor the visible projection, including empty, before lega
       expect(normalized.listId).toBe(listIds === undefined ? "legacy" : listIds[0] ?? null);
     }
   }
+});
+
+test("task detail preserves the optional assignment permission and rejects non-booleans", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  for (const canAssign of [undefined, true, false]) {
+    globalThis.fetch = async () => Response.json({ ...result, permissions: { ...result.permissions, canAssign } });
+    const detail = await client.getProductTask("org_one", task.id);
+    expect(detail.permissions.canAssign).toBe(canAssign);
+    expect("canAssign" in detail.permissions).toBe(canAssign !== undefined);
+  }
+  globalThis.fetch = async () => Response.json({ ...result, permissions: { ...result.permissions, canAssign: "true" } });
+  await expect(client.getProductTask("org_one", task.id)).rejects.toMatchObject({ code: "invalid_task_payload" });
 });
 
 test("product task collaboration client strictly reads groups and group members", async () => {
@@ -146,6 +158,9 @@ test("product task client transfers task-list ownership through the dedicated co
   expect(requests[0]?.init?.method).toBe("POST");
   expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({ expectedVersion: 3, idempotencyKey: "transfer-owner", newOwnerMemberId: "member_two" });
   expect(transferred.list.creatorMemberId).toBe("member_two");
+
+  await client.transferProductTaskListOwnership("org_one", "list/one", { expectedVersion: 3, idempotencyKey: "confirmed-transfer", newOwnerMemberId: "member_two", confirmedAccessDigest: "reviewed-digest" });
+  expect(JSON.parse(String(requests[1]?.init?.body))).toEqual({ expectedVersion: 3, idempotencyKey: "confirmed-transfer", newOwnerMemberId: "member_two", confirmedAccessDigest: "reviewed-digest" });
 });
 
 test("product task client strictly validates task-list ownership results", async () => {
@@ -171,6 +186,59 @@ test("product task client treats permissions absent from older task-list respons
   const result = await client.getProductTaskList("org_one", "list_one");
   expect(result.permissions.canTransferOwnership).toBe(false);
   expect(result.permissions.canDelete).toBe(false);
+});
+
+test("task list detail and index distinguish legacy responses from explicit task access settings", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const listId = "list_one";
+  const respondWith = (grantsTaskAccess: unknown) => {
+    const list = { id: listId, creatorMemberId: "member_one", name: "Launch", description: "", marker: "L", visibility: "members", grantsTaskAccess, version: 2, archivedAt: null, createdAt: task.createdAt, updatedAt: task.updatedAt };
+    const detail = { list, members: [{ memberId: "member_one", role: "administrator" }], permissions: { canView: true, canEdit: true, canManageMembers: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false };
+    globalThis.fetch = async (url) => Response.json(String(url).endsWith(`/${listId}`) ? detail : { items: [list], nextCursor: "" });
+  };
+  for (const grantsTaskAccess of [undefined, true, false]) {
+    respondWith(grantsTaskAccess);
+    const detail = await client.getProductTaskList("org_one", listId);
+    const page = await client.listProductTaskLists("org_one");
+    for (const list of [detail.list, page.items[0]!]) {
+      expect(list.grantsTaskAccess).toBe(grantsTaskAccess);
+      expect("grantsTaskAccess" in list).toBe(grantsTaskAccess !== undefined);
+    }
+  }
+  respondWith(null);
+  await expect(client.getProductTaskList("org_one", listId)).rejects.toMatchObject({ code: "invalid_task_list_payload" });
+  await expect(client.listProductTaskLists("org_one")).rejects.toMatchObject({ code: "invalid_task_list_page" });
+});
+
+test("task list access previews are scoped and the confirmed digest is sent in the list patch", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const listId = "list/one";
+  globalThis.fetch = async (url, init) => {
+    expect(String(url)).toEndWith("/v1/task-lists/list%2Fone/access-preview");
+    expect(init?.method).toBe("GET");
+    expect(new Headers(init?.headers).get("x-jugglework-legacy-org-id")).toBe("org_one");
+    return Response.json({ taskCount: 2, digest: "reviewed-digest" });
+  };
+  const preview = await client.getProductTaskListAccessPreview("org_one", listId);
+  expect(preview).toEqual({ taskCount: 2, digest: "reviewed-digest" });
+
+  const patch = { expectedVersion: 2, idempotencyKey: "enable-list-access", enableTaskAccess: true as const, confirmedAccessDigest: preview.digest };
+  globalThis.fetch = async (url, init) => {
+    expect(String(url)).toEndWith("/v1/task-lists/list%2Fone");
+    expect(init?.method).toBe("PATCH");
+    expect(JSON.parse(String(init?.body))).toEqual(patch);
+    return Response.json({
+      list: { id: listId, creatorMemberId: "member_one", name: "Launch", description: "", marker: "L", visibility: "private", grantsTaskAccess: true, version: 3, archivedAt: null, createdAt: task.createdAt, updatedAt: task.updatedAt },
+      members: [{ memberId: "member_one", role: "administrator" }],
+      permissions: { canView: true, canEdit: true, canManageMembers: true, canAddTasks: true, canArchive: true, canRestore: false },
+      replayed: false,
+    });
+  };
+  expect((await client.updateProductTaskList("org_one", listId, patch)).list.grantsTaskAccess).toBe(true);
+  for (const invalid of [{ taskCount: -1, digest: "x" }, { taskCount: 1.5, digest: "x" }, { taskCount: "1", digest: "x" }, { taskCount: 1, digest: "" }, { taskCount: 0 }]) {
+    globalThis.fetch = async () => Response.json(invalid);
+    await expect(client.getProductTaskListAccessPreview("org_one", listId)).rejects.toMatchObject({ code: "invalid_task_list_access_preview" });
+  }
 });
 
 test("product task client deletes a task list through the dedicated strict contract", async () => {
