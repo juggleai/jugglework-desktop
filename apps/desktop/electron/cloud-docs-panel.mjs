@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebContentsView, session, shell } from "electron";
+import { createCloudDocsExports } from "./cloud-docs-export.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 
@@ -58,6 +59,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
   const retained = new Map();
   const intakes = new Map();
   const revocations = new Map();
+  const exports = createCloudDocsExports();
   const items = () => [...new Set([...currents.values(), ...retained.values(), ...backgrounds.values()])];
   const active = (item) => !!item && (currents.get(item.ownerWindow.id) === item || retained.get(item.input.instanceId) === item || backgrounds.get(item.input.instanceId) === item);
   const find = (input) => input?.instanceId
@@ -351,6 +353,23 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
 
   /** 注册主宿主操作和远程页面的最小只读状态消息。 */
   function registerIpc(ipcMain) {
+    const exportView = (event) => {
+      const item = items().find(value => value.view.webContents === event.sender);
+      if (!item || event.senderFrame !== item.view.webContents.mainFrame ||
+        item.ownerWindow.isDestroyed() || item.input.background || !item.view.getVisible() ||
+        item.input.presentation?.mode !== "product" || !documentFor(item.input.instanceId, item.ownerWindow)) return null;
+      return item;
+    };
+    ipcMain.handle("jugglework:docs:save-export", (event, input) => {
+      const item = exportView(event);
+      if (!item) throw new Error("Forbidden");
+      return exports.save(item, input, () => exportView(event) === item);
+    });
+    ipcMain.handle("jugglework:docs:reveal-export", (event, revealId) => {
+      const item = exportView(event);
+      if (!item) throw new Error("Forbidden");
+      return exports.reveal(item, revealId, () => exportView(event) === item);
+    });
     ipcMain.on("jugglework:docs:layout-command", (event, input) => {
       const current = find(input);
       if (!trusted(event, input) || !current?.ready || current.denied ||

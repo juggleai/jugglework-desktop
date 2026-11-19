@@ -1,8 +1,13 @@
 const { ipcRenderer, contextBridge } = require("electron");
 
-// TIPS: 只声明原生展示环境，不向远端页面开放宿主方法。
+// TIPS: 仅开放明确的原生能力，不暴露通用 IPC 或本机文件路径。
 contextBridge.exposeInMainWorld("juggleworkDocsDesktop", true);
 contextBridge.exposeInMainWorld("juggleworkDocsDetachedTab", true);
+contextBridge.exposeInMainWorld("juggleworkDocsExport", {
+  inFinder: process.platform === "darwin",
+  save: (input) => ipcRenderer.invoke("jugglework:docs:save-export", input),
+  reveal: (revealId) => ipcRenderer.invoke("jugglework:docs:reveal-export", revealId),
+});
 ipcRenderer.on("jugglework:docs:layout-command", (_event, message) => {
   window.postMessage({ channel: "jugglework-docs-layout-command", message }, location.origin);
 });

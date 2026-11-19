@@ -40,6 +40,8 @@ const views: NativeView[] = [];
 const clearedOrigins: string[] = [];
 let failStorageCleanup = false;
 mock.module("electron", () => ({
+  app: { getPath: () => "/test/Downloads" },
+  dialog: { showSaveDialog: async () => ({ canceled: true, filePath: "" }) },
   WebContentsView: NativeView,
   session: {
     fromPartition: () => ({
@@ -118,6 +120,12 @@ test("原生视图在新文档授权前隐藏，401/403/404 隐藏并报告，�
   expect(first.visible).toBe(true);
   expect(first.webContents.focus).toHaveBeenCalledTimes(1);
   first.webContents.url = "http://docs.localhost:13000/workspace/ws/doc";
+  const save = handlers.get("jugglework:docs:save-export")!;
+  const file = { format: "pdf", fileName: "测试.pdf", blobUrl: `blob:http://docs.localhost:13000/${randomUUID()}` };
+  expect(() => save({ sender: first.webContents, senderFrame: {} }, file)).toThrow("Forbidden");
+  const guest = { sender: first.webContents, senderFrame: first.webContents.mainFrame };
+  await expect(save(guest, { ...file, blobUrl: `blob:https://example.test/${randomUUID()}` })).rejects.toThrow("docs_export_invalid");
+  await expect(save(guest, file)).resolves.toEqual({ status: "cancelled" });
   const openFromPage = (docId: string, frame = first.webContents.mainFrame) =>
     events.get("jugglework:docs:message")!(
       { sender: first.webContents, senderFrame: frame },
