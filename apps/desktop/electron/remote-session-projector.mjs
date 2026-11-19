@@ -6,6 +6,7 @@ import {
   normalizeRemoteMessage,
   normalizeRemoteMessagePart,
   normalizeRemoteTodo,
+  parseRemotePermissionMode,
 } from "./remote-control-read-adapters.mjs";
 import {
   normalizeRemotePermissionInteraction,
@@ -28,7 +29,8 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 /** @typedef {import("@jugglework/types/desktop-remote-control").DesktopRemoteMessagePart} DesktopRemoteMessagePart */
 /** @typedef {import("@jugglework/types/desktop-remote-control").DesktopRemoteInteraction} DesktopRemoteInteraction */
 /** @typedef {{ setTimeout(callback: () => void, delay: number): unknown, clearTimeout(handle: unknown): void }} ProjectorTimers */
-/** @typedef {{ controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, payloadVersion: 1 | 2, connectionGeneration: number, sequenceKey: string, sequence: number }} Binding */
+/** @typedef {{ controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, payloadVersion: 1 | 2, connectionGeneration: number, sequenceKey: string, sequence: number, permissionModeRevision: number | null, permissionProfileVersion: number | null }} Binding */
+/** @typedef {import("@jugglework/types/desktop-remote-control").DesktopRemoteSessionPermissionMode} PermissionMode */
 /** @typedef {{ info: Record<string, any> | null, parts: Map<string, { raw: Record<string, any>, normalized: DesktopRemoteMessagePart }>, pending: Map<string, string>, fullEmitted: boolean }} MessageState */
 /** @typedef {{ messages: Map<string, MessageState>, todos: unknown[], interactions: Map<string, DesktopRemoteInteraction>, durableSequence: number | null }} SessionState */
 /** @typedef {{ key: string, workspaceId: string, sessionId: string, messageId: string, partId: string, occurredAt: string, timer: unknown }} PendingPartEmission */
@@ -322,8 +324,33 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
       connectionGeneration,
       sequenceKey,
       sequence: sequenceStore.get(sequenceKey) ?? 0,
+      permissionModeRevision: null,
+      permissionProfileVersion: null,
     });
     return true;
+  }
+
+  /** @param {{ controlSessionId: string, connectionGeneration: number, workspaceId: string, rootSessionId: string }} input @param {PermissionMode} mode */
+  function recordPermissionModeSnapshot(input, mode) {
+    const binding = bindings.get(input.controlSessionId);
+    if (!binding || binding.connectionGeneration !== input.connectionGeneration || binding.workspaceId !== input.workspaceId ||
+        binding.sessionId !== input.rootSessionId || mode.revision < (binding.permissionModeRevision ?? 0)) return null;
+    const initialized = binding.permissionModeRevision === null;
+    binding.permissionModeRevision = mode.revision;
+    binding.permissionProfileVersion = mode.profileVersion;
+    return initialized ? "initialized" : "recorded";
+  }
+
+  /** @param {string} workspaceId @param {Record<string, unknown>} item */
+  function acceptPermissionModeEvent(workspaceId, item) {
+    if (stopped || item.workspaceId !== workspaceId || !isIdentifier(item.rootSessionId) || item.type !== "session.permission-mode.updated") return;
+    for (const binding of bindings.values()) {
+      if (binding.workspaceId !== workspaceId || binding.sessionId !== item.rootSessionId || binding.permissionModeRevision === null) continue;
+      const mode = parseRemotePermissionMode(item, binding.permissionProfileVersion);
+      if (!mode.success || mode.data.revision <= binding.permissionModeRevision) continue;
+      binding.permissionModeRevision = mode.data.revision;
+      emitToBinding(binding, { type: "session.permission-mode.updated", permissionMode: mode.data }, new Date(timestampMs(now())).toISOString());
+    }
   }
 
   /** @param {string} controlSessionId */
@@ -491,5 +518,5 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
     sessions.clear();
   }
 
-  return Object.freeze({ bind, unbind, accept, reconnectGap, stop });
+  return Object.freeze({ bind, unbind, accept, recordPermissionModeSnapshot, acceptPermissionModeEvent, reconnectGap, stop });
 }

@@ -4,6 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import {
   desktopRemoteOperationResultSchema,
+  desktopRemoteSessionPermissionModeSchema,
   desktopRemoteSessionSnapshotV1Schema,
   desktopRemoteSessionSnapshotV2Schema,
   isSafeDesktopRemoteAttachmentDataUrl,
@@ -99,7 +100,48 @@ const snapshotResponseSchema = z.object({
 }).strict();
 
 /** @typedef {{ id: string, name?: unknown, displayName?: unknown, path: string, workspaceType?: unknown }} LocalWorkspace */
-/** @typedef {{ getJson(pathname: string): Promise<unknown> }} ManagedRuntimeClient */
+/** @typedef {{ getJson(pathname: string, options?: { signal?: AbortSignal }): Promise<unknown> }} ManagedRuntimeClient */
+/** @typedef {import("@jugglework/types/desktop-remote-control").DesktopRemoteSessionPermissionMode} PermissionMode */
+
+/** @param {Record<string, unknown>} state @param {number} currentProfileVersion */
+export function parseRemotePermissionMode(state, currentProfileVersion) {
+  return desktopRemoteSessionPermissionModeSchema.safeParse({
+    revision: state.authorityRevision,
+    requestedMode: state.requestedMode,
+    effectiveMode: state.effectiveMode,
+    // Persisted rows can refer to a stale profile. The remote controller needs
+    // the currently supported version to acknowledge it again if paused.
+    profileVersion: currentProfileVersion,
+    updatedAt: state.updatedAt,
+  });
+}
+
+const permissionModeResponseSchema = z.object({
+  supported: z.literal(true),
+  profileVersion: z.number().int().positive(),
+  state: z.object({ workspaceId: z.string(), rootSessionId: z.string() }).loose().nullish(),
+});
+
+async function readPermissionMode(client, workspaceId, rootSessionId, signal) {
+  let response;
+  try {
+    response = await client.getJson(`/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(rootSessionId)}/permission-mode`, { signal });
+  } catch (error) {
+    if (error instanceof ManagedRuntimeClientError && error.code === "http_error" &&
+        ((error.status === 404 && (!error.serverCode || error.serverCode === "not_found")) || error.status === 501)) return undefined;
+    throw error;
+  }
+  if (response?.supported === false) return undefined;
+  const { state, profileVersion } = permissionModeResponseSchema.parse(response);
+  if (state && (state.workspaceId !== workspaceId || state.rootSessionId !== rootSessionId)) {
+    throw new RemoteControlOperationExecutionError("snapshot_required");
+  }
+  const mode = parseRemotePermissionMode(state ?? {
+    authorityRevision: 0, requestedMode: "request-approval", effectiveMode: "request-approval", updatedAt: 0,
+  }, profileVersion);
+  if (!mode.success) throw mode.error;
+  return mode.data;
+}
 
 /** @param {unknown} value */
 function parseArguments(value, keys) {
@@ -490,11 +532,13 @@ export function createRemoteSessionRootVerifier({ workspaceStore, managedRuntime
  *   interactions?: { listPending(input: { workspaceId: string, sessionId: string, payloadVersion: 1 | 2 }): unknown | Promise<unknown> } | null,
  *   logger?: { warn?: (message: string, metadata: Record<string, unknown>) => void },
  *   imageThumbnailer?: SnapshotImageThumbnailer | null,
+ *   onPermissionModeSnapshot?: (binding: { controlSessionId: string, connectionGeneration: number, workspaceId: string, rootSessionId: string }, mode: PermissionMode) => boolean | void,
  * }} options
  */
-export function createRemoteControlReadRegistrations({ workspaceStore, managedRuntimeClient, now = Date.now, interactions = null, logger = {}, imageThumbnailer = null }) {
+export function createRemoteControlReadRegistrations({ workspaceStore, managedRuntimeClient, now = Date.now, interactions = null, logger = {}, imageThumbnailer = null, onPermissionModeSnapshot = null }) {
   if (!workspaceStore || typeof workspaceStore.readWorkspaceState !== "function" || !managedRuntimeClient || typeof managedRuntimeClient.getJson !== "function" || typeof now !== "function" ||
-      (imageThumbnailer !== null && typeof imageThumbnailer !== "function")) {
+      (imageThumbnailer !== null && typeof imageThumbnailer !== "function") ||
+      (onPermissionModeSnapshot !== null && typeof onPermissionModeSnapshot !== "function")) {
     throw new TypeError("Remote read adapter dependencies are invalid.");
   }
 
@@ -564,9 +608,11 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
         : ["workspaceId", "sessionId"];
       const parsed = parseArguments(value, keys);
       return Object.freeze({ workspaceId: parsed.workspaceId, sessionId: payloadVersion === 2 ? parsed.rootSessionId : parsed.sessionId });
-    }, async ({ arguments: args, context, payloadVersion }) => {
-      const boundRootSessionId = context?.remoteSessionBinding?.rootSessionId;
-      if (!identifierSchema.safeParse(boundRootSessionId).success || boundRootSessionId !== args.sessionId) {
+    }, async ({ arguments: args, context, payloadVersion, signal }) => {
+      const binding = context?.remoteSessionBinding;
+      const boundRootSessionId = binding?.rootSessionId;
+      if (!identifierSchema.safeParse(boundRootSessionId).success || boundRootSessionId !== args.sessionId ||
+          (binding.workspaceId !== undefined && binding.workspaceId !== args.workspaceId)) {
         throw new RemoteControlOperationExecutionError("snapshot_required");
       }
       const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
@@ -612,6 +658,7 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
       if (!pending || typeof pending !== "object" || !Array.isArray(pendingRecord.items)) throw new RemoteControlOperationExecutionError("internal_error");
       pendingOperations = pendingRecord.items;
       const runs = await readActiveRuns(managedRuntimeClient, workspace.id);
+      const permissionMode = await readPermissionMode(managedRuntimeClient, workspace.id, args.sessionId, signal);
       const captured = new Date(now());
       if (!Number.isFinite(captured.getTime())) throw new RemoteControlOperationExecutionError("internal_error");
       const result = {
@@ -634,6 +681,7 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
             ? { revision: value.revision, mode: value.mode, model: value.model, updatedAt: value.updatedAt }
             : { revision: 0, mode: "auto", model: null, updatedAt: 0 };
         })(),
+        ...(permissionMode ? { permissionMode } : {}),
         capturedAt: captured.toISOString(),
       };
       const snapshotSchema = payloadVersion === REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION
@@ -651,6 +699,9 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
           // Diagnostics must never alter the fail-closed command outcome.
         }
         throw parsed.error;
+      }
+      if (parsed.data.permissionMode && !signal?.aborted && onPermissionModeSnapshot?.(binding, parsed.data.permissionMode) === false) {
+        throw new RemoteControlOperationExecutionError("snapshot_required");
       }
       return parsed.data;
     }, [REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION, REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION]),

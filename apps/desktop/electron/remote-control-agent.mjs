@@ -53,6 +53,7 @@ const OPERATION_NAMES = new Set([
   "session.create",
   "session.prompt",
   "session.model.set",
+  "session.permission-mode.set",
   "session.abort",
   "session.pending.cancel",
   "interaction.permission.reply",
@@ -62,6 +63,7 @@ const MUTATION_OPERATIONS = new Set([
   "session.create",
   "session.prompt",
   "session.model.set",
+  "session.permission-mode.set",
   "session.abort",
   "session.pending.cancel",
   "interaction.permission.reply",
@@ -466,6 +468,7 @@ function validRequest(value) {
     case "session.create": return hasExactKeys(args, ["workspaceId", "title"]) && isIdentifier(args.workspaceId) && isSessionCreateTitle(args.title);
     case "session.prompt": return desktopRemoteOperationRequestSchema.safeParse(value).success;
     case "session.model.set": return desktopRemoteOperationRequestSchema.safeParse(value).success;
+    case "session.permission-mode.set": return desktopRemoteOperationRequestSchema.safeParse(value).success;
     case "session.abort": return hasExactKeys(args, ["workspaceId", "sessionId", "expectedRunId"]) && isIdentifier(args.workspaceId) &&
       isIdentifier(args.sessionId) && isIdentifier(args.expectedRunId);
     case "session.pending.cancel": return hasExactKeys(args, ["workspaceId", "sessionId", "pendingOperationId"]) &&

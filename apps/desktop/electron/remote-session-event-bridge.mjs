@@ -2,6 +2,9 @@ import { createRemoteSessionProjector } from "./remote-session-projector.mjs";
 import { createActivityTerminalPoller } from "./activity-terminal-poller.mjs";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// Match the managed runtime's permission-mode feed page size and retention.
+const PERMISSION_MODE_PAGE_SIZE = 500;
+const PERMISSION_MODE_MAX_PAGES = 11; // 5,000 rows plus a final short or empty page.
 /** @param {unknown} value @returns {value is Record<string, any>} */
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -35,7 +38,7 @@ function observationStatus(type, data) {
   return ["starting", "waiting", "aborting", "idle", "completed", "failed", "aborted"].includes(raw) ? raw : null;
 }
 
-/** @typedef {{ identity: object, controller: AbortController, live: boolean, attempt: number, waiters: Set<(ready: boolean) => void> }} WorkspaceSubscription */
+/** @typedef {{ identity: object, controller: AbortController, live: boolean, attempt: number, waiters: Set<(ready: boolean) => void>, permissionFeed: { cursor: number } | null }} WorkspaceSubscription */
 
 /**
  * @param {{
@@ -56,16 +59,18 @@ function observationStatus(type, data) {
  *   onStop?: () => void,
  *   interactions?: { resolveOwnership(input: { workspaceId: string, targetSessionId: string }): Promise<unknown> } | null,
  *   listSessionModelEvents?: (input: { workspaceId: string, since: number, signal: AbortSignal }) => Promise<unknown>,
+ *   listSessionPermissionModeEvents?: (input: { workspaceId: string, since: number, signal: AbortSignal }) => Promise<unknown>,
  *   listRunTerminals?: (input: { workspaceId: string, after: number, signal: AbortSignal, lifetimeSignal: AbortSignal }) => Promise<any>,
  * }} options
  */
-export function createRemoteSessionEventBridge({ sseClient, coordinator, listActiveRuns, observeRun, publish, publishActivityTaskStatus = null, randomUUID, now, timers, logger = {}, coalesceMs = 25, subscriptionReadinessTimeoutMs = 3_000, subscriptionRetryDelaysMs = [1_000, 2_000, 5_000, 10_000, 30_000], onNotificationEvent = null, onStop = null, interactions = null, listSessionModelEvents = null, listRunTerminals = null }) {
+export function createRemoteSessionEventBridge({ sseClient, coordinator, listActiveRuns, observeRun, publish, publishActivityTaskStatus = null, randomUUID, now, timers, logger = {}, coalesceMs = 25, subscriptionReadinessTimeoutMs = 3_000, subscriptionRetryDelaysMs = [1_000, 2_000, 5_000, 10_000, 30_000], onNotificationEvent = null, onStop = null, interactions = null, listSessionModelEvents = null, listSessionPermissionModeEvents = null, listRunTerminals = null }) {
   if (!sseClient || typeof sseClient.subscribe !== "function" || !coordinator ||
       typeof coordinator.getActiveRunId !== "function" || typeof coordinator.recordServerRun !== "function" ||
       typeof coordinator.clearTerminalRun !== "function" || typeof listActiveRuns !== "function" || typeof observeRun !== "function" ||
        typeof publish !== "function" || !(publishActivityTaskStatus === null || typeof publishActivityTaskStatus === "function") || !(onNotificationEvent === null || typeof onNotificationEvent === "function") ||
        !(onStop === null || typeof onStop === "function") ||
-        !(interactions === null || typeof interactions?.resolveOwnership === "function") || !(listSessionModelEvents === null || typeof listSessionModelEvents === "function") ||
+         !(interactions === null || typeof interactions?.resolveOwnership === "function") || !(listSessionModelEvents === null || typeof listSessionModelEvents === "function") ||
+       !(listSessionPermissionModeEvents === null || typeof listSessionPermissionModeEvents === "function") ||
        !Number.isSafeInteger(subscriptionReadinessTimeoutMs) || subscriptionReadinessTimeoutMs < 1 || subscriptionReadinessTimeoutMs > 10_000 ||
        !Array.isArray(subscriptionRetryDelaysMs) || subscriptionRetryDelaysMs.length === 0 ||
        subscriptionRetryDelaysMs.some((delay) => !Number.isSafeInteger(delay) || delay < 1 || delay > 60_000)) {
@@ -374,6 +379,48 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
       [...pendingBindings.values()].some((pending) => pending.binding.workspaceId === workspaceId);
   }
 
+  /** @param {string} workspaceId @param {WorkspaceSubscription} subscription @param {() => boolean} current */
+  async function pollPermissionModeEvents(workspaceId, subscription, current) {
+    while (current() && workspaceNeeded(workspaceId)) {
+      const feed = subscription.permissionFeed;
+      if (feed && [...bindings.values()].some((binding) => binding.workspaceId === workspaceId)) {
+        const isCurrent = () => current() && subscription.permissionFeed === feed;
+        try {
+          const latest = new Map();
+          let since = feed.cursor;
+          let drained = false;
+          // Publish only after draining: a duplicate revision can straddle pages.
+          for (let page = 0; page < PERMISSION_MODE_MAX_PAGES && isCurrent(); page++) {
+            const response = await listSessionPermissionModeEvents({ workspaceId, since, signal: subscription.controller.signal });
+            if (!isCurrent() || !isRecord(response) || !Array.isArray(response.items) ||
+                !Number.isSafeInteger(response.cursor) || response.cursor < since || (response.items.length && response.cursor === since)) break;
+            for (const item of response.items) {
+              if (!isRecord(item) || item.type !== "session.permission-mode.updated" || item.workspaceId !== workspaceId ||
+                  !identifier(item.rootSessionId) || !Number.isSafeInteger(item.seq) || item.seq <= since || item.seq > response.cursor ||
+                  !Number.isSafeInteger(item.authorityRevision) || item.authorityRevision < 0) continue;
+              const previous = latest.get(item.rootSessionId);
+              if (!previous || item.authorityRevision > previous.authorityRevision ||
+                  (item.authorityRevision === previous.authorityRevision && item.seq > previous.seq)) latest.set(item.rootSessionId, item);
+            }
+            since = response.cursor;
+            if (response.items.length < PERMISSION_MODE_PAGE_SIZE) {
+              drained = true;
+              break;
+            }
+          }
+          if (drained && isCurrent()) {
+            feed.cursor = since;
+            for (const item of latest.values()) {
+              if (!isCurrent()) break;
+              projector.acceptPermissionModeEvent(workspaceId, item);
+            }
+          }
+        } catch {} // A missing endpoint or transient read failure must not disrupt SSE.
+      }
+      await wait(1_000, subscription.controller.signal);
+    }
+  }
+
   /** @param {string} workspaceId @returns {WorkspaceSubscription | null} */
   function ensureSubscription(workspaceId) {
     if (stopped) return null;
@@ -382,7 +429,8 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
     const controller = new AbortController();
     const identity = {};
     const generation = lifetime;
-    const subscription = { identity, controller, live: false, attempt: 0, waiters: new Set() };
+    /** @type {WorkspaceSubscription} */
+    const subscription = { identity, controller, live: false, attempt: 0, waiters: new Set(), permissionFeed: null };
     subscriptions.set(workspaceId, subscription);
     const current = () => !stopped && generation === lifetime && subscriptions.get(workspaceId)?.identity === identity;
     const terminalPoller = listRunTerminals && publishActivityTaskStatus ? createActivityTerminalPoller({
@@ -514,6 +562,7 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
         await wait(1_000, controller.signal);
       }
     })();
+    if (listSessionPermissionModeEvents) void pollPermissionModeEvents(workspaceId, subscription, current);
     return subscription;
   }
 
@@ -706,5 +755,19 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
     return true;
   }
 
-  return Object.freeze({ bind, unbind, clear, watch, stop });
+  /** @param {Parameters<ReturnType<typeof createRemoteSessionProjector>["recordPermissionModeSnapshot"]>[0]} binding @param {Parameters<ReturnType<typeof createRemoteSessionProjector>["recordPermissionModeSnapshot"]>[1]} mode */
+  function recordPermissionModeSnapshot(binding, mode) {
+    const subscription = subscriptions.get(binding.workspaceId);
+    if (!subscription) return false;
+    const recorded = projector.recordPermissionModeSnapshot(binding, mode);
+    if (recorded === "initialized") {
+      // A change may have committed between the new binding's snapshot read
+      // and its completion, after an existing binding advanced the cursor.
+      // Replay against per-binding revision floors and invalidate in-flight pages.
+      subscription.permissionFeed = { cursor: 0 };
+    }
+    return recorded !== null;
+  }
+
+  return Object.freeze({ bind, unbind, clear, watch, stop, recordPermissionModeSnapshot });
 }

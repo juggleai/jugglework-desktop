@@ -1698,6 +1698,7 @@ remoteControlReadRegistrations = createRemoteControlReadRegistrations({
       console.warn("[desktop-remote] operation validation warning", metadata),
   },
   imageThumbnailer: remoteSnapshotImageThumbnail,
+  onPermissionModeSnapshot: (binding, mode) => remoteSessionEventBridge?.recordPermissionModeSnapshot(binding, mode) ?? false,
 });
 remoteControlSessionRootVerifier = createRemoteSessionRootVerifier({
   workspaceStore,
@@ -1708,6 +1709,8 @@ remoteControlSessionRootVerifier = createRemoteSessionRootVerifier({
 });
 remoteControlMutationRegistrations = createRemoteControlMutationRegistrations({
   workspaceStore,
+  permissionModeHostClient: fileHostClient,
+  getDesktopConfig: () => mainWindow && !mainWindow.isDestroyed() ? fileWindowDesktopContext.read(mainWindow) : null,
   managedRuntimeClient: createManagedRuntimeClient({
     getAccess: () => runtimeManager.managedServerAccess(),
     fetcher: mainProcessFetch,
@@ -1746,6 +1749,10 @@ function createMainRemoteSessionEventBridge() {
     },
     listSessionModelEvents: ({ workspaceId, since, signal }) => managedRuntimeClient.getJson(
       `/workspace/${encodeURIComponent(workspaceId)}/session-model-events?since=${encodeURIComponent(String(since))}`,
+      { signal },
+    ),
+    listSessionPermissionModeEvents: ({ workspaceId, since, signal }) => managedRuntimeClient.getJson(
+      `/workspace/${encodeURIComponent(workspaceId)}/session-permission-mode-events?since=${encodeURIComponent(String(since))}`,
       { signal },
     ),
     publish: (event, options) => remoteControlAgent?.publishSessionEvent(event, options) ?? false,

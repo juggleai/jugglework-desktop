@@ -110,6 +110,8 @@ function harness(options = {}) {
     workspaceStore: fakeWorkspaceStore(),
     managedRuntimeClient: client,
     coordinator,
+    permissionModeHostClient: options.permissionModeHostClient,
+    getDesktopConfig: options.getDesktopConfig,
     interactions: {
       resolveOwnership: async ({ targetSessionId }) => targetSessionId === "ses_child"
         ? { rootSessionId: SESSION_ID, targetSessionId, parentSessionId: SESSION_ID }
@@ -342,6 +344,32 @@ test("session.model.set uses PUT with cancellation and normalizes the authoritat
   assert.equal(call.method, "PUT");
   assert.equal(call.options.signal, controller.signal);
   assert.deepEqual(call.body, { expectedRevision: 3, mode: "explicit", model });
+});
+
+test("enabling full access requires a verified binding, current acknowledgement and allowed policy", async () => {
+  const calls = [];
+  let config = { allowSessionFullAccess: false };
+  const { registrations } = harness({
+    getDesktopConfig: () => config,
+    permissionModeHostClient: {
+      async putHostPermissionMode(pathname, body) {
+        calls.push({ pathname, body });
+        return { state: { authorityRevision: 4, requestedMode: "full-access", effectiveMode: "full-access", profileVersion: 1, updatedAt: 1003 } };
+      },
+    },
+  });
+  const setter = registrations.find((r) => r.operation === "session.permission-mode.set");
+  const args = setter.validateArguments({ workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, requestedMode: "full-access", expectedRevision: 3, acknowledgedProfileVersion: 1 }, 1);
+  const context = { remoteSessionBinding: { rootSessionId: SESSION_ID, workspaceId: WORKSPACE_ID, rootVerified: true } };
+  await assert.rejects(setter.execute({ arguments: args, context: bindingContext() }), { code: "session_not_found" });
+  await assert.rejects(setter.execute({ arguments: { ...args, acknowledgedProfileVersion: 2 }, context }), { code: "invalid_request" });
+  await assert.rejects(setter.execute({ arguments: args, context }), { code: "forbidden" });
+  assert.equal(calls.length, 0);
+  config = { allowSessionFullAccess: true };
+  assert.deepEqual(await setter.execute({ arguments: args, context }), { revision: 4, requestedMode: "full-access", effectiveMode: "full-access", profileVersion: 1, updatedAt: 1003 });
+  assert.equal(calls[0].pathname, `/workspace/${WORKSPACE_ID}/sessions/${SESSION_ID}/permission-mode/remote-activation`);
+  assert.equal(calls[0].body.expectedRevision, 3);
+  assert.equal(calls[0].body.acknowledgement.profileVersion, 1);
 });
 
 for (const [name, postResult, expected] of [

@@ -149,6 +149,20 @@ export function createManagedRuntimeClient({
   }
 
   /**
+   * Main 私有：用本机 host 权限写入会话权限模式。只放行这一条路径，
+   * 调用方无法借此访问其他 host API，也不回退到 client 权限。
+   * @param {string} pathname
+   * @param {unknown} body
+   * @param {{ signal?: AbortSignal }} [options]
+   */
+  async function putHostPermissionMode(pathname, body, options = {}) {
+    if (!/^\/workspace\/[^/]+\/sessions\/[^/]+\/permission-mode\/remote-activation$/.test(pathname) ||
+        new URL(pathname, "http://localhost").pathname !== pathname)
+      throw new TypeError("Managed host path is not a session permission-mode endpoint.");
+    return requestJson("PUT", pathname, body, options, true);
+  }
+
+  /**
    * @param {"GET" | "POST" | "PUT"} method
    * @param {string} pathname
    * @param {unknown} body
@@ -253,5 +267,5 @@ export function createManagedRuntimeClient({
     }
   }
 
-  return Object.freeze({ getJson, postJson, putJson, postHostJson });
+  return Object.freeze({ getJson, postJson, putJson, postHostJson, putHostPermissionMode });
 }

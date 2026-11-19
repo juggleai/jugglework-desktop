@@ -4,7 +4,9 @@ import { z } from "zod";
 import {
   desktopRemoteOperationRequestSchema,
   desktopRemoteOperationResultSchema,
+  SESSION_PERMISSION_PROFILE_VERSION,
 } from "../dist/runtime/desktop-remote-control.js";
+import { desktopConfigSchema, readSessionFullAccessPolicy } from "../dist/runtime/desktop-policies.js";
 
 import {
   REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION,
@@ -73,6 +75,35 @@ function timestamp() {
 /** A mutation response is authoritative, but an old generation must not apply it locally. */
 function assertMutationGeneration(signal) {
   if (signal?.aborted) throw new RemoteControlOperationExecutionError("internal_error");
+}
+
+/**
+ * Project the server-owned permission-mode state into the remote contract.
+ * Principals, timestamps of activation, and grant records stay on Desktop.
+ * @param {unknown} state
+ */
+export function remotePermissionModeFromState(state) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return null;
+  const value = /** @type {Record<string, unknown>} */ (state);
+  return {
+    revision: value.authorityRevision,
+    requestedMode: value.requestedMode,
+    effectiveMode: value.effectiveMode,
+    profileVersion: value.profileVersion,
+    updatedAt: value.updatedAt,
+  };
+}
+
+/** @param {unknown} error */
+function mapPermissionModeClientError(error) {
+  if (error instanceof RemoteControlOperationExecutionError) throw error;
+  if (error instanceof ManagedRuntimeClientError && error.code === "http_error") {
+    if (error.serverCode === "permission_mode_changed") throw new RemoteControlOperationExecutionError("revision_conflict");
+    if (error.status === 403) throw new RemoteControlOperationExecutionError("forbidden");
+    if (error.status === 404) throw new RemoteControlOperationExecutionError("session_not_found");
+    if (error.status === 400) throw new RemoteControlOperationExecutionError("invalid_request");
+  }
+  throw new RemoteControlOperationExecutionError("internal_error");
 }
 
 /** @param {unknown} error @param {string} notFoundCode */
@@ -210,10 +241,12 @@ async function readSession(client, workspaceId, sessionId, signal) {
  *   managedRuntimeClient: ManagedRuntimeClient,
  *   coordinator: Coordinator,
  *   interactions?: { resolveOwnership(input: { workspaceId: string, targetSessionId: string }): Promise<unknown> } | null,
+ *   permissionModeHostClient?: { putHostPermissionMode(pathname: string, body: unknown, options?: { signal?: AbortSignal }): Promise<unknown> } | null,
+ *   getDesktopConfig?: (() => unknown | Promise<unknown>) | null,
  *   now?: () => number,
  * }} options
  */
-export function createRemoteControlMutationRegistrations({ workspaceStore, managedRuntimeClient, coordinator, interactions = null, now = Date.now }) {
+export function createRemoteControlMutationRegistrations({ workspaceStore, managedRuntimeClient, coordinator, interactions = null, permissionModeHostClient = null, getDesktopConfig = null, now = Date.now }) {
   if (!workspaceStore || typeof workspaceStore.readWorkspaceState !== "function" || !managedRuntimeClient || typeof managedRuntimeClient.getJson !== "function" || typeof managedRuntimeClient.postJson !== "function" || typeof managedRuntimeClient.putJson !== "function" || !coordinator || typeof coordinator.recordServerRun !== "function") {
     throw new TypeError("Remote mutation adapter dependencies are invalid.");
   }
@@ -326,6 +359,67 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
         return desktopRemoteOperationResultSchema.parse({ operation: "session.model.set", payloadVersion: 1, result }).result;
       } catch (error) {
         mapClientError(error, "session_not_found");
+      }
+    }),
+    registration("session.permission-mode.set", (value) => {
+      try {
+        return Object.freeze(desktopRemoteOperationRequestSchema.parse({ operation: "session.permission-mode.set", payloadVersion: 1, arguments: value }).arguments);
+      } catch {
+        throw new TypeError("Remote mutation arguments are invalid.");
+      }
+    }, async ({ arguments: args, context, signal }) => {
+      try {
+        // The mode belongs to the visible root session bound to this control session.
+        const binding = context?.remoteSessionBinding;
+        if (binding?.rootVerified !== true || binding.rootSessionId !== args.sessionId || binding.workspaceId !== args.workspaceId) {
+          throw new RemoteControlOperationExecutionError("session_not_found");
+        }
+        const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId, signal);
+        const session = await readSession(managedRuntimeClient, workspace.id, args.sessionId, signal);
+        if (session.id !== args.sessionId || canonicalPath(session.directory) !== workspace.path) throw new RemoteControlOperationExecutionError("session_not_found");
+        const pathname = `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/permission-mode`;
+        let response;
+        if (args.requestedMode === "full-access") {
+          // Widening authority: the phone user acknowledged the exact profile,
+          // the organization policy must allow it, and only the local host may
+          // authorize it. The server re-checks policy, root ancestry, and CAS.
+          if (args.acknowledgedProfileVersion !== SESSION_PERMISSION_PROFILE_VERSION) {
+            throw new RemoteControlOperationExecutionError("invalid_request");
+          }
+          if (!permissionModeHostClient || typeof getDesktopConfig !== "function") {
+            throw new RemoteControlOperationExecutionError("feature_disabled");
+          }
+          let desktopConfig;
+          try {
+            desktopConfig = await getDesktopConfig();
+          } catch {
+            throw new RemoteControlOperationExecutionError("policy_unavailable");
+          }
+          // A missing policy document means the organization state is unknown.
+          const policy = desktopConfigSchema.safeParse(desktopConfig);
+          if (!policy.success) throw new RemoteControlOperationExecutionError("policy_unavailable");
+          if (!readSessionFullAccessPolicy(policy.data.allowSessionFullAccess).allowed) {
+            throw new RemoteControlOperationExecutionError("forbidden");
+          }
+          assertMutationGeneration(signal);
+          response = await permissionModeHostClient.putHostPermissionMode(`${pathname}/remote-activation`, {
+            requestedMode: "full-access",
+            expectedRevision: args.expectedRevision,
+            acknowledgement: { profileVersion: args.acknowledgedProfileVersion, acknowledgedAt: now() },
+          }, { signal });
+        } else {
+          // Narrowing authority only needs collaborator scope and clears grants.
+          assertMutationGeneration(signal);
+          response = await managedRuntimeClient.putJson(pathname, {
+            requestedMode: "request-approval",
+            expectedRevision: args.expectedRevision,
+            acknowledgement: null,
+          }, { signal });
+        }
+        const state = response && typeof response === "object" && "state" in response ? response.state : null;
+        return desktopRemoteOperationResultSchema.parse({ operation: "session.permission-mode.set", payloadVersion: 1, result: remotePermissionModeFromState(state) }).result;
+      } catch (error) {
+        mapPermissionModeClientError(error);
       }
     }),
     registration("session.pending.cancel", (value) => {

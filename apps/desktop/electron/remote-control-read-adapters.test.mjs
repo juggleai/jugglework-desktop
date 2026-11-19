@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { desktopRemoteOperationResultSchema } from "../dist/runtime/desktop-remote-control.js";
+import { ManagedRuntimeClientError } from "./managed-runtime-client.mjs";
 
 import {
   createRemoteControlReadRegistrations,
@@ -16,6 +17,7 @@ import {
 
 const WORKSPACE_PATH = "/private/authorized/project";
 const NOW = Date.parse("2026-08-09T00:00:00.000Z");
+const PERMISSION_MODE_PATH = "/workspace/ws_local/sessions/ses_1/permission-mode";
 const enabledGates = {
   enrollment: true,
   readOnlyControl: true,
@@ -76,6 +78,7 @@ function harness(overrides = {}) {
     "/workspace/ws_local/sessions/ses_1": { item: session() },
     "/workspace/ws_local/sessions/ses_1/snapshot?limit=200": snapshotBody(),
     "/workspace/ws_local/sessions/ses_1/pending": { items: [] },
+    [PERMISSION_MODE_PATH]: { supported: true, profileVersion: 1, state: null, grants: [] },
     "/workspace/ws_local/session-runs": { items: [] },
     ...(overrides.responses ?? {}),
   };
@@ -94,6 +97,7 @@ function harness(overrides = {}) {
     interactions: overrides.interactions,
     logger: overrides.logger,
     imageThumbnailer: overrides.imageThumbnailer ?? null,
+    onPermissionModeSnapshot: overrides.onPermissionModeSnapshot,
   });
   const registry = createRemoteControlOperationRegistry({
     registrations,
@@ -123,6 +127,41 @@ async function dispatch(registry, operation, argumentsValue, correlationId = "co
 }
 
 describe("remote-control read adapters", () => {
+  it("defaults missing permission state and projects only the authorized root's paused mode using the current profile", async () => {
+    const read = (registry, version = 1) => dispatch(registry, "session.snapshot", version === 1
+      ? { workspaceId: "ws_local", sessionId: "ses_1" } : { workspaceId: "ws_local", rootSessionId: "ses_1" }, "corr-1", version);
+    const defaultMode = { revision: 0, requestedMode: "request-approval", effectiveMode: "request-approval", profileVersion: 1, updatedAt: 0 };
+    assert.deepEqual((await read(harness().registry)).value.permissionMode, defaultMode);
+    const state = { workspaceId: "ws_local", rootSessionId: "ses_1", authorityRevision: 8,
+      requestedMode: "full-access", effectiveMode: "full-access-paused", profileVersion: 2, updatedAt: 300,
+      authorizingPrincipal: { id: "private-principal" } };
+    const recorded = [];
+    const h = harness({
+      responses: { [PERMISSION_MODE_PATH]: { supported: true, profileVersion: 3, state, grants: [{ id: "private-grant" }] } },
+      onPermissionModeSnapshot: (binding, mode) => { recorded.push({ binding, mode }); },
+    });
+    const snapshot = await read(h.registry, 2);
+    const mode = { revision: 8, requestedMode: "full-access", effectiveMode: "full-access-paused", profileVersion: 3, updatedAt: 300 };
+    assert.deepEqual(snapshot.value.permissionMode, mode);
+    assert.deepEqual(recorded, [{ binding: { rootSessionId: "ses_1" }, mode }]);
+    assert.doesNotMatch(JSON.stringify(snapshot), /private-principal|private-grant/);
+    for (const mismatch of [{ workspaceId: "ws_other" }, { rootSessionId: "ses_child" }]) {
+      const wrong = harness({ responses: { [PERMISSION_MODE_PATH]: { supported: true, profileVersion: 3, state: { ...state, ...mismatch } } } });
+      assert.equal((await read(wrong.registry)).error.code, "snapshot_required");
+    }
+  });
+
+  it("keeps snapshots available on older runtimes without masking transient failures", async () => {
+    const read = (response) => dispatch(harness({ responses: { [PERMISSION_MODE_PATH]: response } }).registry,
+      "session.snapshot", { workspaceId: "ws_local", sessionId: "ses_1" });
+    for (const response of [Object.assign(new ManagedRuntimeClientError("http_error", { serverCode: "not_found" }), { status: 404 }), { supported: false }]) {
+      const result = await read(response);
+      assert.equal(result.ok, true);
+      assert.equal(Object.hasOwn(result.value, "permissionMode"), false);
+    }
+    assert.equal((await read(Object.assign(new ManagedRuntimeClientError("http_error", {}), { status: 503 }))).ok, false);
+  });
+
   it("reads authoritative run identity for lists and snapshots without an SSE binding", async () => {
     const { registry } = harness({ responses: {
       "/workspace/ws_local/session-runs": { items: [{ workspaceId: "ws_local", sessionId: "ses_1", runId: "run_A", status: "running" }] },

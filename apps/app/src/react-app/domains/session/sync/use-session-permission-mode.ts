@@ -75,8 +75,10 @@ export function useSessionPermissionMode(input: SessionPermissionModeHookInput):
     queryFn: () => client!.getSessionPermissionMode(workspaceId, sessionId!),
     enabled: Boolean(client && sessionId),
     staleTime: 30_000,
+    // A paired phone may enable Full access even while this pane was in
+    // Request approval. Refresh the visible pane in both modes.
     refetchInterval: (query) =>
-      sessionPermissionModeRefetchInterval(query.state.data),
+      sessionPermissionModeRefetchInterval(query.state.data) || 1_000,
     retry: 1,
   });
 

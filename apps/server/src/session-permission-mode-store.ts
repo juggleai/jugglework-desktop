@@ -246,8 +246,54 @@ function migrateSessionPermissionTables(database: AutomationSqlite): void {
       ON session_permission_decisions(workspace_id, created_at, id);
     CREATE INDEX IF NOT EXISTS idx_session_permission_decisions_request
       ON session_permission_decisions(workspace_id, kind, request_id);
+    -- Change feed for remote controllers. Triggers capture every write path
+    -- (mode update, grant revision bump, suspension, migration) so a reader
+    -- never depends on each mutation remembering to append an event.
+    CREATE TABLE IF NOT EXISTS session_permission_mode_events (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id TEXT NOT NULL,
+      root_session_id TEXT NOT NULL,
+      requested_mode TEXT NOT NULL,
+      profile_version INTEGER NOT NULL,
+      acknowledged_version INTEGER,
+      suspended INTEGER NOT NULL,
+      authority_revision INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_permission_mode_events_workspace
+      ON session_permission_mode_events(workspace_id, seq);
+    CREATE TRIGGER IF NOT EXISTS session_permission_modes_event_insert
+      AFTER INSERT ON session_permission_modes
+    BEGIN
+      INSERT INTO session_permission_mode_events
+        (workspace_id, root_session_id, requested_mode, profile_version, acknowledged_version, suspended, authority_revision, updated_at)
+      VALUES (NEW.workspace_id, NEW.root_session_id, NEW.requested_mode, NEW.profile_version, NEW.acknowledged_version, NEW.suspended, NEW.authority_revision, NEW.updated_at);
+    END;
+    CREATE TRIGGER IF NOT EXISTS session_permission_modes_event_update
+      AFTER UPDATE ON session_permission_modes
+    BEGIN
+      INSERT INTO session_permission_mode_events
+        (workspace_id, root_session_id, requested_mode, profile_version, acknowledged_version, suspended, authority_revision, updated_at)
+      VALUES (NEW.workspace_id, NEW.root_session_id, NEW.requested_mode, NEW.profile_version, NEW.acknowledged_version, NEW.suspended, NEW.authority_revision, NEW.updated_at);
+    END;
   `);
 }
+
+/** Bounded change-feed page returned to remote controllers. */
+export type SessionPermissionModeEvent = {
+  seq: number;
+  type: "session.permission-mode.updated";
+  workspaceId: string;
+  rootSessionId: string;
+  requestedMode: SessionPermissionModeChoice;
+  effectiveMode: SessionPermissionEffectiveMode;
+  profileVersion: number;
+  authorityRevision: number;
+  updatedAt: number;
+};
+
+const SESSION_PERMISSION_MODE_EVENT_PAGE = 500;
+const SESSION_PERMISSION_MODE_EVENT_RETENTION = 5_000;
 
 /** Fail-closed effective-mode evaluation for a persisted mode row. */
 export function computeEffectiveMode(row: {
@@ -607,7 +653,8 @@ export class SessionPermissionModeStore {
     expectedRevision: number;
     now: number;
   }): SessionPermissionModeState | null {
-    const result = this.database.run(
+    // RETURNING counts the matched mode row, not the change-feed trigger's insert.
+    const result = this.database.get<{ authority_revision: number }>(
       `UPDATE session_permission_modes SET
          author_principal_id = ?,
          author_principal_scope = 'owner',
@@ -617,7 +664,8 @@ export class SessionPermissionModeStore {
        WHERE workspace_id = ? AND root_session_id = ?
          AND requested_mode = 'full-access'
          AND author_principal_id = ? AND author_principal_scope = 'owner'
-         AND authority_revision = ?`,
+         AND authority_revision = ?
+       RETURNING authority_revision`,
       [
         input.stablePrincipal.id,
         input.expectedRevision + 1,
@@ -628,7 +676,7 @@ export class SessionPermissionModeStore {
         input.expectedRevision,
       ],
     );
-    if (result.changes !== 1) return null;
+    if (!result) return null;
     return this.readModeState(input.workspaceId, input.rootSessionId);
   }
 
@@ -902,6 +950,47 @@ export class SessionPermissionModeStore {
         [workspaceId, rootSessionId],
       );
     });
+  }
+
+  /** Change feed after `since` (exclusive), oldest first. */
+  listModeEvents(workspaceId: string, since = 0): { items: SessionPermissionModeEvent[]; cursor: number } {
+    const rows = this.database.all<{
+      seq: number;
+      root_session_id: string;
+      requested_mode: SessionPermissionModeChoice;
+      profile_version: number;
+      acknowledged_version: number | null;
+      suspended: number;
+      authority_revision: number;
+      updated_at: number;
+    }>(
+      `SELECT seq, root_session_id, requested_mode, profile_version, acknowledged_version, suspended, authority_revision, updated_at
+       FROM session_permission_mode_events WHERE workspace_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?`,
+      [workspaceId, since, SESSION_PERMISSION_MODE_EVENT_PAGE],
+    );
+    const items = rows.map((row) => ({
+      seq: Number(row.seq),
+      type: "session.permission-mode.updated" as const,
+      workspaceId,
+      rootSessionId: row.root_session_id,
+      requestedMode: row.requested_mode,
+      effectiveMode: computeEffectiveMode(row),
+      profileVersion: row.profile_version,
+      authorityRevision: row.authority_revision,
+      updatedAt: row.updated_at,
+    }));
+    return { items, cursor: items.at(-1)?.seq ?? since };
+  }
+
+  /** Keep only the newest change-feed rows per workspace. */
+  pruneModeEvents(workspaceId: string): void {
+    this.database.run(
+      `DELETE FROM session_permission_mode_events WHERE workspace_id = ? AND seq <= (
+         SELECT seq FROM session_permission_mode_events WHERE workspace_id = ?
+         ORDER BY seq DESC LIMIT 1 OFFSET ?
+       )`,
+      [workspaceId, workspaceId, SESSION_PERMISSION_MODE_EVENT_RETENTION],
+    );
   }
 
   listWorkspaceRoots(workspaceId: string): string[] {

@@ -374,3 +374,42 @@ test("grant matching grammar stays exact and case-sensitive", () => {
   assert.equal(matchesSessionPermissionResource("/repo/*.ts", "/repo/a/b.ts"), true);
   assert.equal(matchesSessionPermissionResource("/repo/*.ts", "/repo/a/b.js"), false);
 });
+
+test("mode change feed records every authority write in order", async () => {
+  await withStore((store) => {
+    assert.deepEqual(store.listModeEvents("ws-feed"), { items: [], cursor: 0 });
+    const enabled = enableFullAccess(store, "ws-feed", "root-1");
+    assert.equal(enabled.ok, true);
+    const downgraded = store.updateMode({
+      workspaceId: "ws-feed",
+      rootSessionId: "root-1",
+      requestedMode: "request-approval",
+      expectedRevision: 1,
+      acknowledgementProfileVersion: null,
+      authorizingPrincipal: null,
+      activationExclusionRequestIds: [],
+      now: NOW + 1,
+    });
+    assert.equal(downgraded.ok, true);
+    enableFullAccess(store, "ws-other", "root-x");
+
+    const page = store.listModeEvents("ws-feed");
+    const modes = page.items.map((item) => [item.rootSessionId, item.requestedMode, item.effectiveMode]);
+    assert.deepEqual(modes.at(0), ["root-1", "full-access", "full-access"]);
+    assert.deepEqual(modes.at(-1), ["root-1", "request-approval", "request-approval"]);
+    const revisions = page.items.map((item) => item.authorityRevision);
+    assert.deepEqual([...revisions].sort((a, b) => a - b), revisions);
+    assert.equal(revisions.at(-1), store.readModeState("ws-feed", "root-1")?.authorityRevision);
+    assert.ok(page.items.every((item) => item.workspaceId === "ws-feed" && item.type === "session.permission-mode.updated"));
+    assert.equal(page.cursor, page.items.at(-1)?.seq);
+    assert.deepEqual(store.listModeEvents("ws-feed", page.cursor).items, []);
+
+    // Suspension is a server-side write without a renderer mutation.
+    enableFullAccess(store, "ws-feed", "root-2");
+    const cursor = store.listModeEvents("ws-feed").cursor;
+    store.suspendFullAccessForPrincipal("ws-feed", "root-2", NOW + 2);
+    const suspended = store.listModeEvents("ws-feed", cursor).items;
+    assert.equal(suspended.length, 1);
+    assert.equal(suspended[0]?.effectiveMode, "full-access-suspended");
+  });
+});

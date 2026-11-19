@@ -5,6 +5,7 @@
  * - PUT    /workspace/:id/sessions/:rootSessionId/permission-mode
  * - POST   /workspace/:id/sessions/:rootSessionId/permission-mode/grants/clear
  * - POST   /workspace/:id/sessions/:sessionId/interactions/:interactionId/permission/grant-reply
+ * - GET    /workspace/:id/session-permission-mode-events?since=
  *
  * Authority is derived exclusively from authenticated transport context
  * (bearer scope or validated host token). Body-supplied origin fields are
@@ -124,7 +125,18 @@ export function registerSessionPermissionRoutes(options: RegisterSessionPermissi
     });
   });
 
-  addRoute(routes, "PUT", "/workspace/:id/sessions/:sessionId/permission-mode", "client", async (ctx) => {
+  addRoute(routes, "GET", "/workspace/:id/session-permission-mode-events", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const raw = ctx.url.searchParams.get("since");
+    const since = raw === null || raw === "" ? 0 : Number(raw);
+    if (!Number.isSafeInteger(since) || since < 0) {
+      throw new ApiError(400, "invalid_payload", "since must be a non-negative integer");
+    }
+    store.pruneModeEvents(workspace.id);
+    return jsonResponse(store.listModeEvents(workspace.id, since));
+  });
+
+  const updatePermissionMode = async (ctx: RequestContext, fromRemoteHost: boolean) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
@@ -133,6 +145,9 @@ export function registerSessionPermissionRoutes(options: RegisterSessionPermissi
     const parsed = modeUpdateSchema.safeParse(await readJsonBody(ctx.request));
     if (!parsed.success) throw new ApiError(400, "invalid_payload", "Permission mode payload is invalid");
     const body: SessionPermissionModeUpdateRequest = parsed.data;
+    if (fromRemoteHost && body.requestedMode !== "full-access") {
+      throw new ApiError(400, "invalid_payload", "This endpoint only activates Full access");
+    }
 
     const client = createWorkspaceOpencodeClient(config, workspace);
     // The pane session must be an authoritative root for mode configuration.
@@ -177,7 +192,7 @@ export function registerSessionPermissionRoutes(options: RegisterSessionPermissi
           targetSessionId: null,
           kind: "mode-change",
           resourceSummary: ["full-access"],
-          actor: { origin: "renderer", id: principal.id },
+          actor: { origin: fromRemoteHost ? "system" : "renderer", id: principal.id },
           authorityRevision: body.expectedRevision,
           requestId: null,
           now,
@@ -231,7 +246,9 @@ export function registerSessionPermissionRoutes(options: RegisterSessionPermissi
     }
     store.resolveDecision(decision.id, "succeeded", now);
     return jsonResponse({ state: update.state, clearedGrantIds: update.clearedGrantIds });
-  });
+  };
+  addRoute(routes, "PUT", "/workspace/:id/sessions/:sessionId/permission-mode", "client", (ctx) => updatePermissionMode(ctx, false));
+  addRoute(routes, "PUT", "/workspace/:id/sessions/:sessionId/permission-mode/remote-activation", "host-token", (ctx) => updatePermissionMode(ctx, true));
 
   addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/permission-mode/grants/clear", "client", async (ctx) => {
     ensureWritable(config);

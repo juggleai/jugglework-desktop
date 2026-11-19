@@ -31,6 +31,7 @@ const OPERATION_DEFINITIONS = [
   ["session.create", ["enrollment", "readOnlyControl", "sessionMutation"]],
   ["session.prompt", ["enrollment", "readOnlyControl", "sessionMutation"]],
   ["session.model.set", ["enrollment", "readOnlyControl", "sessionMutation"]],
+  ["session.permission-mode.set", ["enrollment", "readOnlyControl", "sessionMutation"]],
   ["session.abort", ["enrollment", "readOnlyControl", "sessionMutation"]],
   ["session.pending.cancel", ["enrollment", "readOnlyControl", "sessionMutation"]],
   [
@@ -245,6 +246,7 @@ export function createRemoteControlOperationRegistry({
     if (mutationEnabled && isRecord(gates) && gates.busySessionEnqueue === true && busyPolicy.enqueue) features.push("session.enqueue");
     if (mutationEnabled && handlers.has("session.prompt")) features.push("session.prompt-model");
     if (mutationEnabled && handlers.has("session.model.set")) features.push("session.model-selection");
+    if (mutationEnabled && handlers.has("session.permission-mode.set")) features.push("session.permission-mode");
 
     return {
       schemaVersion: REMOTE_CONTROL_OPERATION_SCHEMA_VERSION,
@@ -343,6 +345,10 @@ export function createRemoteControlOperationRegistry({
     }
     if (request.operation === "session.model.set" && (!isRecord(advertisedCapabilities) ||
       !Array.isArray(advertisedCapabilities.features) || !advertisedCapabilities.features.includes("session.model-selection"))) {
+      return rejected("feature_disabled", correlationId);
+    }
+    if (request.operation === "session.permission-mode.set" && (!isRecord(advertisedCapabilities) ||
+      !Array.isArray(advertisedCapabilities.features) || !advertisedCapabilities.features.includes("session.permission-mode"))) {
       return rejected("feature_disabled", correlationId);
     }
     if (signal?.aborted) return rejected("internal_error", correlationId);

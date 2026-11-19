@@ -6,11 +6,22 @@
 import assert from "node:assert/strict";
 import { describe, test } from "bun:test";
 
-import { desktopRemoteMutationOperationValues } from "@jugglework/types/desktop-remote-control";
+import { desktopRemoteMutationOperationValues, desktopRemoteOperationRequestSchema } from "@jugglework/types/desktop-remote-control";
 import { ApiError } from "./errors.js";
 import { parsePermissionBody } from "./routes/interactions.js";
+import { matchRoute, type Route } from "./routes/registry.js";
+import { registerSessionPermissionRoutes } from "./routes/session-permissions.js";
 
 describe("remote-control permission authority contracts", () => {
+  test("only the dedicated activation route accepts host-token authentication", () => {
+    const routes: Route[] = [];
+    // Registration captures the dependencies; it does not invoke handlers.
+    registerSessionPermissionRoutes({ routes } as Parameters<typeof registerSessionPermissionRoutes>[0]);
+    const mode = "/workspace/ws/sessions/root/permission-mode";
+    assert.equal(matchRoute(routes, "PUT", `${mode}/remote-activation`)?.auth, "host-token");
+    assert.equal(matchRoute(routes, "PUT", mode)?.auth, "client");
+    assert.equal(matchRoute(routes, "POST", `${mode}/grants/clear`)?.auth, "client");
+  });
   test("remote-control replies cannot request persistent upstream approval", () => {
     assert.throws(
       () => parsePermissionBody({
@@ -48,19 +59,12 @@ describe("remote-control permission authority contracts", () => {
     );
   });
 
-  test("desktop remote-control mutation catalog has no permission-mode operations", () => {
+  test("the only remote authority mutation is a scoped mode change, never a reusable grant", () => {
     const mutationOperations = desktopRemoteMutationOperationValues as readonly string[];
-    for (const operation of mutationOperations) {
-      assert.equal(
-        operation.includes("permission-mode"),
-        false,
-        `unexpected permission-mode remote operation: ${operation}`,
-      );
-      assert.equal(
-        operation.includes("permission-grant"),
-        false,
-        `unexpected permission-grant remote operation: ${operation}`,
-      );
+    assert.deepEqual(mutationOperations.filter((op) => op.includes("permission-mode") || op.includes("permission-grant")), ["session.permission-mode.set"]);
+    const args = { workspaceId: "ws", sessionId: "root", expectedRevision: 0, requestedMode: "full-access" };
+    for (const extra of [{ acknowledgedProfileVersion: null }, { acknowledgedProfileVersion: 1, origin: "local-renderer" }]) {
+      assert.equal(desktopRemoteOperationRequestSchema.safeParse({ operation: "session.permission-mode.set", payloadVersion: 1, arguments: { ...args, ...extra } }).success, false);
     }
   });
 });

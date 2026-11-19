@@ -11,6 +11,24 @@ function access() {
 }
 
 describe("managed runtime client", () => {
+  it("uses host credentials only on the dedicated permission activation route", async () => {
+    const requests = [];
+    const client = createManagedRuntimeClient({
+      getAccess: access,
+      getHostAccess: () => ({ baseUrl: access().baseUrl, hostToken: "fixture-host" }),
+      fetcher: async (url, init) => { requests.push({ url, init }); return Response.json({}); },
+    });
+    const path = "/workspace/ws/sessions/root/permission-mode/remote-activation";
+    await client.putHostPermissionMode(path, {});
+    assert.equal(requests[0].url.pathname, path);
+    assert.equal(requests[0].init.method, "PUT");
+    assert.deepEqual(new Headers(requests[0].init.headers).get("x-jugglework-host-token"), "fixture-host");
+    assert.equal(new Headers(requests[0].init.headers).has("authorization"), false);
+    for (const invalid of ["/env", path.replace("root", "%2e%2e"), path.replace("/remote-activation", "")]) {
+      await assert.rejects(client.putHostPermissionMode(invalid, {}), /permission-mode endpoint/);
+    }
+    assert.equal(requests.length, 1);
+  });
   it("keeps native Office review on host headers only and ordinary requests on collaborator headers", async () => {
     const requests = [];
     let hostReads = 0;

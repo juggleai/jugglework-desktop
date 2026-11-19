@@ -11,8 +11,8 @@ const NOW = Date.parse("2026-08-09T12:00:00.000Z");
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-/** @param {{ publish?: (event: unknown, options: { connectionGeneration: number }) => boolean, publishActivityTaskStatus?: (event: unknown) => boolean | Promise<boolean>, observeRun?: (input: any) => Promise<unknown>, listActiveRuns?: () => Promise<unknown>, listSessionModelEvents?: (input: any) => Promise<unknown>, resolveOwnership?: (input: any) => Promise<unknown>, timers?: any, logger?: any, subscriptionReadinessTimeoutMs?: number, subscriptionRetryDelaysMs?: number[], autoConnect?: boolean }} [input] */
-function harness({ publish = () => true, publishActivityTaskStatus = null, observeRun, listActiveRuns = async () => ({ items: [] }), listSessionModelEvents = null, resolveOwnership = async ({ targetSessionId }) => ({ rootSessionId: targetSessionId, targetSessionId, parentSessionId: null }), timers = { setTimeout: (callback, delay) => { if (delay < 3_000) callback(); return 1; }, clearTimeout() {} }, logger = {}, subscriptionReadinessTimeoutMs, subscriptionRetryDelaysMs, autoConnect = true } = {}) {
+/** @param {{ publish?: (event: unknown, options: { connectionGeneration: number }) => boolean, publishActivityTaskStatus?: (event: unknown) => boolean | Promise<boolean>, observeRun?: (input: any) => Promise<unknown>, listActiveRuns?: () => Promise<unknown>, listSessionModelEvents?: (input: any) => Promise<unknown>, listSessionPermissionModeEvents?: (input: any) => Promise<unknown>, resolveOwnership?: (input: any) => Promise<unknown>, timers?: any, logger?: any, subscriptionReadinessTimeoutMs?: number, subscriptionRetryDelaysMs?: number[], autoConnect?: boolean }} [input] */
+function harness({ publish = () => true, publishActivityTaskStatus = null, observeRun, listActiveRuns = async () => ({ items: [] }), listSessionModelEvents = null, listSessionPermissionModeEvents = null, resolveOwnership = async ({ targetSessionId }) => ({ rootSessionId: targetSessionId, targetSessionId, parentSessionId: null }), timers = { setTimeout: (callback, delay) => { if (delay < 3_000) callback(); return 1; }, clearTimeout() {} }, logger = {}, subscriptionReadinessTimeoutMs, subscriptionRetryDelaysMs, autoConnect = true } = {}) {
   const subscriptions = [];
   const published = [];
   const terminalCalls = [];
@@ -41,6 +41,7 @@ function harness({ publish = () => true, publishActivityTaskStatus = null, obser
     coordinator,
     listActiveRuns,
     listSessionModelEvents,
+    listSessionPermissionModeEvents,
     observeRun: async (input) => {
       observationCalls.push({ input, publishedCount: published.length });
       return observeRun ? observeRun(input) : { cleared: true, run: null, terminalStatus: "completed" };
@@ -429,6 +430,69 @@ describe("remote session event bridge", () => {
     assert.equal(calls[0].signal.aborted, false);
     h.bridge.clear();
     assert.equal(calls[0].signal.aborted, true);
+  });
+
+  it("fences permission events by snapshot, coalesces a split transaction, and only routes exact roots", async () => {
+    const calls = [];
+    const scheduled = new Map();
+    const type = "session.permission-mode.updated";
+    const row = (seq, authorityRevision, overrides = {}) => ({
+      seq, authorityRevision, type, workspaceId: "ws_1", rootSessionId: "ses_1", updatedAt: seq,
+      requestedMode: "full-access", effectiveMode: "full-access", profileVersion: 1, ...overrides,
+    });
+    const rows = [
+      ...Array.from({ length: 499 }, (_, index) => row(index + 1, 1)),
+      row(500, 7),
+      row(501, 7, { requestedMode: "request-approval", effectiveMode: "request-approval" }),
+      row(502, 100, { rootSessionId: "ses_child" }),
+      row(503, 100, { workspaceId: "ws_other" }),
+    ];
+    const h = harness({
+      listSessionPermissionModeEvents: async (input) => {
+        calls.push(input);
+        const items = rows.filter(({ seq }) => seq > input.since).slice(0, 500);
+        return { items, cursor: items.at(-1)?.seq ?? input.since };
+      },
+      timers: { setTimeout(callback, delay) { scheduled.set(callback, delay); return callback; }, clearTimeout(callback) { scheduled.delete(callback); } },
+    });
+    const tick = async () => {
+      const timer = [...scheduled].find(([, delay]) => delay === 1_000)?.[0];
+      assert.ok(timer);
+      scheduled.delete(timer);
+      timer();
+      await flush();
+    };
+    const binding = { ...h.binding, rootSessionId: "ses_1", payloadVersion: /** @type {const} */ (2) };
+    const mode = { revision: 6, requestedMode: /** @type {const} */ ("full-access"), effectiveMode: /** @type {const} */ ("full-access-paused"), profileVersion: 3, updatedAt: 400 };
+    try {
+      assert.equal(await h.bridge.bind(binding), true);
+      await tick();
+      assert.equal(calls.length, 0);
+      assert.equal(h.bridge.recordPermissionModeSnapshot({ ...binding, connectionGeneration: 6 }, mode), false);
+      assert.equal(h.bridge.recordPermissionModeSnapshot(binding, mode), true);
+      await tick();
+      assert.deepEqual(calls.map(({ since }) => since), [0, 500]);
+      assert.deepEqual(h.published.map(({ event }) => event.data), [{
+        type, permissionMode: { revision: 7, requestedMode: "request-approval", effectiveMode: "request-approval", profileVersion: 3, updatedAt: 501 },
+      }]);
+
+      const second = { ...binding, controlSessionId: "22222222-2222-4222-8222-222222222222" };
+      assert.equal(await h.bridge.bind(second), true);
+      assert.equal(h.bridge.recordPermissionModeSnapshot(binding, mode), false, "a stale resnapshot must not lower the fence");
+      assert.equal(h.bridge.recordPermissionModeSnapshot(second, mode), true);
+      await tick();
+      assert.deepEqual(h.published.map(({ event }) => event.controlSessionId), [binding.controlSessionId, second.controlSessionId]);
+
+      rows.push(row(504, 7), row(505, 5));
+      await tick();
+      assert.equal(h.published.length, 2);
+      rows.push(row(506, 8, { effectiveMode: "full-access-paused" }));
+      await tick();
+      assert.deepEqual(h.published.slice(2).map(({ event }) => event.data.permissionMode), Array(2).fill({ ...mode, revision: 8, updatedAt: 506 }));
+    } finally {
+      h.bridge.clear();
+    }
+    assert.ok(calls.every(({ signal }) => signal.aborted));
   });
 
   it("blocks binding until SSE is connected and captures output emitted immediately after readiness", async () => {

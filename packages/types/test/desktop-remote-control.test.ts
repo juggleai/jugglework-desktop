@@ -193,6 +193,49 @@ describe("desktop remote-control contracts", () => {
     )
   })
 
+  test("session permission mode is a feature-gated v1 mutation with acknowledged full access", () => {
+    const advertised = createDesktopRemoteCapabilityAdvertisement({
+      ...desktopRemoteDisabledFeatureGates,
+      enrollment: true,
+      readOnlyControl: true,
+      sessionMutation: true,
+    })
+    assert.equal(advertised.features.includes("session.permission-mode"), true)
+    assert.deepEqual(
+      advertised.operations.find(({ operation }) => operation === "session.permission-mode.set")?.payloadVersions,
+      [1],
+    )
+    assert.equal(desktopRemoteMutationOperationValues.includes("session.permission-mode.set"), true)
+    const base = { workspaceId: "workspace-1", sessionId: "session-1", expectedRevision: 3 }
+    const fullAccess = {
+      operation: "session.permission-mode.set", payloadVersion: 1,
+      arguments: { ...base, requestedMode: "full-access", acknowledgedProfileVersion: 1 },
+    } as const
+    const requestApproval = {
+      operation: "session.permission-mode.set", payloadVersion: 1,
+      arguments: { ...base, requestedMode: "request-approval", acknowledgedProfileVersion: null },
+    } as const
+    assert.equal(createDesktopRemoteOperationRequestSchema(advertised).safeParse(fullAccess).success, true)
+    assert.equal(createDesktopRemoteOperationRequestSchema(advertised).safeParse(requestApproval).success, true)
+    const withoutFeature = { ...advertised, features: advertised.features.filter((feature) => feature !== "session.permission-mode") }
+    assert.equal(createDesktopRemoteOperationRequestSchema(withoutFeature).safeParse(fullAccess).success, false)
+    // Full access needs an acknowledgement; request approval must not carry one.
+    for (const invalid of [
+      { ...fullAccess.arguments, acknowledgedProfileVersion: null },
+      { ...requestApproval.arguments, acknowledgedProfileVersion: 1 },
+      { ...fullAccess.arguments, requestedMode: "full-access-paused" },
+      { ...fullAccess.arguments, expectedRevision: -1 },
+      { ...fullAccess.arguments, extra: true },
+    ]) {
+      assert.equal(desktopRemoteOperationRequestSchema.safeParse({ ...fullAccess, arguments: invalid }).success, false)
+    }
+    assert.equal(desktopRemoteOperationRequestSchema.safeParse({ ...fullAccess, payloadVersion: 2 }).success, false)
+    const result = { revision: 4, requestedMode: "full-access", effectiveMode: "full-access", profileVersion: 1, updatedAt: 9 }
+    assert.equal(desktopRemoteOperationResultSchema.safeParse({ operation: "session.permission-mode.set", payloadVersion: 1, result }).success, true)
+    assert.equal(desktopRemoteOperationResultSchema.safeParse({ operation: "session.permission-mode.set", payloadVersion: 1, result: { ...result, revision: 0 } }).success, false)
+    assert.equal(desktopRemoteOperationResultSchema.safeParse({ operation: "session.permission-mode.set", payloadVersion: 1, result: { ...result, authorizingPrincipal: null } }).success, false)
+  })
+
   test("negotiates v2 for snapshots, structured prompts, and interaction replies", () => {
     const gates = {
       ...desktopRemoteDisabledFeatureGates,

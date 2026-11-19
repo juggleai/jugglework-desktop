@@ -228,10 +228,10 @@ The system SHALL durably record sanitized permission-mode changes, reusable gran
 - **AND** genuinely unresolved or indeterminate decisions remain available for reconciliation
 
 ### Requirement: Remote control cannot silently widen session authority
-In the initial version, remote-control operations SHALL NOT enable Full access, create reusable session grants, or send protocol-native persistent permission approvals. The server SHALL derive controller origin from authenticated route or transport context rather than trusting a client-supplied origin field.
+Remote control SHALL NOT create reusable session grants or send protocol-native persistent permission approvals. A device owner may enable Full access for a verified, bound root session through the desktop host, only after explicit confirmation of the current profile, a successful revision check, and applicable policy checks. The system SHALL audit the change and derive origin from authenticated transport, not caller-supplied origin fields.
 
 #### Scenario: Remote controller requests persistent authority
-- **WHEN** a remote-control client attempts to enable Full access or create a reusable grant
+- **WHEN** a remote-control client attempts to create a reusable grant or enable Full access without meeting those requirements
 - **THEN** the request is rejected without changing the root session's permission configuration
 
 #### Scenario: Remote controller resolves a displayed request

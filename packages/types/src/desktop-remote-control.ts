@@ -1,5 +1,9 @@
 import { z } from "zod"
 
+import { SESSION_PERMISSION_PROFILE_VERSION } from "./session-permission-modes.js"
+
+export { SESSION_PERMISSION_PROFILE_VERSION }
+
 export const DESKTOP_REMOTE_SCHEMA_VERSION = 1 as const
 export const DESKTOP_REMOTE_PROTOCOL_VERSION = 1 as const
 export const DESKTOP_REMOTE_PAYLOAD_VERSION = 1 as const
@@ -171,6 +175,7 @@ export const desktopRemoteOperationValues = [
   "session.create",
   "session.prompt",
   "session.model.set",
+  "session.permission-mode.set",
   "session.abort",
   "session.pending.cancel",
   "interaction.permission.reply",
@@ -190,6 +195,7 @@ export const desktopRemoteMutationOperationValues = [
   "session.create",
   "session.prompt",
   "session.model.set",
+  "session.permission-mode.set",
   "session.abort",
   "session.pending.cancel",
   "interaction.permission.reply",
@@ -212,6 +218,7 @@ export const desktopRemoteFeatureCapabilityValues = [
   "session.enqueue",
   "session.prompt-model",
   "session.model-selection",
+  "session.permission-mode",
   "native-mobile",
 ] as const
 
@@ -327,6 +334,7 @@ export const desktopRemoteRequiredFeatureGatesByOperation = {
   "session.create": ["enrollment", "readOnlyControl", "sessionMutation"],
   "session.prompt": ["enrollment", "readOnlyControl", "sessionMutation"],
   "session.model.set": ["enrollment", "readOnlyControl", "sessionMutation"],
+  "session.permission-mode.set": ["enrollment", "readOnlyControl", "sessionMutation"],
   "session.abort": ["enrollment", "readOnlyControl", "sessionMutation"],
   "session.pending.cancel": ["enrollment", "readOnlyControl", "sessionMutation"],
   "interaction.permission.reply": [
@@ -386,6 +394,7 @@ export function createDesktopRemoteCapabilityAdvertisement(
   if (mutationEnabled && gates.busySessionEnqueue) features.push("session.enqueue")
   if (mutationEnabled) features.push("session.prompt-model")
   if (mutationEnabled) features.push("session.model-selection")
+  if (mutationEnabled) features.push("session.permission-mode")
   if (readEnabled && gates.nativeMobile) features.push("native-mobile")
 
   return desktopRemoteCapabilityAdvertisementSchema.parse({
@@ -778,6 +787,19 @@ export type DesktopRemoteInteraction = z.infer<
   typeof desktopRemoteInteractionSchema
 >
 
+/**
+ * Remote projection of the server-owned per-root-session permission mode.
+ * `revision` is the shared authority revision used for compare-and-set.
+ */
+export const desktopRemoteSessionPermissionModeSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  requestedMode: z.enum(["request-approval", "full-access"]),
+  effectiveMode: z.enum(["request-approval", "full-access", "full-access-paused", "full-access-suspended"]),
+  profileVersion: z.number().int().positive(),
+  updatedAt: z.number().int().nonnegative(),
+}).strict()
+export type DesktopRemoteSessionPermissionMode = z.infer<typeof desktopRemoteSessionPermissionModeSchema>
+
 const sessionSnapshotBaseShape = {
   schemaVersion: z.literal(DESKTOP_REMOTE_SCHEMA_VERSION),
   workspace: desktopRemoteWorkspaceSummarySchema,
@@ -796,6 +818,8 @@ const sessionSnapshotBaseShape = {
     model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().nullable(),
     updatedAt: z.number().int().nonnegative(),
   }).strict(),
+  // Optional: older local servers do not expose session permission modes.
+  permissionMode: desktopRemoteSessionPermissionModeSchema.optional(),
   capturedAt: dateTimeSchema,
 } as const
 
@@ -922,6 +946,23 @@ const sessionModelSetRequestSchema = z.object({
     ]),
   }).strict(),
 }).strict()
+const sessionPermissionModeSetRequestSchema = z.object({
+  operation: z.literal("session.permission-mode.set"),
+  payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
+  arguments: z.object({
+    workspaceId: identifierSchema,
+    sessionId: identifierSchema,
+    expectedRevision: z.number().int().nonnegative(),
+    requestedMode: z.enum(["request-approval", "full-access"]),
+    // The controller user explicitly acknowledged this Full access profile.
+    // Required for full-access, forbidden for request-approval.
+    acknowledgedProfileVersion: z.number().int().positive().nullable(),
+  }).strict().superRefine((value, context) => {
+    if ((value.requestedMode === "full-access") !== (value.acknowledgedProfileVersion !== null)) {
+      context.addIssue({ code: "custom", message: "full access requires exactly one profile acknowledgement", path: ["acknowledgedProfileVersion"] })
+    }
+  }),
+}).strict()
 const sessionAbortRequestSchema = z
   .object({
     operation: z.literal("session.abort"),
@@ -1033,6 +1074,7 @@ export const desktopRemoteOperationRequestSchema = z.union([
     sessionCreateRequestSchema,
     sessionPromptRequestSchema,
     sessionModelSetRequestSchema,
+    sessionPermissionModeSetRequestSchema,
     sessionAbortRequestSchema,
     sessionPendingCancelRequestSchema,
     permissionReplyRequestSchema,
@@ -1072,6 +1114,11 @@ export const desktopRemoteOperationResultSchema = z.union([
         model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().nullable(),
         updatedAt: z.number().int().nonnegative(),
       }).strict(),
+    }).strict(),
+    z.object({
+      operation: z.literal("session.permission-mode.set"),
+      payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
+      result: desktopRemoteSessionPermissionModeSchema.refine((value) => value.revision > 0, "a successful update advances the revision"),
     }).strict(),
     z
       .object({
@@ -1176,6 +1223,9 @@ export function createDesktopRemoteOperationRequestSchema(
     }
     if (request.operation === "session.model.set" && !parsedCapabilities.features.includes("session.model-selection")) {
       context.addIssue({ code: "custom", message: "session model selection must be advertised by the target device", path: ["operation"], params: { errorCode: "capability_not_advertised" satisfies DesktopRemoteErrorCode } })
+    }
+    if (request.operation === "session.permission-mode.set" && !parsedCapabilities.features.includes("session.permission-mode")) {
+      context.addIssue({ code: "custom", message: "session permission mode must be advertised by the target device", path: ["operation"], params: { errorCode: "capability_not_advertised" satisfies DesktopRemoteErrorCode } })
     }
     if (!isDesktopRemoteOperationAdvertised(request, parsedCapabilities)) {
       context.addIssue({
@@ -1330,6 +1380,7 @@ const normalizedSessionEventDataV1Schema = z.discriminatedUnion("type", [
     .strict(),
   z.object({ type: z.literal("todos.replace"), todos: z.array(desktopRemoteTodoSchema).max(10_000) }).strict(),
   z.object({ type: z.literal("session.model.updated"), preference: sessionSnapshotBaseShape.modelPreference }).strict(),
+  z.object({ type: z.literal("session.permission-mode.updated"), permissionMode: desktopRemoteSessionPermissionModeSchema }).strict(),
   z.object({ type: z.literal("interaction.upsert"), interaction: desktopRemoteInteractionV1Schema }).strict(),
   z.object({ type: z.literal("interaction.remove"), interactionId: identifierSchema }).strict(),
   z
@@ -1362,6 +1413,7 @@ const normalizedSessionEventDataV2Schema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("message.part.upsert"), messageId: identifierSchema, part: desktopRemoteMessagePartSchema }).strict(),
   z.object({ type: z.literal("todos.replace"), todos: z.array(desktopRemoteTodoSchema).max(10_000) }).strict(),
   z.object({ type: z.literal("session.model.updated"), preference: sessionSnapshotBaseShape.modelPreference }).strict(),
+  z.object({ type: z.literal("session.permission-mode.updated"), permissionMode: desktopRemoteSessionPermissionModeSchema }).strict(),
   z.object({ type: z.literal("interaction.upsert"), interaction: desktopRemoteInteractionV2Schema }).strict(),
   z.object({
     type: z.literal("interaction.remove"),
