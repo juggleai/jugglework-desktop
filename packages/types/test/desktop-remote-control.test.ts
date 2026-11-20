@@ -10,6 +10,7 @@ import {
   desktopRemoteDescendantOperationValues,
   desktopRemoteOperationRequestSchema,
   desktopRemoteOperationResultSchema,
+  desktopRemoteModelVariantsSchema,
   desktopRemoteInteractionSchema,
   desktopRemoteInteractionV1Schema,
   desktopRemoteInteractionV2Schema,
@@ -246,6 +247,7 @@ describe("desktop remote-control contracts", () => {
     }
     const advertised = createDesktopRemoteCapabilityAdvertisement(gates)
     assert.equal(advertised.features.includes("session.prompt-model"), true)
+    assert.equal(advertised.features.includes("session.prompt-variant"), true)
     assert.equal(advertised.features.includes("session.model-selection"), true)
     const modelSetRequest = {
       operation: "session.model.set", payloadVersion: 1,
@@ -263,6 +265,12 @@ describe("desktop remote-control contracts", () => {
       assert.equal(createDesktopRemoteOperationRequestSchema(advertised).safeParse(request).success, true)
       assert.equal(createDesktopRemoteOperationRequestSchema({ ...advertised, features: [] }).safeParse(request).success, false)
       assert.equal(desktopRemoteOperationRequestSchema.safeParse({ ...request, arguments: { ...request.arguments, model: { providerID: "provider-1" } } }).success, false)
+      const withVariant = { ...request, arguments: { ...request.arguments, variant: "high" } }
+      assert.equal(createDesktopRemoteOperationRequestSchema(advertised).safeParse(withVariant).success, true)
+      assert.equal(createDesktopRemoteOperationRequestSchema({ ...advertised, features: ["session.prompt-model"] }).safeParse(withVariant).success, false)
+      for (const override of [{ model: undefined }, { whenBusy: "steer" }, { whenBusy: "enqueue" }, ...["", " high", "high ", "hi\u0085gh", "x".repeat(257), null].map((variant) => ({ variant }))]) {
+        assert.equal(desktopRemoteOperationRequestSchema.safeParse({ ...withVariant, arguments: { ...withVariant.arguments, ...override } }).success, false)
+      }
     }
     assert.deepEqual(
       advertised.operations.find(({ operation }) => operation === "session.snapshot")?.payloadVersions,
@@ -298,6 +306,17 @@ describe("desktop remote-control contracts", () => {
         operations: [{ operation, payloadVersions: [1, 2] }],
         features: [],
       }).success, false)
+    }
+  })
+
+  test("model variant catalog entries are bounded, unique and identifier-only", () => {
+    const entry = { providerID: "p", modelID: "m", variants: ["x".repeat(256)] }
+    assert.equal(desktopRemoteModelVariantsSchema.safeParse([]).success, true)
+    assert.equal(desktopRemoteModelVariantsSchema.safeParse([entry]).success, true)
+    for (const invalid of [[entry, entry], [{ ...entry, variants: [] }], [{ ...entry, variants: ["high", "high"] }],
+      [{ ...entry, variants: Array.from({ length: 33 }, (_, i) => `v${i}`) }], [{ ...entry, modelID: "m".repeat(257) }],
+      [{ ...entry, options: { apiKey: "canary" } }], Array.from({ length: 201 }, (_, i) => ({ ...entry, modelID: `m${i}` }))]) {
+      assert.equal(desktopRemoteModelVariantsSchema.safeParse(invalid).success, false)
     }
   })
 

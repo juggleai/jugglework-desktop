@@ -102,6 +102,11 @@ describe("remote-control operation registry", () => {
     const request = { operation: "session.prompt", payloadVersion: 1, arguments: { workspaceId: "ws", sessionId: "ses", prompt: "hello", model: { providerID: "p", modelID: "m" } } };
     assert.equal((await registry.dispatch(request, { advertisedCapabilities: { ...capabilities, features: [] } })).error.code, "feature_disabled");
     assert.equal((await registry.dispatch(request, { advertisedCapabilities: capabilities })).error, undefined);
+    assert.equal(capabilities.features.includes("session.prompt-variant"), true);
+    const withVariant = { ...request, arguments: { ...request.arguments, variant: "high" } };
+    assert.equal((await registry.dispatch(withVariant, { advertisedCapabilities: { ...capabilities, features: ["session.prompt-model"] } })).error.code, "feature_disabled");
+    assert.equal((await registry.dispatch(withVariant, { advertisedCapabilities: capabilities })).ok, true);
+    assert.equal((await registry.dispatch({ ...withVariant, arguments: { ...withVariant.arguments, whenBusy: "steer" } }, { advertisedCapabilities: capabilities })).error.code, "invalid_request");
   });
 
   it("advertises E2EE only when its gate and secure local key storage are ready", async () => {

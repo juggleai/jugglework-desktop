@@ -329,7 +329,12 @@ test("session.prompt forwards an explicit model for both payload versions", asyn
     const posted = client.calls.find((call) => call.method === "POST").body;
     assert.equal(posted.whenBusy, "reject");
     assert.deepEqual(posted.prompt.model, model);
+    assert.equal(Object.hasOwn(posted.prompt, "variant"), false);
     assert.throws(() => prompt.validateArguments({ ...args, model: { providerID: "connected" } }, payloadVersion));
+
+    const withVariant = prompt.validateArguments({ ...args, variant: "high" }, payloadVersion);
+    await prompt.execute({ arguments: withVariant, payloadVersion, correlationId: "cmd-variant" });
+    assert.equal(client.calls.filter((call) => call.method === "POST").at(-1).body.prompt.variant, "high");
   }
 });
 

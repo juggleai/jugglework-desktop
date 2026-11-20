@@ -294,6 +294,9 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
       try {
         const effectivePayloadVersion = payloadVersion ?? REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION;
         const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId, signal);
+        if (args.variant !== undefined && workspace.workspaceType === "remote") {
+          throw new RemoteControlOperationExecutionError("workspace_not_found");
+        }
         const session = await readSession(managedRuntimeClient, workspace.id, args.sessionId, signal);
         if (canonicalPath(session.directory) !== workspace.path) {
           throw new RemoteControlOperationExecutionError("session_not_found");
@@ -305,7 +308,11 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
             origin: "remote-control",
             startCommandCorrelationId: correlationId,
             whenBusy: args.whenBusy,
-            prompt: { parts: effectivePayloadVersion === REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION ? args.parts : [{ type: "text", text: args.prompt }], ...(args.model === undefined ? {} : { model: args.model }) },
+            prompt: {
+              parts: effectivePayloadVersion === REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION ? args.parts : [{ type: "text", text: args.prompt }],
+              ...(args.model === undefined ? {} : { model: args.model }),
+              ...(args.variant === undefined ? {} : { variant: args.variant }),
+            },
           },
         );
         assertMutationGeneration(signal);
@@ -330,6 +337,10 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
         } else throw new TypeError("Invalid start response.");
         return desktopRemoteOperationResultSchema.parse({ operation: "session.prompt", payloadVersion: effectivePayloadVersion, result }).result;
       } catch (error) {
+        if (args.variant !== undefined && error instanceof ManagedRuntimeClientError && error.status === 400 &&
+          ["variant_unavailable", "model_unavailable", "invalid_payload"].includes(error.serverCode)) {
+          throw new RemoteControlOperationExecutionError("invalid_request");
+        }
         mapClientError(error, "session_not_found");
       }
     }, [REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION, REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION]),

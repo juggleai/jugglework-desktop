@@ -5,6 +5,7 @@ import { desktopRemoteSessionEventSchema } from "../dist/runtime/desktop-remote-
 import {
   normalizeRemoteMessage,
   normalizeRemoteMessagePart,
+  normalizeRemoteRunError,
   normalizeRemoteTodo,
   parseRemotePermissionMode,
 } from "./remote-control-read-adapters.mjs";
@@ -32,7 +33,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 /** @typedef {{ controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, payloadVersion: 1 | 2, connectionGeneration: number, sequenceKey: string, sequence: number, permissionModeRevision: number | null, permissionProfileVersion: number | null }} Binding */
 /** @typedef {import("@jugglework/types/desktop-remote-control").DesktopRemoteSessionPermissionMode} PermissionMode */
 /** @typedef {{ info: Record<string, any> | null, parts: Map<string, { raw: Record<string, any>, normalized: DesktopRemoteMessagePart }>, pending: Map<string, string>, fullEmitted: boolean }} MessageState */
-/** @typedef {{ messages: Map<string, MessageState>, todos: unknown[], interactions: Map<string, DesktopRemoteInteraction>, durableSequence: number | null }} SessionState */
+/** @typedef {{ messages: Map<string, MessageState>, todos: unknown[], interactions: Map<string, DesktopRemoteInteraction>, durableSequence: number | null, failed: boolean }} SessionState */
 /** @typedef {{ key: string, workspaceId: string, sessionId: string, messageId: string, partId: string, occurredAt: string, timer: unknown }} PendingPartEmission */
 
 /** @param {unknown} value @returns {value is Record<string, any>} */
@@ -85,12 +86,7 @@ function timestampMs(value) {
 
 /** @param {unknown} value @returns {string} */
 function errorMessage(value) {
-  if (typeof value === "string" && value.trim()) return value.trim().slice(0, 500);
-  if (isRecord(value)) {
-    const candidate = value.message ?? value.name ?? value.data;
-    if (typeof candidate === "string" && candidate.trim()) return candidate.trim().slice(0, 500);
-  }
-  return "The session run failed.";
+  return normalizeRemoteRunError(value) ?? "The session run failed.";
 }
 
 /**
@@ -127,7 +123,7 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
     const key = sessionKey(workspaceId, sessionId);
     let state = sessions.get(key);
     if (!state) {
-      state = { messages: new Map(), todos: [], interactions: new Map(), durableSequence: null };
+      state = { messages: new Map(), todos: [], interactions: new Map(), durableSequence: null, failed: false };
       sessions.set(key, state);
     }
     return state;
@@ -288,6 +284,10 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
               : rawStatus === "completed" ? "completed"
               : rawStatus === "idle" ? "idle" : null;
     if (status === null) return;
+    const state = stateFor(workspaceId, sessionId);
+    // Idle is also emitted during cleanup after a failed run.
+    if (state.failed && (status === "idle" || status === "completed")) return;
+    if (["running", "retrying", "waiting"].includes(status)) state.failed = false;
     const runId = getActiveRunId({ workspaceId, sessionId });
     const active = runId && ["running", "retrying", "aborting", "waiting"].includes(status)
       ? { workspaceId, sessionId, runId, status }
@@ -296,6 +296,19 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
     if (runId) {
       const runStatus = status === "idle" || status === "completed" ? "completed" : status;
       emitForSession(workspaceId, sessionId, { type: "run.status", runId, status: runStatus, error: null }, occurredAt);
+    }
+  }
+
+  /** @param {string} workspaceId @param {string} sessionId @param {unknown} error @param {string} occurredAt */
+  function projectFailure(workspaceId, sessionId, error, occurredAt) {
+    stateFor(workspaceId, sessionId).failed = true;
+    const runId = getActiveRunId({ workspaceId, sessionId });
+    emitForSession(workspaceId, sessionId, { type: "session.status", status: "failed", run: null }, occurredAt);
+    if (runId) {
+      emitForSession(workspaceId, sessionId, {
+        type: "run.status", runId, status: "failed",
+        error: { schemaVersion: 1, code: "internal_error", message: errorMessage(error), retryable: false, correlationId: null },
+      }, occurredAt);
     }
   }
 
@@ -415,11 +428,17 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
       const info = isRecord(data.info) ? data.info : null;
       if (!info || info.sessionID !== sessionId || !isIdentifier(info.id)) return;
       const message = messageFor(state, info.id);
+      const previousError = message.info?.error;
       message.info = info;
       const full = normalizedMessage(message, sessionId);
       if (full) {
         emitForSession(workspaceId, sessionId, { type: "message.upsert", message: full }, occurredAt);
         message.fullEmitted = true;
+      }
+      if (info.role === "assistant" && (isRecord(info.error) || typeof info.error === "string") &&
+          (!previousError || errorMessage(previousError) !== errorMessage(info.error)) &&
+          !(isRecord(info.error) && info.error.name === "MessageAbortedError")) {
+        projectFailure(workspaceId, sessionId, info.error, occurredAt);
       }
       return;
     }
@@ -486,18 +505,7 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
     }
     if (event.type === "session.status") return projectStatus(workspaceId, sessionId, data, occurredAt);
     if (event.type === "session.idle") return projectStatus(workspaceId, sessionId, { ...data, status: "completed" }, occurredAt);
-    if (event.type === "session.error") {
-      const runId = getActiveRunId({ workspaceId, sessionId });
-      emitForSession(workspaceId, sessionId, { type: "session.status", status: "failed", run: null }, occurredAt);
-      if (runId) {
-        emitForSession(workspaceId, sessionId, {
-          type: "run.status",
-          runId,
-          status: "failed",
-          error: { schemaVersion: 1, code: "internal_error", message: errorMessage(data.error), retryable: false, correlationId: null },
-        }, occurredAt);
-      }
-    }
+    if (event.type === "session.error") projectFailure(workspaceId, sessionId, data.error, occurredAt);
   }
 
   /** @param {string} workspaceId @param {"cursor_missing" | "cursor_expired" | "sequence_gap"} [reason] */

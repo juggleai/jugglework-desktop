@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { z } from "zod";
 import {
+  desktopRemoteModelVariantsSchema,
   desktopRemoteOperationResultSchema,
   desktopRemoteSessionPermissionModeSchema,
   desktopRemoteSessionSnapshotV1Schema,
@@ -93,6 +94,7 @@ const snapshotResponseSchema = z.object({
     // carries workspace/session identity. Accept those transport fields while
     // projecting only the revisioned preference into the remote snapshot.
     modelPreference: z.object({ revision: z.number().int().nonnegative(), mode: z.enum(["auto", "explicit"]), model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().nullable(), updatedAt: z.number().int().nonnegative() }).passthrough(),
+    modelVariants: desktopRemoteModelVariantsSchema.optional(),
     // Paged session history (desktop older-history loading). Remote snapshots
     // keep their own fixed window, so this is accepted but never forwarded.
     messagePage: z.object({ olderCursor: z.string().nullable(), hasOlder: z.boolean() }).strict().optional(),
@@ -289,14 +291,39 @@ export function normalizeRemoteMessage(message, sessionId) {
     const normalized = normalizeRemoteMessagePart(part);
     return normalized ? [normalized] : [];
   });
-  if (parts.length === 0) return null;
+  const failureMessage = message.info.role === "assistant" ? normalizeRemoteRunError(message.info.error) : null;
+  if (parts.length === 0 && !failureMessage) return null;
   return {
     id: message.info.id,
     role: message.info.role,
     createdAt: normalizeRemoteTimestamp(message.info.time?.created),
     completedAt: Number.isFinite(message.info.time?.completed) ? normalizeRemoteTimestamp(message.info.time?.completed) : null,
     parts,
+    ...(failureMessage ? { failureMessage } : {}),
   };
+}
+
+/** @param {unknown} error */
+export function normalizeRemoteRunError(error) {
+  if (!error) return null;
+  const value = /** @type {any} */ (error);
+  if (value.name === "MessageAbortedError") return null;
+  for (const candidate of [typeof value === "string" ? value : value.message, value.data?.message ?? value.data, value.name]) {
+    if (typeof candidate !== "string") continue;
+    const detail = candidate.split(/\bResponse\s*:/i, 1)[0].trim();
+    if (!detail) continue;
+    const sanitized = safeRemoteText(detail, 2048).replace(/\p{Cc}+/gu, " ").trim();
+    // The relay still validates legacy display text against a UTF-8 byte bound.
+    let bounded = "";
+    let bytes = 0;
+    for (const character of sanitized) {
+      bytes += Buffer.byteLength(character);
+      if (bytes > 256) break;
+      bounded += character;
+    }
+    if (bounded.trim()) return bounded.trim();
+  }
+  return null;
 }
 
 // Snapshot images larger than this are replaced by a thumbnail. A full-size
@@ -625,7 +652,8 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
 
       let response;
       try {
-        response = snapshotResponseSchema.parse(await managedRuntimeClient.getJson(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/snapshot?limit=${SNAPSHOT_MESSAGE_LIMIT}`));
+        const includeModelVariants = workspace.workspaceType !== "remote" ? "&includeModelVariants=true" : "";
+        response = snapshotResponseSchema.parse(await managedRuntimeClient.getJson(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/snapshot?limit=${SNAPSHOT_MESSAGE_LIMIT}${includeModelVariants}`, { signal }));
       } catch (error) {
         mapClientError(error, "session_not_found");
       }
@@ -681,6 +709,7 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
             ? { revision: value.revision, mode: value.mode, model: value.model, updatedAt: value.updatedAt }
             : { revision: 0, mode: "auto", model: null, updatedAt: 0 };
         })(),
+        ...(workspace.workspaceType !== "remote" && response.item.modelVariants !== undefined ? { modelVariants: response.item.modelVariants } : {}),
         ...(permissionMode ? { permissionMode } : {}),
         capturedAt: captured.toISOString(),
       };

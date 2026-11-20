@@ -217,6 +217,7 @@ export const desktopRemoteFeatureCapabilityValues = [
   "session.steer",
   "session.enqueue",
   "session.prompt-model",
+  "session.prompt-variant",
   "session.model-selection",
   "session.permission-mode",
   "native-mobile",
@@ -392,7 +393,7 @@ export function createDesktopRemoteCapabilityAdvertisement(
   if (readEnabled && gates.backgroundLifecycle) features.push("background.lifecycle")
   if (mutationEnabled && gates.busySessionSteer) features.push("session.steer")
   if (mutationEnabled && gates.busySessionEnqueue) features.push("session.enqueue")
-  if (mutationEnabled) features.push("session.prompt-model")
+  if (mutationEnabled) features.push("session.prompt-model", "session.prompt-variant")
   if (mutationEnabled) features.push("session.model-selection")
   if (mutationEnabled) features.push("session.permission-mode")
   if (readEnabled && gates.nativeMobile) features.push("native-mobile")
@@ -673,6 +674,7 @@ export const desktopRemoteMessageSchema = z
     createdAt: dateTimeSchema,
     completedAt: dateTimeSchema.nullable(),
     parts: z.array(desktopRemoteMessagePartSchema).max(10_000),
+    failureMessage: z.string().min(1).max(256).optional(),
   })
   .strict()
 export type DesktopRemoteMessage = z.infer<typeof desktopRemoteMessageSchema>
@@ -800,6 +802,20 @@ export const desktopRemoteSessionPermissionModeSchema = z.object({
 }).strict()
 export type DesktopRemoteSessionPermissionMode = z.infer<typeof desktopRemoteSessionPermissionModeSchema>
 
+export const DESKTOP_REMOTE_MAX_MODEL_VARIANT_ENTRIES = 200
+export const DESKTOP_REMOTE_MAX_VARIANTS_PER_MODEL = 32
+export const desktopRemoteModelVariantIdentifierSchema = z.string().min(1).max(256)
+  .refine((value) => new TextEncoder().encode(value).length <= 256 && value === value.trim() && !/\p{Cc}/u.test(value), "expected a trim-stable identifier of at most 256 UTF-8 bytes without control characters")
+
+export const desktopRemoteModelVariantsSchema = z.array(z.object({
+  providerID: desktopRemoteModelVariantIdentifierSchema,
+  modelID: desktopRemoteModelVariantIdentifierSchema,
+  variants: z.array(desktopRemoteModelVariantIdentifierSchema).min(1).max(DESKTOP_REMOTE_MAX_VARIANTS_PER_MODEL)
+    .refine((variants) => new Set(variants).size === variants.length, "variants must be unique"),
+}).strict()).max(DESKTOP_REMOTE_MAX_MODEL_VARIANT_ENTRIES)
+  .refine((entries) => new Set(entries.map(({ providerID, modelID }) => JSON.stringify([providerID, modelID]))).size === entries.length,
+    "models must be unique")
+
 const sessionSnapshotBaseShape = {
   schemaVersion: z.literal(DESKTOP_REMOTE_SCHEMA_VERSION),
   workspace: desktopRemoteWorkspaceSummarySchema,
@@ -818,6 +834,7 @@ const sessionSnapshotBaseShape = {
     model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().nullable(),
     updatedAt: z.number().int().nonnegative(),
   }).strict(),
+  modelVariants: desktopRemoteModelVariantsSchema.optional(),
   // Optional: older local servers do not expose session permission modes.
   permissionMode: desktopRemoteSessionPermissionModeSchema.optional(),
   capturedAt: dateTimeSchema,
@@ -888,6 +905,11 @@ const sessionSnapshotV2RequestSchema = z
     arguments: z.object({ workspaceId: identifierSchema, rootSessionId: identifierSchema }).strict(),
   })
   .strict()
+function validPromptVariant(args: { variant?: string; model?: unknown; whenBusy: string }) {
+  return args.variant === undefined || (args.model !== undefined && args.whenBusy === "reject")
+}
+const promptVariantRequirement = { message: "variant requires an explicit model and whenBusy reject", path: ["variant"] }
+
 const sessionPromptRequestSchema = z
   .object({
     operation: z.literal("session.prompt"),
@@ -897,6 +919,7 @@ const sessionPromptRequestSchema = z
         workspaceId: identifierSchema,
         sessionId: identifierSchema,
         model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().optional(),
+        variant: desktopRemoteModelVariantIdentifierSchema.optional(),
         prompt: z.string().min(1)
           .refine((value) => value.trim().length > 0, "prompt must not be blank")
           .refine(
@@ -905,7 +928,7 @@ const sessionPromptRequestSchema = z
           ),
         whenBusy: z.enum(["reject", "steer", "enqueue"]).default("reject"),
       })
-      .strict(),
+      .strict().refine(validPromptVariant, promptVariantRequirement),
   })
   .strict()
 const sessionPromptV2RequestSchema = z
@@ -916,9 +939,10 @@ const sessionPromptV2RequestSchema = z
       workspaceId: identifierSchema,
       sessionId: identifierSchema,
       model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().optional(),
+      variant: desktopRemoteModelVariantIdentifierSchema.optional(),
       parts: desktopRemotePromptPartsSchema,
       whenBusy: z.enum(["reject", "steer", "enqueue"]).default("reject"),
-    }).strict(),
+    }).strict().refine(validPromptVariant, promptVariantRequirement),
   })
   .strict()
 const sessionCreateRequestSchema = z
@@ -1220,6 +1244,10 @@ export function createDesktopRemoteOperationRequestSchema(
     if (request.operation === "session.prompt" && request.arguments.model !== undefined &&
       !parsedCapabilities.features.includes("session.prompt-model")) {
       context.addIssue({ code: "custom", message: "model selection must be advertised by the target device", path: ["arguments", "model"], params: { errorCode: "capability_not_advertised" satisfies DesktopRemoteErrorCode } })
+    }
+    if (request.operation === "session.prompt" && request.arguments.variant !== undefined &&
+      !parsedCapabilities.features.includes("session.prompt-variant")) {
+      context.addIssue({ code: "custom", message: "variant selection must be advertised by the target device", path: ["arguments", "variant"], params: { errorCode: "capability_not_advertised" satisfies DesktopRemoteErrorCode } })
     }
     if (request.operation === "session.model.set" && !parsedCapabilities.features.includes("session.model-selection")) {
       context.addIssue({ code: "custom", message: "session model selection must be advertised by the target device", path: ["operation"], params: { errorCode: "capability_not_advertised" satisfies DesktopRemoteErrorCode } })

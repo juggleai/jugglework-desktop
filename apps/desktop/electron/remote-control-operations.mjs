@@ -244,7 +244,7 @@ export function createRemoteControlOperationRegistry({
     if (payloadEncryptionReady) features.push("payload.e2ee-v1");
     if (mutationEnabled && isRecord(gates) && gates.busySessionSteer === true && busyPolicy.steer) features.push("session.steer");
     if (mutationEnabled && isRecord(gates) && gates.busySessionEnqueue === true && busyPolicy.enqueue) features.push("session.enqueue");
-    if (mutationEnabled && handlers.has("session.prompt")) features.push("session.prompt-model");
+    if (mutationEnabled && handlers.has("session.prompt")) features.push("session.prompt-model", "session.prompt-variant");
     if (mutationEnabled && handlers.has("session.model.set")) features.push("session.model-selection");
     if (mutationEnabled && handlers.has("session.permission-mode.set")) features.push("session.permission-mode");
 
@@ -327,6 +327,11 @@ export function createRemoteControlOperationRegistry({
         return rejected("feature_disabled", correlationId);
       }
       const whenBusy = validatedArguments.whenBusy ?? "reject";
+      if (validatedArguments.variant !== undefined) {
+        if (validatedArguments.model === undefined || whenBusy !== "reject") return rejected("invalid_request", correlationId);
+        if (!isRecord(advertisedCapabilities) || !Array.isArray(advertisedCapabilities.features) ||
+          !advertisedCapabilities.features.includes("session.prompt-variant")) return rejected("feature_disabled", correlationId);
+      }
       if (whenBusy === "steer" || whenBusy === "enqueue") {
         let busyPolicy = { steer: false, enqueue: false };
         try {

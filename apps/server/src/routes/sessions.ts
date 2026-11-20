@@ -1,6 +1,11 @@
 import { resolve } from "node:path";
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
-import { desktopRemotePromptPartSchema } from "@jugglework/types/desktop-remote-control";
+import {
+  DESKTOP_REMOTE_MAX_MODEL_VARIANT_ENTRIES,
+  DESKTOP_REMOTE_MAX_VARIANTS_PER_MODEL,
+  desktopRemoteModelVariantIdentifierSchema,
+  desktopRemotePromptPartSchema,
+} from "@jugglework/types/desktop-remote-control";
 import { isChatSelectableProviderModel } from "@jugglework/types/media-generation";
 import { z } from "zod";
 import {
@@ -107,6 +112,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// Match the desktop composer’s Codex effort mapping. Other models, and Codex
+// variants without an effort equivalent, use the literal catalog variant.
+function resolveCodexReasoningEffort(modelID: string, variant: string) {
+  if (!modelID.toLowerCase().includes("codex")) return undefined;
+  switch (variant.toLowerCase()) {
+    case "minimal": return "low";
+    case "xhigh":
+    case "max": return "high";
+    case "low": return "low";
+    case "medium": return "medium";
+    case "high": return "high";
+    default: return undefined;
+  }
+}
+
 function sessionCreateTitleScalarCount(value: string): number | null {
   if (/\p{Cc}/u.test(value)) return null;
   let count = 0;
@@ -154,6 +174,7 @@ const promptBodySchema = z.object({
 const remotePromptBodySchema = z.object({
   parts: z.array(desktopRemotePromptPartSchema).min(1).max(1_000),
   model: z.object({ providerID: runIdentifierSchema, modelID: runIdentifierSchema }).strict().optional(),
+  variant: desktopRemoteModelVariantIdentifierSchema.optional(),
 }).strict().superRefine((prompt, context) => {
   const files = prompt.parts.filter((part) => part.type === "file");
   const text = prompt.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
@@ -161,6 +182,7 @@ const remotePromptBodySchema = z.object({
   if (Buffer.byteLength(text, "utf8") > 200_000) context.addIssue({ code: "custom", message: "prompt text is too large" });
   if (!text.trim() && files.length === 0) context.addIssue({ code: "custom", message: "prompt is empty" });
   if (Buffer.byteLength(JSON.stringify(prompt.parts), "utf8") > 28 * 1024 * 1024) context.addIssue({ code: "custom", message: "prompt is too large" });
+  if (prompt.variant !== undefined && !prompt.model) context.addIssue({ code: "custom", path: ["variant"], message: "variant requires an explicit model" });
 });
 const startRunBodySchema = z.discriminatedUnion("origin", [
   z.object({
@@ -215,6 +237,7 @@ const opencodeTargetSessionStatusSchema = z.object({
 }).passthrough();
 const MAX_SESSION_MESSAGE_LIMIT = 1_000;
 const MAX_SESSION_MESSAGE_CURSOR_LENGTH = 4_096;
+const REMOTE_SNAPSHOT_MODEL_CATALOG_TIMEOUT_MS = 2_000;
 
 function parseSessionMessageCursor(value: string | null): string | undefined {
   if (value === null) return undefined;
@@ -369,13 +392,42 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
   } = options;
   const resolveSuggestionModel = createTextModelResolver({ config, env: options.env });
 
-  async function validateExplicitModel(workspace: WorkspaceInfo, model: { providerID: string; modelID: string }) {
-    const catalog = await createWorkspaceOpencodeClient(config, workspace).provider.list();
+  async function readModelCatalog(workspace: WorkspaceInfo, signal?: AbortSignal) {
+    const catalog = await createWorkspaceOpencodeClient(config, workspace).provider.list(undefined, { signal });
     if (catalog.error || !catalog.data || !catalog.response.ok) throw new ApiError(502, "model_catalog_unavailable", "Model catalog unavailable");
-    const { all, connected } = catalog.data;
+    return catalog.data;
+  }
+
+  async function readModelVariants(workspace: WorkspaceInfo, signal: AbortSignal) {
+    const { all, connected } = await readModelCatalog(workspace, signal);
+    const activeProviders = new Set(connected);
+    const seen = new Set<string>();
+    const entries: { providerID: string; modelID: string; variants: string[] }[] = [];
+    for (const provider of all) {
+      if (!activeProviders.has(provider.id) || !desktopRemoteModelVariantIdentifierSchema.safeParse(provider.id).success) continue;
+      for (const [modelID, model] of Object.entries(provider.models)) {
+        if (!isRecord(model) || !isRecord(model.variants) || !isChatSelectableProviderModel(model) ||
+          !desktopRemoteModelVariantIdentifierSchema.safeParse(modelID).success) continue;
+        const key = JSON.stringify([provider.id, modelID]);
+        if (seen.has(key)) continue;
+        const variants = Object.keys(model.variants)
+          .filter((variant) => desktopRemoteModelVariantIdentifierSchema.safeParse(variant).success)
+          .slice(0, DESKTOP_REMOTE_MAX_VARIANTS_PER_MODEL);
+        if (!variants.length) continue;
+        seen.add(key);
+        entries.push({ providerID: provider.id, modelID, variants });
+        if (entries.length === DESKTOP_REMOTE_MAX_MODEL_VARIANT_ENTRIES) return entries;
+      }
+    }
+    return entries;
+  }
+
+  async function validateExplicitModel(workspace: WorkspaceInfo, model: { providerID: string; modelID: string }) {
+    const { all, connected } = await readModelCatalog(workspace);
     const provider = all.find((item) => item.id === model.providerID && connected.includes(item.id));
-    const selected = provider?.models[model.modelID];
+    const selected = provider && Object.hasOwn(provider.models, model.modelID) ? provider.models[model.modelID] : undefined;
     if (!selected || !isChatSelectableProviderModel(selected)) throw new ApiError(400, "model_unavailable", "Selected chat model is unavailable");
+    return selected;
   }
   const sessionGroupEvents = new SessionGroupEventStore();
 
@@ -969,7 +1021,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
       limit: requestedLimit,
       signal: ctx.request.signal,
     });
-    return jsonResponse({ item: { ...item, modelPreference: sessionModelPreferences.get(workspace.id, sessionId) } });
+    const modelVariants = workspace.workspaceType === "local" && ctx.url.searchParams.get("includeModelVariants") === "true"
+      ? await readModelVariants(workspace, AbortSignal.any([ctx.request.signal, AbortSignal.timeout(REMOTE_SNAPSHOT_MODEL_CATALOG_TIMEOUT_MS)])).catch(() => undefined)
+      : undefined;
+    return jsonResponse({ item: { ...item, modelPreference: sessionModelPreferences.get(workspace.id, sessionId), modelVariants } });
   });
 
   addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/model-preference", "client", async (ctx) => {
@@ -1077,6 +1132,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const responseLanguage = promptResponseLanguage(input);
+    const remoteVariant = input.origin === "remote-control" && typeof input.prompt.variant === "string" ? input.prompt.variant : undefined;
+    if (remoteVariant !== undefined && workspace.workspaceType !== "local") {
+      throw new ApiError(400, "variant_unavailable", "Variant selection requires a local workspace");
+    }
     if (input.origin === "remote-control" && isRecord(input.prompt.model)) {
       if (input.whenBusy !== "reject") throw new ApiError(400, "invalid_payload", "Explicit model requires whenBusy reject");
       await validateExplicitModel(workspace, input.prompt.model as { providerID: string; modelID: string });
@@ -1249,7 +1308,18 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
       } else if (isRecord(input.prompt.model)) {
         // Auto mode uses the renderer's displayed workspace default. Validate it
         // at dispatch time so provider changes cannot send a stale model.
-        await validateExplicitModel(workspace, input.prompt.model as { providerID: string; modelID: string });
+        const model = input.prompt.model as { providerID: string; modelID: string };
+        const selected = await validateExplicitModel(workspace, model);
+        if (remoteVariant !== undefined) {
+          if (!isRecord(selected.variants) || !Object.hasOwn(selected.variants, remoteVariant)) {
+            throw new ApiError(400, "variant_unavailable", "Selected model variant is unavailable");
+          }
+          const effort = resolveCodexReasoningEffort(model.modelID, remoteVariant);
+          // Keep the catalog variant for stock OpenCode, whose prompt schema
+          // only reads `variant`. Runtimes that honor the Codex override also
+          // receive the desktop's mapped effort.
+          if (effort !== undefined) input.prompt.reasoning_effort = effort;
+        }
       }
       try {
         await dispatchSessionPromptAsync(
@@ -1490,6 +1560,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
       origin: body.origin === "local" ? "local-renderer" : "remote-control",
       startCommandCorrelationId: body.commandId,
       prompt: body.prompt as Record<string, unknown>,
+      ...(body.origin === "remote" && body.prompt.variant !== undefined ? { whenBusy: "reject" as const } : {}),
     });
   });
 

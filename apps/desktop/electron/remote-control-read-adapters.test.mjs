@@ -18,6 +18,7 @@ import {
 const WORKSPACE_PATH = "/private/authorized/project";
 const NOW = Date.parse("2026-08-09T00:00:00.000Z");
 const PERMISSION_MODE_PATH = "/workspace/ws_local/sessions/ses_1/permission-mode";
+const SNAPSHOT_PATH = "/workspace/ws_local/sessions/ses_1/snapshot?limit=200&includeModelVariants=true";
 const enabledGates = {
   enrollment: true,
   readOnlyControl: true,
@@ -76,7 +77,7 @@ function harness(overrides = {}) {
     "/workspace/ws_local/sessions?limit=10000": { items: [session()] },
     "/workspace/ws_local/opencode/session/status": { ses_1: { type: "busy" } },
     "/workspace/ws_local/sessions/ses_1": { item: session() },
-    "/workspace/ws_local/sessions/ses_1/snapshot?limit=200": snapshotBody(),
+    [SNAPSHOT_PATH]: snapshotBody(),
     "/workspace/ws_local/sessions/ses_1/pending": { items: [] },
     [PERMISSION_MODE_PATH]: { supported: true, profileVersion: 1, state: null, grants: [] },
     "/workspace/ws_local/session-runs": { items: [] },
@@ -127,6 +128,19 @@ async function dispatch(registry, operation, argumentsValue, correlationId = "co
 }
 
 describe("remote-control read adapters", () => {
+  it("preserves optional workspace model variants in both snapshot versions", async () => {
+    const body = snapshotBody();
+    const modelVariants = [{ providerID: "connected", modelID: "chat", variants: ["low", "high"] }];
+    for (const payloadVersion of [1, 2]) {
+      const args = { workspaceId: "ws_local", [payloadVersion === 1 ? "sessionId" : "rootSessionId"]: "ses_1" };
+      const h = harness({ responses: { [SNAPSHOT_PATH]: { item: { ...body.item, modelVariants } } } });
+      const result = await dispatch(h.registry, "session.snapshot", args, "corr-1", payloadVersion);
+      assert.equal(result.ok, true);
+      assert.deepEqual(result.value.modelVariants, modelVariants);
+      assert.equal(Object.hasOwn((await dispatch(harness().registry, "session.snapshot", args, "corr-1", payloadVersion)).value, "modelVariants"), false);
+    }
+  });
+
   it("defaults missing permission state and projects only the authorized root's paused mode using the current profile", async () => {
     const read = (registry, version = 1) => dispatch(registry, "session.snapshot", version === 1
       ? { workspaceId: "ws_local", sessionId: "ses_1" } : { workspaceId: "ws_local", rootSessionId: "ses_1" }, "corr-1", version);
@@ -373,7 +387,7 @@ describe("remote-control read adapters", () => {
       { id: "prt_img", messageID: "msg_1", sessionID: "ses_1", type: "file", mime: "image/png", filename: "photo.png", url: original },
     ]);
     const testHarness = harness({
-      responses: { "/workspace/ws_local/sessions/ses_1/snapshot?limit=200": body },
+      responses: { [SNAPSHOT_PATH]: body },
       imageThumbnailer: () => ({ mime: "image/jpeg", url: "data:image/jpeg;base64,/9j/4AAQ" }),
     });
     const result = await dispatch(testHarness.registry, "session.snapshot", { workspaceId: "ws_local", sessionId: "ses_1" });
@@ -389,7 +403,7 @@ describe("remote-control read adapters", () => {
     // A strict item schema must not turn that into internal_error for remote.
     const body = snapshotBody();
     body.item = { ...body.item, messagePage: { olderCursor: "cur_1", hasOlder: true } };
-    const testHarness = harness({ responses: { "/workspace/ws_local/sessions/ses_1/snapshot?limit=200": body } });
+    const testHarness = harness({ responses: { [SNAPSHOT_PATH]: body } });
     const result = await dispatch(testHarness.registry, "session.snapshot", { workspaceId: "ws_local", sessionId: "ses_1" });
     assert.equal(result.ok, true, JSON.stringify(result.error));
     assert.equal(Object.hasOwn(result.value, "messagePage"), false);
@@ -400,7 +414,7 @@ describe("remote-control read adapters", () => {
   it("accepts persisted model preference identity fields without leaking them", async () => {
     const testHarness = harness({
       responses: {
-        "/workspace/ws_local/sessions/ses_1/snapshot?limit=200": {
+        [SNAPSHOT_PATH]: {
           ...snapshotBody(),
           item: {
             ...snapshotBody().item,

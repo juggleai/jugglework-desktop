@@ -56,6 +56,7 @@ function startMockOpencode() {
   const disposes: Array<{ directory: string | null }> = [];
   const statuses = new Map<string, unknown>();
   const connected = ["connected"];
+  const catalogs = new Map<string, unknown>();
   const models: Record<string, unknown> = {
     chat: { capabilities: { output: { text: true } } },
     image: { capabilities: { output: { image: true, text: false } } },
@@ -91,12 +92,16 @@ function startMockOpencode() {
     async fetch(request) {
       const url = new URL(request.url);
       if (request.method === "GET" && url.pathname === "/provider") {
-        return Response.json({ all: [{ id: "connected", models }], connected });
+        const directory = decodeURIComponent(request.headers.get("x-opencode-directory") ?? "");
+        const catalog = catalogs.get(directory);
+        if (catalog instanceof Response) return catalog.clone();
+        return Response.json(catalog ?? { all: [{ id: "connected", models }], connected });
       }
       if (request.method === "GET" && url.pathname === "/session/status") {
         statusRequests.push(request.headers.get("x-opencode-directory") ?? "");
         return Response.json(Object.fromEntries(statuses));
       }
+      if (request.method === "GET" && /^\/session\/[^/]+\/todo$/.test(url.pathname)) return Response.json([]);
       const messageMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
       if (request.method === "GET" && messageMatch) {
         const sessionId = decodeURIComponent(messageMatch[1]!);
@@ -245,6 +250,7 @@ function startMockOpencode() {
     disposes,
     statuses,
     connected,
+    catalogs,
     models,
     messages,
     sessions,
@@ -397,6 +403,68 @@ describe("authoritative session mutation APIs", () => {
     // Omitted whenBusy is the normal adapter path and defaults to reject.
     expect((await start(model)).status).toBe(202);
     expect(engine.prompts[0]?.body).toMatchObject({ model });
+  });
+
+  test("remote snapshot projects the target workspace catalog and starts revalidate variants before dispatch", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const primary = harness.config.workspaces[0]!.path;
+    const secondary = harness.config.workspaces[1]!.path;
+    const chat = { variants: { high: { apiKey: "private-variant-config" } } };
+    const codex = { variants: Object.fromEntries(["minimal", "xhigh", "none", ...Array.from({ length: 35 }, (_, index) => `v${index}`), " invalid"].map((name) => [name, {}])) };
+    const byModel = { chat, "gpt-codex": codex, plain: {}, image: { ...chat, capabilities: { output: { image: true } } },
+      ["x".repeat(257)]: chat, ...Object.fromEntries(Array.from({ length: 201 }, (_, index) => [`extra-${index}`, chat])) };
+    engine.catalogs.set(primary, { connected: ["connected"], all: [{ id: "offline", models: { chat } }, { id: "connected", models: byModel, key: "private-provider-key" }] });
+    engine.catalogs.set(secondary, { connected: ["different"], all: [{ id: "different", models: { chat: { variants: { low: {} } } } }] });
+    for (const [id, directory] of [["ses_1", primary], ["ses_2", secondary]]) {
+      engine.sessions.set(id!, { id: id!, directory, title: "Variants", time: { created: 1, updated: 1 } });
+    }
+    const snapshot = async (workspace: string, session: string, query = "?includeModelVariants=true") => {
+      const response = await fetch(`${harness.base}/workspace/${workspace}/sessions/${session}/snapshot${query}`, { headers: harness.collaboratorHeaders });
+      expect(response.status).toBe(200);
+      return (await response.json()).item;
+    };
+    const items = (await snapshot("ws_1", "ses_1")).modelVariants;
+    expect(items).toHaveLength(200);
+    expect(items[0]).toEqual({ providerID: "connected", modelID: "chat", variants: ["high"] });
+    expect(items[1].variants).toHaveLength(32);
+    expect(items.map((entry: { modelID: string }) => entry.modelID)).not.toContain("image");
+    expect(JSON.stringify(items)).not.toContain("private-");
+    expect((await snapshot("ws_2", "ses_2")).modelVariants).toEqual([{ providerID: "different", modelID: "chat", variants: ["low"] }]);
+    expect((await snapshot("ws_1", "ses_1", "")).modelVariants).toBeUndefined();
+
+    const start = (id: string, prompt: object, whenBusy = "reject", workspace = "ws_1") => fetch(`${harness.base}/workspace/${workspace}/sessions/${id}/runs/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: `cmd_${id}`, whenBusy, prompt: { parts: [{ type: "text", text: "Hello" }], ...prompt } }),
+    });
+    const model = { providerID: "connected", modelID: "chat" };
+    expect((await start("ses_1", { variant: "high" })).status).toBe(400);
+    expect((await start("ses_1", { model, variant: "high" }, "enqueue")).status).toBe(400);
+    expect((await start("ses_1", { model, variant: "high" }, "steer")).status).toBe(400);
+    expect((await start("ses_2", { model, variant: "high" }, "reject", "ws_2")).status).toBe(400);
+    engine.statuses.set("ses_1", { type: "busy" });
+    expect((await start("ses_1", { model, variant: "high" })).status).toBe(409);
+    engine.statuses.delete("ses_1");
+    const removed = chat.variants.high;
+    Reflect.deleteProperty(chat.variants, "high");
+    const stale = await start("ses_1", { model, variant: "high" });
+    expect(stale.status).toBe(400);
+    expect((await stale.json()).code).toBe("variant_unavailable");
+    expect(engine.prompts).toHaveLength(0);
+    chat.variants.high = removed;
+    expect((await start("ses_1", { model, variant: "high" })).status).toBe(202);
+    expect(engine.prompts.at(-1)?.body).toMatchObject({ model, variant: "high" });
+    expect(engine.prompts.at(-1)?.body).not.toHaveProperty("reasoning_effort");
+    for (const [variant, effort] of [["minimal", "low"], ["xhigh", "high"], ["none", undefined]]) {
+      const codexModel = { ...model, modelID: "gpt-codex" };
+      expect((await start(`ses_codex_${variant}`, { model: codexModel, variant })).status).toBe(202);
+      expect(engine.prompts.at(-1)?.body).toMatchObject({ model: codexModel, variant });
+      expect((engine.prompts.at(-1)?.body as { reasoning_effort?: string }).reasoning_effort).toBe(effort);
+    }
+    engine.catalogs.set(secondary, { connected: [], all: [] });
+    expect((await snapshot("ws_2", "ses_2")).modelVariants).toEqual([]);
+    engine.catalogs.set(secondary, Response.json({}, { status: 503 }));
+    expect((await snapshot("ws_2", "ses_2")).modelVariants).toBeUndefined();
   });
   for (const mode of ["local-queue", "local-steer", "remote-steer"] as const) {
     test(`${mode} 真实入口绑定文件交付，队列执行前不结束，生成工具可定位原轮次`, async () => {

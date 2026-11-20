@@ -267,6 +267,26 @@ describe("remote session projector", () => {
     h.projector.accept(WORKSPACE, { type: "session.error", properties: { sessionID: SESSION, error: { message: "boom" } } });
     assert.equal(h.emitted.at(-2).data.status, "failed");
     assert.equal(h.emitted.at(-1).data.error.message, "boom");
+    const quota = "Provider error 400: ServiceQuotaExceededException: MONTHLY_REQUEST_COUNT";
+    h.projector.accept(WORKSPACE, { type: "session.error", properties: { sessionID: SESSION, error: { name: "APIError", data: { message: `${quota}\ntoken=fixture-value\nResponse: {"example":"omitted"}` } } } });
+    assert.equal(h.emitted.at(-1).data.error.message, `${quota} token=[REDACTED]`);
+    const count = h.emitted.length;
+    h.projector.accept(WORKSPACE, { type: "session.idle", properties: { sessionID: SESSION } });
+    assert.equal(h.emitted.length, count);
+    h.projector.accept(WORKSPACE, { type: "session.status", properties: { sessionID: SESSION, status: { type: "busy" } } });
+    h.projector.accept(WORKSPACE, { type: "session.idle", properties: { sessionID: SESSION } });
+    assert.equal(h.emitted.at(-1).data.status, "completed");
+  });
+
+  it("keeps a provider failure attached to an assistant message with no parts", () => {
+    const h = harness();
+    h.projector.accept(WORKSPACE, { type: "message.updated", properties: { info: {
+      ...info(), role: "assistant", error: { name: "APIError", data: { message: "Quota exceeded" } },
+    } } });
+    const message = h.emitted.find((event) => event.data.type === "message.upsert").data.message;
+    assert.deepEqual(message.parts, []);
+    assert.equal(message.failureMessage, "Quota exceeded");
+    assert.equal(h.emitted.at(-1).data.status, "failed");
   });
 
   it("ignores unknown session statuses instead of fabricating idle completion", () => {
