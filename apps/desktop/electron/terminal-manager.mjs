@@ -1,10 +1,17 @@
 import { randomUUID } from "node:crypto";
 
-export function terminalEnvironment(source) {
+export function terminalEnvironment(source, platform = process.platform) {
   // Allowlist rather than attempting to enumerate every internal/provider token.
   const env = {};
   for (const key of ["HOME", "USER", "LOGNAME", "SHELL", "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP", "SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH"]) {
     if (typeof source[key] === "string") env[key] = source[key];
+  }
+  // A GUI launch can omit locale variables, leaving the shell's line editor in ASCII.
+  // LC_ALL takes precedence over LC_CTYPE, so drop a non-UTF-8 override before setting it.
+  const characterLocale = env.LC_ALL || env.LC_CTYPE || env.LANG || "";
+  if (platform !== "win32" && !/(?:^|\.)utf-?8(?:@|$)/i.test(characterLocale)) {
+    delete env.LC_ALL;
+    env.LC_CTYPE = platform === "darwin" ? "UTF-8" : "C.UTF-8";
   }
   return { ...env, TERM: "xterm-256color", COLORTERM: "truecolor" };
 }

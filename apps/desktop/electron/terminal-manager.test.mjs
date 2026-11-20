@@ -49,5 +49,15 @@ test("trusted main frame only and environment excludes tokens/injection", () => 
   assertTerminalSender({ sender: contents, senderFrame: contents.mainFrame }, window);
   assert.throws(() => assertTerminalSender({ sender: contents, senderFrame: {} }, window), /UNTRUSTED/);
   assert.throws(() => assertTerminalSender({ sender: {}, senderFrame: contents.mainFrame }, window), /UNTRUSTED/);
-  assert.deepEqual(terminalEnvironment({ PATH: "/bin", JUGGLEWORK_TOKEN: "secret", OPENAI_API_KEY: "secret", NODE_OPTIONS: "inject" }), { PATH: "/bin", TERM: "xterm-256color", COLORTERM: "truecolor" });
+  assert.deepEqual(terminalEnvironment({ PATH: "/bin", LANG: "zh_CN.UTF-8", JUGGLEWORK_TOKEN: "secret", OPENAI_API_KEY: "secret", NODE_OPTIONS: "inject" }), { PATH: "/bin", LANG: "zh_CN.UTF-8", TERM: "xterm-256color", COLORTERM: "truecolor" });
+});
+
+test("terminal uses the platform UTF-8 locale when the effective character locale is ASCII", () => {
+  assert.equal(terminalEnvironment({}, "darwin").LC_CTYPE, "UTF-8");
+  const linux = terminalEnvironment({ LANG: "zh_CN.UTF-8", LC_ALL: "C" }, "linux");
+  assert.equal(linux.LC_CTYPE, "C.UTF-8");
+  assert.equal(linux.LC_ALL, undefined);
+  assert.equal(linux.LANG, "zh_CN.UTF-8");
+  assert.equal(terminalEnvironment({ LC_ALL: "C.UTF-8", LC_CTYPE: "C" }, "linux").LC_ALL, "C.UTF-8");
+  assert.equal(terminalEnvironment({}, "win32").LC_CTYPE, undefined);
 });
