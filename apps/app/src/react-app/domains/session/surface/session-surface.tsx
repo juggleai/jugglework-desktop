@@ -1976,27 +1976,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
   };
 
-  const registerPastedText = (text: string) => {
+  const createPastePart = (text: string) => {
     const id = `paste-${Math.random().toString(36).slice(2)}`;
     const lines = text.split(/\r?\n/).length;
-    const part = { id, label: `${id.slice(-4)} · ${lines} lines`, text, lines };
-    const current = getComposerPasteParts(useComposerStateStore.getState(), props.sessionId);
-    setComposerPasteParts(props.sessionId, [...current, part]);
-    return part;
-  };
-
-  const handleExpandPastedText = (id: string) => {
-    const part = pasteParts.find((item) => item.id === id);
-    if (!part) return;
-    setComposerDraft(props.sessionId, draft.replace(`[pasted text ${part.label}]`, () => part.text));
-    setComposerPasteParts(props.sessionId, pasteParts.filter((item) => item.id !== id));
-  };
-
-  const handleRemovePastedText = (id: string) => {
-    const target = pasteParts.find((item) => item.id === id);
-    if (!target) return;
-    setComposerDraft(props.sessionId, draft.replace(`[pasted text ${target.label}]`, ""));
-    setComposerPasteParts(props.sessionId, pasteParts.filter((item) => item.id !== id));
+    return { id, label: `${id.slice(-4)} · ${lines} lines`, text, lines };
   };
 
   const typeComposerText = useCallback(async (text: string) => {
@@ -2884,10 +2867,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onInsertMention={handleInsertMention}
         onRegisterCapability={handleRegisterCapability}
         inputHistory={inputHistory}
-        registerPastedText={registerPastedText}
+        createPastePart={createPastePart}
         pastedText={pasteParts}
-        onExpandPastedText={handleExpandPastedText}
-        onRemovePastedText={handleRemovePastedText}
+        onPastePartsChange={(parts) => setComposerPasteParts(props.sessionId, parts)}
         isRemoteWorkspace={props.isRemoteWorkspace}
           isSandboxWorkspace={props.isSandboxWorkspace}
           onUploadInboxFiles={props.onUploadInboxFiles ?? handleUploadInboxFiles}

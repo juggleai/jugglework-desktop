@@ -345,8 +345,6 @@ export function ReviewSessionComposer(props: {
     onInsertMention={(_kind, value) => setDraft((current) => `${current}${value}`)}
     inputHistory={inputHistory}
     pastedText={[]}
-    onExpandPastedText={() => undefined}
-    onRemovePastedText={() => undefined}
     isRemoteWorkspace={false}
     isSandboxWorkspace={false}
     draftScopeKey={`review:${workspaceId}:${sessionId}`}

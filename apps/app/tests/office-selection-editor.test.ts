@@ -6,7 +6,7 @@ import { createEmptyHistoryState, registerHistory } from "@lexical/history";
 import { $createOfficeInstructionNode, $readOfficeComposerDraft, $removeOfficeSelectionTag, ComposerOfficeInstructionNode, ComposerOfficeSelectionTagNode, registerOfficeSelectionEditing } from "../src/react-app/domains/session/surface/composer/office-selection-node";
 import { getComposerOfficeGroups, useComposerStateStore } from "../src/react-app/domains/session/surface/composer-state-store";
 import type { OfficeComposerGroup } from "../src/react-app/domains/session/surface/composer/office-selection-draft";
-import { insertStyledPastedText } from "../src/react-app/domains/session/surface/composer/pasted-text-insertion";
+import { insertPastedText } from "../src/react-app/domains/session/surface/composer/pasted-text-insertion";
 
 // TIPS: pnpm test 使用 development 导出；Lexical 的 node 导出含延迟初始化，不能在 Bun 隔离加载时先继承尚未就绪的节点类。
 const group: OfficeComposerGroup = { references: [{ referenceId: "ref", captureId: "capture", documentId: "document", workspaceId: "ws", ownerSessionId: "chat", sourcePageId: "page", modelGeneration: "page:model", contentStamp: "stamp", capturedAt: 1,
@@ -107,9 +107,9 @@ test("要求末尾换行和粘贴多行内容仍属于原选区要求，插入�
     h.editor.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false);
   }, { discrete: true });
   expect(h.content().instruction.text).toBe("前\n后");
-  h.editor.update(() => { insertStyledPastedText("新的一行\n继续"); }, { discrete: true });
+  h.editor.update(() => { insertPastedText("新的一行\n继续"); }, { discrete: true });
   expect(h.content().instruction.text).toBe("前\n新的一行\n继续后");
-  h.editor.update(() => { h.instruction().selectEnd(); h.editor.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false); insertStyledPastedText("末尾"); }, { discrete: true });
+  h.editor.update(() => { h.instruction().selectEnd(); h.editor.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false); insertPastedText("末尾"); }, { discrete: true });
   expect(h.content().instruction.text).toBe("前\n新的一行\n继续后\n末尾");
   expect(h.content().instruction.referenceIds).toEqual(["ref"]);
 });

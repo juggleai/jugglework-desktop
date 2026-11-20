@@ -66,18 +66,6 @@ async function pasteComposer(ctx, text) {
   return result;
 }
 
-function styledTextExpression(text) {
-  return `(() => {
-    const editor = document.querySelector(${JSON.stringify(EDITOR_SELECTOR)});
-    if (!editor) return false;
-    return Array.from(editor.querySelectorAll("span")).some((element) => {
-      if (!(element.textContent || "").includes(${JSON.stringify(text)})) return false;
-      const background = getComputedStyle(element).backgroundColor;
-      return Boolean(background && background !== "transparent" && background !== "rgba(0, 0, 0, 0)");
-    });
-  })()`;
-}
-
 async function composerInfo(ctx, text = "") {
   return ctx.eval(
     `(() => {
@@ -107,7 +95,7 @@ async function composerInfo(ctx, text = "") {
 
 export default {
   id: "pasted-text-threshold",
-  title: "Pasted text collapses only above 50 characters and expanded pastes stay visibly distinct",
+  title: "Pasted text collapses only above 50 characters and expanded pastes use the normal text background",
   kind: "user-facing",
   precondition: async (ctx) => {
     const state = await waitForReadySession(ctx);
@@ -167,35 +155,48 @@ export default {
       },
     },
     {
-      name: "Expanded chip text is gray and editable",
+      name: "Expanded chip text uses the normal background",
       run: async (ctx) => {
-        await ctx.prove("Expanding the chip restores the pasted text inline with gray pasted-content styling", {
+        await ctx.prove("Expanding the chip restores the pasted text inline with the normal text background", {
           voiceover: vo[2],
           action: async () => {
-            await ctx.trustedClick(EXPAND_BUTTON_SELECTOR);
-            await ctx.waitFor(
-              `(() => {
-                const editor = document.querySelector(${JSON.stringify(EDITOR_SELECTOR)});
-                return Boolean(editor && editor.innerText.includes(${JSON.stringify(LONG_PASTE)}) && !editor.querySelector("button[data-pasted-expand-label]"));
-              })()`,
-              { label: "expanded pasted text without chip" },
-            );
-            await ctx.waitFor(styledTextExpression(LONG_PASTE), { label: "gray styling on expanded paste" });
+            const expand = async () => {
+              await ctx.trustedClick(EXPAND_BUTTON_SELECTOR);
+              await ctx.waitFor(
+                `(() => {
+                  const editor = document.querySelector(${JSON.stringify(EDITOR_SELECTOR)});
+                  return Boolean(editor && editor.innerText.includes(${JSON.stringify(LONG_PASTE)}) && !editor.querySelector(${JSON.stringify(EXPAND_BUTTON_SELECTOR)}));
+                })()`,
+                { label: "expanded pasted text without chip" },
+              );
+            };
+            await expand();
+            const mac = await ctx.eval("navigator.platform.startsWith('Mac')");
+            const undo = { key: "z", code: "KeyZ", windowsVirtualKeyCode: 90, modifiers: mac ? 4 : 2 };
+            await ctx.client.send("Input.dispatchKeyEvent", { type: "keyDown", ...undo });
+            await ctx.client.send("Input.dispatchKeyEvent", { type: "keyUp", ...undo });
+            await ctx.waitFor(`Boolean(document.querySelector(${JSON.stringify(EXPAND_BUTTON_SELECTOR)}))`, {
+              label: "undo restores the pasted-text chip",
+            });
+            await expand();
+            await ctx.client.send("Input.insertText", { text: " continued" });
           },
           assert: async () => {
             const info = await composerInfo(ctx, LONG_PASTE);
             ctx.assert(info.chipCount === 0, `Expanded paste still had ${info.chipCount} chip(s).`);
-            ctx.assert(info.text.includes(LONG_PASTE), "Expanded pasted text was not visible in the composer.");
-            ctx.assert(info.hasStyledTarget === true, `Expanded paste did not have gray styling: ${JSON.stringify(info.styledMatches)}.`);
+            ctx.assert(info.text.includes(LONG_PASTE + " continued"), "Typing should continue after the expanded text.");
+            const typed = await composerInfo(ctx, " continued");
+            ctx.assert(!typed.hasStyledTarget, "Newly typed text has a background.");
+            ctx.assert(info.hasStyledTarget === false, `Expanded paste had a background: ${JSON.stringify(info.styledMatches)}.`);
           },
-          screenshot: { name: "expanded-chip-gray", requireText: [LONG_PASTE] },
+          screenshot: { name: "expanded-chip-plain", requireText: [LONG_PASTE] },
         });
       },
     },
     {
-      name: "Fifty characters stays expanded and gray",
+      name: "Fifty characters stays expanded as ordinary text",
       run: async (ctx) => {
-        await ctx.prove("Text of exactly 50 characters stays expanded while showing pasted-content styling", {
+        await ctx.prove("Text of exactly 50 characters stays expanded with the normal text background", {
           voiceover: vo[3],
           action: async () => {
             await createFreshTask(ctx);
@@ -207,15 +208,14 @@ export default {
               })()`,
               { label: "50-character paste expanded" },
             );
-            await ctx.waitFor(styledTextExpression(SHORT_PASTE), { label: "gray styling on 50-character paste" });
           },
           assert: async () => {
             const info = await composerInfo(ctx, SHORT_PASTE);
             ctx.assert(info.chipCount === 0, `50-character paste incorrectly created ${info.chipCount} chip(s).`);
             ctx.assert(info.text.includes(SHORT_PASTE), "50-character pasted text was not visible.");
-            ctx.assert(info.hasStyledTarget === true, `50-character paste did not have gray styling: ${JSON.stringify(info.styledMatches)}.`);
+            ctx.assert(info.hasStyledTarget === false, `50-character paste had a background: ${JSON.stringify(info.styledMatches)}.`);
           },
-          screenshot: { name: "short-paste-gray", requireText: [SHORT_PASTE] },
+          screenshot: { name: "short-paste-plain", requireText: [SHORT_PASTE] },
         });
       },
     },

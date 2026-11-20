@@ -2,7 +2,7 @@
 import * as React from "react";
 import { afterAll, afterEach, expect, mock, test } from "bun:test";
 import TestRenderer, { act } from "react-test-renderer";
-import { $getRoot, $getSelection, $isRangeSelection, $setCompositionKey, FORMAT_TEXT_COMMAND, KEY_DOWN_COMMAND, KEY_ENTER_COMMAND, PASTE_COMMAND, UNDO_COMMAND, type LexicalEditor } from "lexical";
+import { $getRoot, $getSelection, $isRangeSelection, $setCompositionKey, FORMAT_TEXT_COMMAND, KEY_DOWN_COMMAND, KEY_ENTER_COMMAND, PASTE_COMMAND, REDO_COMMAND, UNDO_COMMAND, type LexicalEditor } from "lexical";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext.js";
 import { $applyBlockStyle, markdownLink } from "../src/react-app/domains/session/surface/composer/selection-formatting";
 import { $readOfficeComposerDraft } from "../src/react-app/domains/session/surface/composer/office-selection-node";
@@ -54,7 +54,7 @@ async function mount(restrictedHost: boolean, busy: boolean, draft = "你好", o
     onVideoGenerationChange: noop, onDisableVideoGeneration: noop, onRefreshVideoGenerationModels: empty,
     modelVariantLabel: "", modelVariant: null, onModelVariantChange: noop, agentLabel: "", selectedAgent: null, listAgents: empty,
     onSelectAgent: noop, listCommands: empty, recentFiles: [], searchFiles: empty, onInsertMention: noop,
-    pastedText: [], onExpandPastedText: noop, onRemovePastedText: noop, isRemoteWorkspace: false, isSandboxWorkspace: false,
+    pastedText: [], isRemoteWorkspace: false, isSandboxWorkspace: false,
     ...overrides,
   };
   await act(async () => { view = TestRenderer.create(<ReactSessionComposer {...props} />); });
@@ -97,8 +97,8 @@ for (const { text, mime, collapse, expected, start, end } of [
 ]) test(`paste uses the selection and leaves the cursor after the insertion (${mime}, ${text.length}, chip=${collapse})`, async () => {
   const draft = "甲乙丙丁";
   const onDraftChange = mock();
-  const register = mock((value: string) => ({ label: "sample", lines: 2, text: value }));
-  await mount(false, false, draft, { onDraftChange, registerPastedText: collapse ? register : undefined });
+  const register = mock((value: string) => ({ id: "sample", label: "sample", lines: 2, text: value }));
+  await mount(false, false, draft, { onDraftChange, createPastePart: collapse ? register : undefined });
   await act(async () => editor.update(() => {
     $getRoot().getAllTextNodes()[0].select(start, end);
     editor.dispatchCommand(PASTE_COMMAND, {
@@ -113,6 +113,43 @@ for (const { text, mime, collapse, expected, start, end } of [
     if ($isRangeSelection(selection)) selection.insertText("!");
   }, { discrete: true }));
   expect(onDraftChange).toHaveBeenLastCalledWith(draft.slice(0, start) + expected + "!" + draft.slice(end));
+});
+
+test("undo restores the chip and its submission data for redo or a second expansion", async () => {
+  const { $expandPastedTextChip } = await import("../src/react-app/domains/session/surface/composer/editor");
+  const part = { id: "paste-1", label: "sample", lines: 2, text: longPaste };
+  const onPastePartsChange = mock();
+  await mount(false, false, "前后", { onPastePartsChange, createPastePart: () => part });
+  await act(async () => editor.update(() => {
+    $getRoot().getAllTextNodes()[0].select(1, 1);
+    editor.dispatchCommand(PASTE_COMMAND, {
+      clipboardData: { files: [], getData: (type: string) => type === "text/plain" ? longPaste : "" },
+      preventDefault: noop,
+    } as unknown as ClipboardEvent);
+  }, { discrete: true }));
+
+  const expand = () => act(async () => editor.update(() => {
+    $expandPastedTextChip($getRoot().getAllTextNodes().find((node) => node.getType() === "composer-pasted-text") ?? null);
+  }, { discrete: true }));
+  const expectCollapsed = () => {
+    expect(draftText()).toBe("前[pasted text sample]后");
+    expect(onPastePartsChange).toHaveBeenLastCalledWith([part]);
+  };
+  const expectExpanded = () => {
+    expect(draftText()).toBe("前" + longPaste + "后");
+    expect(onPastePartsChange).toHaveBeenLastCalledWith([]);
+  };
+  expectCollapsed();
+  await expand();
+  expectExpanded();
+  await act(async () => { editor.dispatchCommand(UNDO_COMMAND, undefined); });
+  expectCollapsed();
+  await act(async () => { editor.dispatchCommand(REDO_COMMAND, undefined); });
+  expectExpanded();
+  await act(async () => { editor.dispatchCommand(UNDO_COMMAND, undefined); });
+  expectCollapsed();
+  await expand();
+  expectExpanded();
 });
 
 test("mounted Lexical keeps Shift/Alt+Enter as newlines and submits ordinary Enter once", async () => {

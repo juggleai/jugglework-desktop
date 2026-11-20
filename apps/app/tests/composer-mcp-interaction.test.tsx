@@ -60,7 +60,7 @@ async function render(overrides: Partial<Props> = {}) {
     modelVariantLabel: "", modelVariant: null, onModelVariantChange: noop,
     agentLabel: "", selectedAgent: null, listAgents: emptyList, onSelectAgent: noop,
     listCommands: emptyList, recentFiles: [], searchFiles: emptyList, onInsertMention: mock(noop), onRegisterCapability: mock(noop),
-    pastedText: [], onExpandPastedText: noop, onRemovePastedText: noop,
+    pastedText: [],
     isRemoteWorkspace: false, isSandboxWorkspace: false,
     ...overrides,
   };
