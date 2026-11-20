@@ -3,7 +3,7 @@ import { extname } from "node:path";
 import type { VideoModelRef } from "@jugglework/types/media-generation";
 import { externalFetch } from "../server-fetch.js";
 import { protectedMediaFetch, type ProtectedMediaRequest, type ProtectedMediaResolver } from "../protected-media-fetch.js";
-import type { VideoAdapterBinding, VideoAdapterSubmitInput, VideoGenerationAdapter, VideoProviderJobState } from "./types.js";
+import type { VideoAdapterBinding, VideoAdapterSubmitInput, VideoGenerationAdapter, VideoProviderJobState, VideoReconciliationAdapter } from "./types.js";
 import { redactProviderMessage, VideoSubmissionError } from "./redaction.js";
 
 type VolcengineArkV3VideoAdapterOptions = {
@@ -11,6 +11,7 @@ type VolcengineArkV3VideoAdapterOptions = {
   modelIDs: string[];
   baseURL: string;
   credential: () => Promise<string | null>;
+  beforeDispatch?: () => void;
   binding?: Omit<VideoAdapterBinding, "adapterId" | "protocol" | "origin">;
   fetch?: typeof externalFetch;
   resultResolver?: ProtectedMediaResolver;
@@ -97,15 +98,16 @@ export class VolcengineArkV3VideoAdapter implements VideoGenerationAdapter {
       const response = await this.fetch(this.endpoint(path), {
         ...init,
         headers: { Authorization: `Bearer ${credential}`, ...init.headers },
-        redirect: "follow",
-      });
+        redirect: this.options.beforeDispatch ? "error" : "follow",
+      }, this.options.beforeDispatch);
       return { response, credential };
     } catch (error) {
+      if (error instanceof VideoSubmissionError) throw error;
       throw new VideoSubmissionError("unknown", "video_provider_transport_unknown", redactProviderMessage(error, [credential]));
     }
   }
 
-  async submit(input: VideoAdapterSubmitInput, signal: AbortSignal): Promise<{ providerJobId: string }> {
+  async submit(input: VideoAdapterSubmitInput, signal: AbortSignal): Promise<{ providerJobId: string; reconciliation?: VideoReconciliationAdapter }> {
     const content: Record<string, unknown>[] = [{ type: "text", text: input.prompt }];
     if (input.mode === "image-to-video") {
       if (!input.sourceImagePath) throw new Error("video_source_image_required");
@@ -135,7 +137,13 @@ export class VolcengineArkV3VideoAdapter implements VideoGenerationAdapter {
     if (!response.ok) throw new VideoSubmissionError("rejected", response.status === 429 ? "video_provider_rate_limited" : "video_provider_submission_failed", providerMessage(payload, response.status === 429 ? "video_provider_rate_limited" : "video_provider_submission_failed", credential), response.status === 429);
     const id = isRecord(payload) && typeof payload.id === "string" ? payload.id.trim() : "";
     if (!id) throw new VideoSubmissionError("unknown", "video_provider_invalid_response", "The provider submission response did not contain a job identifier.");
-    return { providerJobId: id };
+    if (!this.options.beforeDispatch) return { providerJobId: id };
+    const polling = new VolcengineArkV3VideoAdapter({ ...this.options, beforeDispatch: undefined, credential: async () => credential });
+    return { providerJobId: id, reconciliation: {
+      id: polling.id, binding: polling.binding, matches: (model) => polling.matches(model),
+      inspect: (_id, signal) => polling.inspect(id, signal),
+      acquireResult: (reference, signal) => polling.acquireResult(reference, signal),
+    } };
   }
 
   async inspect(providerJobId: string, signal: AbortSignal): Promise<VideoProviderJobState> {

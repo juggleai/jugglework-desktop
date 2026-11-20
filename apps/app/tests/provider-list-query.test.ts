@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 import type { Client } from "../src/app/types";
+import { invalidateManagedProviderScope } from "../src/app/lib/managed-provider-scope";
 import {
   cloudGroupCatalogKey,
   usePickerProviderItems,
@@ -96,6 +97,16 @@ describe("ensureProviderListQuery", () => {
     expect(queryClient.getQueryData(backend.key)).toEqual(recovered);
   });
 
+  test("drops managed entries from a hosted list that arrives after the scope changes", async () => {
+    const backend = createBackend("/late-scope");
+    let finish!: (value: ProviderListResponse) => void;
+    backend.setResult(new Promise((resolve) => { finish = resolve; }));
+    const pending = ensureProviderListQuery(queryClient, { ...backend.input, baseUrl: `${backend.input.baseUrl}/opencode` });
+    invalidateManagedProviderScope();
+    finish({ all: [{ ...recovered.all[0]!, id: "lpr_late" }, ...recovered.all], connected: ["lpr_late", ...recovered.connected], default: { lpr_late: "chat" } });
+    await expect(pending).resolves.toEqual(recovered);
+  });
+
   test.each(["missing", "stale"] as const)("rejects backend errors with %s cache instead of returning an empty list", async (cache) => {
     const backend = createBackend(`/error-${cache}`);
     const updatedAt = Date.now() - PROVIDER_LIST_CACHE_MS - 1;
@@ -132,7 +143,7 @@ test("open model pickers update from a confirmed cloud catalog while the raw eng
     await act(async () => {
       view = create(createElement(QueryClientProvider, { client }, createElement(Picker)));
     });
-    expect(visible).toEqual(ids);
+    expect(visible).toEqual(["my-local-provider"]);
     for (const enabled of [["lpr_codex"], [], ["lpr_relay"]]) {
       await act(async () => {
         client.setQueryData(cloudGroupCatalogKey(), enabled);
@@ -140,6 +151,8 @@ test("open model pickers update from a confirmed cloud catalog while the raw eng
       });
       expect(visible).toEqual([...enabled, "my-local-provider"]);
     }
+    await act(async () => invalidateManagedProviderScope());
+    expect(visible).toEqual(["my-local-provider"]);
     expect(raw.all.map(({ id }) => id)).toEqual(ids);
   } finally {
     await act(async () => view?.unmount());

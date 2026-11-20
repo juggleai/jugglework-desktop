@@ -14,7 +14,7 @@ describe("cloud provider readiness", () => {
     expect(isCloudProviderSyncReady({ all: [], connected: [], default: {} })).toBe(true);
   });
 
-  test("allows an already connected managed model while background sync is recovering", () => {
+  test("does not authorize a cached connected model while sync is recovering", () => {
     expect(isManagedModelSubmissionReady({
       cloudProviderSyncReady: false,
       model: { providerID: "lpr_org", modelID: "gpt-managed" },
@@ -29,7 +29,7 @@ describe("cloud provider readiness", () => {
           models: { "gpt-managed": { id: "gpt-managed", name: "Managed" } },
         }],
       },
-    })).toBe(true);
+    })).toBe(false);
   });
 
   test("keeps a missing or disconnected managed model gated", () => {

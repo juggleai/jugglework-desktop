@@ -60,6 +60,8 @@ import { useAutomationActivity } from "./automation-activity-provider";
 import type { WorkspaceInfo } from "@/app/lib/desktop";
 import { toast } from "@/components/ui/sonner";
 import { JuggleWorkServerError, type JuggleWorkServerClient } from "@/app/lib/jugglework-server";
+import { managedProviderEpoch, managedProviderSwitchPending, useManagedProviderCatalogRevision, useManagedProviderEpoch } from "@/app/lib/managed-provider-scope";
+import { isManagedProvider } from "@jugglework/types/provider-credentials";
 import { useOptionalJuggleWorkServer } from "@/react-app/domains/connections/jugglework-server-provider";
 import { isOrgMcpConnectionReady } from "@/react-app/domains/connections/native-provider-connections";
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
@@ -1325,6 +1327,9 @@ function AutomationEditor(props: {
   // 就是用户级配置，技能/连接器则先给出全局那一份。这里在客户端就选好 ID，而不是只依赖服务端
   // 回落：旧版本 embedded server 的该接口把 workspaceId 当必填，缺参会直接 400。
   const dependencyWorkspaceId = workspaceId || workspaces[0]?.id || "";
+  const providerEpoch = useManagedProviderEpoch();
+  const catalogRevision = useManagedProviderCatalogRevision();
+  const dependencyScope = JSON.stringify([dependencyWorkspaceId, providerEpoch, catalogRevision]);
   useEffect(() => {
     if (!props.client) {
       setDependencies(EMPTY_DEPENDENCIES);
@@ -1334,7 +1339,6 @@ function AutomationEditor(props: {
       return;
     }
     let cancelled = false;
-    const requestedWorkspaceId = dependencyWorkspaceId;
     // TIPS:工作空间切换后不能继续拿上一工作空间的依赖通过保存校验。先清空旧快照，等本次请求
     // 明确完成后再开放创建；`cancelled` 同时防止慢的旧请求覆盖新的工作空间结果。
     setDependencies(EMPTY_DEPENDENCIES);
@@ -1342,9 +1346,9 @@ function AutomationEditor(props: {
     setDependenciesLoading(true);
     setDependenciesError(null);
     void props.client.listAutomationDependencies(dependencyWorkspaceId || undefined).then((value) => {
-      if (cancelled) return;
-      setDependencies(value);
-      setDependenciesResolvedFor(requestedWorkspaceId);
+      if (cancelled || providerEpoch !== managedProviderEpoch()) return;
+      setDependencies(managedProviderSwitchPending() ? { ...value, models: value.models.filter((model) => !isManagedProvider(model.providerId)) } : value);
+      setDependenciesResolvedFor(dependencyScope);
     }).catch((dependencyError) => {
       // 不要把失败悄悄变成空列表——那会让「没有可选模型」和「查询失败」看起来一模一样。
       if (cancelled) return;
@@ -1352,7 +1356,7 @@ function AutomationEditor(props: {
       setDependenciesError(describeError(dependencyError));
     }).finally(() => { if (!cancelled) setDependenciesLoading(false); });
     return () => { cancelled = true; };
-  }, [dependencyWorkspaceId, props.client, reloadDependenciesToken]);
+  }, [dependencyScope, dependencyWorkspaceId, providerEpoch, props.client, reloadDependenciesToken]);
 
   // TIPS:`connectors` 字段缺失（undefined）表示 embedded server 还是旧版本，此时退回单独查
   // MCP 列表；返回空数组则是「确实没有连接器」，不再重复请求。
@@ -1383,17 +1387,18 @@ function AutomationEditor(props: {
   // 客户端侧的组织策略：隐藏 legacy 托管 provider、被 allowedModels 目录排除或被 allowZenModel /
   // allowCustomProviders 关闭的条目，避免自动化里能选到实际跑不起来的模型。
   const usableModels = useMemo(() => dependencies.models.filter((item) => {
-    if (item.providerId.trim().toLowerCase() === "jugglework") return false;
+    if (item.providerId.trim().toLowerCase() === "jugglework" ||
+      (dependenciesResolvedFor !== dependencyScope && isManagedProvider(item.providerId))) return false;
     return !isDesktopModelBlocked({
       model: { providerID: item.providerId, modelID: item.modelId },
       checkRestriction: checkDesktopRestriction,
       allowedModels,
       providerSource: item.providerSource as DesktopProviderSource | undefined,
     });
-  }), [allowedModels, checkDesktopRestriction, dependencies.models]);
+  }), [allowedModels, checkDesktopRestriction, dependencies.models, dependenciesResolvedFor, dependencyScope]);
   const dependenciesReady = !dependenciesLoading
     && dependenciesError === null
-    && dependenciesResolvedFor === dependencyWorkspaceId;
+    && dependenciesResolvedFor === dependencyScope;
 
   // TIPS:内置默认智能体在选择器里已经以「默认智能体」单独呈现，这里再兜一层，防止旧版本
   // embedded server 没做过滤时又重复列出来。

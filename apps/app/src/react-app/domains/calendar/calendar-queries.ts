@@ -114,12 +114,13 @@ function refreshOptions({ refetchInterval }: CalendarRefreshInput) {
   return refetchInterval ? { refetchInterval, refetchIntervalInBackground: true } : {};
 }
 
-export function useCalendarsQuery(input: { client: CalendarQueryClient; scope: CalendarScope | null; active?: boolean } & CalendarGenerationInput) {
+export function useCalendarsQuery(input: { client: CalendarQueryClient; scope: CalendarScope | null; active?: boolean; retry?: boolean } & CalendarGenerationInput) {
   const queryClient = useQueryClient();
   const scope = useCapturedScope(input.scope);
   return useQuery<DenCalendar[]>({
     queryKey: scope ? calendarQueryKeys.calendars(scope) : unavailableKey("calendars", scope),
     enabled: (input.active ?? true) && scope !== null,
+    ...(input.retry === undefined ? {} : { retry: input.retry }),
     queryFn: async ({ signal }) => {
       const calendars = await input.client.listCalendars(scope!.organizationId, { signal: calendarRequestSignal(signal, input.generation) });
       throwIfCalendarScopeStale(input.generation, signal);

@@ -50,6 +50,7 @@ export type CloudImportedProvider = {
   importedAt: number | null;
   metadataVersion: number | null;
   organizationId?: string | null;
+  authorityId?: string | null;
   providerConfigFingerprint?: string | null;
   gatewayMirror?: CloudGatewayMirrorReference | null;
 };

@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { Temporal } from "@js-temporal/polyfill";
 
 import type { DenCalendarEvent, DenCalendarSchedulingOccurrence } from "../src/app/lib/den";
-import { calendarMeetingOccurrences, collapseHistoricalCalendarOccurrences, meetingOverviewWindow } from "../src/react-app/domains/meeting/meeting-overview";
+import { calendarMeetingOccurrences, collapseHistoricalCalendarOccurrences, meetingOverviewLists, meetingOverviewWindow } from "../src/react-app/domains/meeting/meeting-overview";
+import type { Meeting } from "../src/react-app/domains/meeting/types";
 
 const baseEvent = (id: string): DenCalendarEvent => ({
   id,
@@ -57,6 +58,33 @@ test("calendar meeting projection keeps ordinary events and omits disabled video
 
   expect(result.map((item) => item.eventId)).toEqual(["enabled"]);
   expect(result[0]).toMatchObject({ description: "", attendeeMemberIds: ["member-a"] });
+});
+
+test("upcoming contains only calendar reservations, even after a room is created for one", () => {
+  const now = Date.parse("2026-11-16T01:00:00Z");
+  const reservation = baseEvent("reservation");
+  const later: DenCalendarEvent = { ...baseEvent("later"), time: {
+    kind: "timed", startInstant: "2026-11-17T01:00:00Z", endInstantExclusive: "2026-11-17T02:00:00Z", timeZone: "Asia/Shanghai",
+  } };
+  const past: DenCalendarEvent = { ...baseEvent("past"), time: {
+    kind: "timed", startInstant: "2026-11-16T00:00:00Z", endInstantExclusive: "2026-11-16T01:00:00Z", timeZone: "Asia/Shanghai",
+  } };
+  const room: Meeting = {
+    id: "instant-room", organizationId: "org-a", code: "123456", title: reservation.title,
+    description: "", sourceKind: "workbench", sourceId: "", organizerId: "user-a", hostId: "user-a",
+    status: "preparing", version: 1, startAt: "2026-11-16T01:00:00Z", endAt: "2026-11-16T01:30:00Z",
+    timezone: "Asia/Shanghai", locked: false, invites: {}, participants: {},
+  };
+  const ended: Meeting = { ...room, id: "ended-room", status: "ended", startAt: "2026-11-16T00:15:00Z", endAt: "2026-11-16T00:45:00Z" };
+  const occurrences = calendarMeetingOccurrences([later, past, reservation], [], "Asia/Shanghai");
+
+  for (const status of ["scheduled", "preparing", "live"] as const) {
+    const rooms = [{ ...room, status }, ended];
+    const { upcoming, history } = meetingOverviewLists(rooms, occurrences, now);
+    expect(upcoming.map((item) => item.eventId)).toEqual(["reservation", "later"]);
+    expect(history.map((entry) => entry.kind === "meeting" ? entry.value.id : entry.value.eventId)).toEqual(["ended-room", "past"]);
+    expect(meetingOverviewLists(rooms, [], now).upcoming).toEqual([]);
+  }
 });
 
 test("historical recurring occurrences collapse to the latest row per series", () => {

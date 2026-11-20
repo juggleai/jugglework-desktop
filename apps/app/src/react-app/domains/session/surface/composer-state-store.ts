@@ -273,7 +273,7 @@ export const useComposerStateStore = create<ComposerStateStore>((set, get) => ({
   }),
   setPasteParts: (sessionId, pasteParts) => set((state) => {
     const current = getWritableSession(state, sessionId);
-    if (current.pasteParts === pasteParts) return state;
+    if (current.pasteParts.length === pasteParts.length && current.pasteParts.every((part, index) => part === pasteParts[index])) return state;
     return { sessions: { ...state.sessions, [sessionId]: { ...current, pasteParts } } };
   }),
   setCapabilities: (sessionId, capabilities) => set((state) => {

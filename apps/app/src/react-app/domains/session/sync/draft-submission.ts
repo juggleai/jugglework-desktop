@@ -1,4 +1,6 @@
 import { captureCloudDocTurn } from "@/app/lib/cloud-doc-turn";
+import { managedProviderConfirmationCurrent, managedProviderEpoch } from "@/app/lib/managed-provider-scope";
+import { isManagedProvider } from "@jugglework/types/provider-credentials";
 import type { Client, ComposerDraft, ComposerSubmissionOptions, ModelRef } from "@/app/types";
 import type { JuggleWorkServerClient } from "@/app/lib/jugglework-server";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
@@ -49,6 +51,7 @@ function isUnconfirmedSubmissionError(error: unknown) {
 /** 主输入栏与后台队列共用完整提交链路；异步准备期间目标项目和原会话固定。 */
 export async function submitSessionDraft(input: SessionDraftSubmissionInput) {
   const { draft, sessionId, workspaceId, client, host } = input;
+  const scopeEpoch = managedProviderEpoch();
   // TIPS: 兼容旧队列时只恢复显式标签，不能借用发送时才打开的文档。
   const cloudDocTurn = draft.cloudDocTurn ?? captureCloudDocTurn(sessionId, draft.text, false);
   const submission = input.submission ?? { delivery: "start" };
@@ -76,10 +79,15 @@ export async function submitSessionDraft(input: SessionDraftSubmissionInput) {
     if (!input.isCurrent()) return { outcome: "cancelled", reason: "context_changed" } as const;
     const compact = isCompactSessionCommand(draft.command);
     if (compact && !model) throw new Error("Choose a model before compacting this session.");
+    const usesManagedModel = Boolean(draft.imageGeneration?.managedScope || draft.videoGeneration?.managedScope ||
+      [draft.mode === "shell" ? null : model, draft.imageGeneration?.model, draft.videoGeneration?.model]
+        .some((ref) => ref && isManagedProvider(ref.providerID)));
+    const canDispatch = () => input.isCurrent() && input.validateGeneration()
+      && (!usesManagedModel || managedProviderConfirmationCurrent(scopeEpoch));
     return await input.cloudSubmit({
       skipGate: !draft.parts.some((part) => part.type === "capability" && ["cloud-skill", "cloud-mcp", "extension"].includes(part.kind)),
       sessionId, providerModel: model ? { provider: model.providerID, model: model.modelID } : undefined,
-      validateBeforeSend: () => input.isCurrent() && input.validateGeneration(),
+      validateBeforeSend: canDispatch,
       send: async () => {
         let parts: Awaited<ReturnType<typeof draftToParts>> = [];
         let system: string | undefined;
@@ -90,7 +98,7 @@ export async function submitSessionDraft(input: SessionDraftSubmissionInput) {
           system = [system, input.systemContext].filter(Boolean).join("\n\n") || undefined;
         }
         // TIPS: 文件上传或环境准备期间供应商可能变化，紧邻POST再次检查，避免发送已失效的生成模型。
-        if (!input.isCurrent() || !input.validateGeneration()) return false;
+        if (!canDispatch()) return false;
         // Only reset after all gates pass, immediately before submission.
         // Steer/compact continue the existing task and retain its plan.
         if (submission.delivery !== "steer" && !compact) {

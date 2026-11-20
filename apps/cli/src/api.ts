@@ -152,6 +152,18 @@ export class JuggleWorkApiClient {
   preflightProviderAuthority(workspaceId: string) {
     return this.request<{ ok: true }>(`/workspace/${encodeURIComponent(workspaceId)}/provider-auth`);
   }
+  managedProviderRevision() {
+    return this.request<{ revision: string }>("/managed-provider-authority");
+  }
+  fenceManagedProviderAuthority(revision?: string) {
+    return this.request<{ revision: string | null }>(`/managed-provider-authority${revision ? `?revision=${encodeURIComponent(revision)}` : ""}`, { method: "DELETE" });
+  }
+  confirmManagedProviderAuthority(input: { revision: string; deployment: string; userId: string; organizationId: string; session: string }) {
+    return this.request<{ id: string }>("/managed-provider-authority", { method: "PUT", body: JSON.stringify(input) });
+  }
+  setManagedProviderReadiness(workspaceId: string, authorityId: string, ready: boolean) {
+    return this.request<{ ok: true }>(`/workspace/${encodeURIComponent(workspaceId)}/managed-provider-readiness`, { method: "PUT", body: JSON.stringify({ authorityId, ready }) });
+  }
   upsertUserEnvironment(entries: Array<{ key: string; value: string }>) {
     return this.request<{ ok: true; count: number }>("/env", { method: "PUT", body: JSON.stringify({ entries }) });
   }

@@ -27,7 +27,7 @@ import { CalendarEventCreateDialog } from "../calendar/calendar-event-create-dia
 import { resolveCalendarPageGate } from "../calendar/calendar-page-gate";
 import { useCalendarBootstrapQuery, useCalendarOrganizationMembersQuery, useCalendarSchedulingEventsQuery } from "../calendar/calendar-queries";
 import { meetingAPI } from "./api";
-import { calendarMeetingOccurrences, collapseHistoricalCalendarOccurrences, meetingOverviewWindow, type CalendarMeetingOccurrence } from "./meeting-overview";
+import { calendarMeetingOccurrences, meetingOverviewLists, meetingOverviewWindow, type CalendarMeetingOccurrence, type MeetingHistoryEntry } from "./meeting-overview";
 import { meetingReadinessReason } from "./readiness";
 import {
   meetingClosed,
@@ -286,19 +286,7 @@ export function MeetingPage({ active }: { active: boolean }) {
     calendarScheduling.data?.items ?? [],
     timeZone,
   );
-  type HomeEntry = { kind: "meeting"; value: Meeting } | { kind: "calendar"; value: CalendarMeetingOccurrence };
-  const now = Date.now();
-  const upcomingForHome: HomeEntry[] = [
-    ...items.filter((meeting) => !meetingClosed(meeting)).map((value) => ({ kind: "meeting" as const, value })),
-    ...calendarOccurrences.filter((occurrence) => +new Date(occurrence.endAt) > now).map((value) => ({ kind: "calendar" as const, value })),
-  ].sort((a, b) => +new Date(a.value.startAt) - +new Date(b.value.startAt));
-  const historicalCalendarOccurrences = collapseHistoricalCalendarOccurrences(
-    calendarOccurrences.filter((occurrence) => +new Date(occurrence.endAt) <= now),
-  );
-  const historyForHome: HomeEntry[] = [
-    ...items.filter(meetingClosed).map((value) => ({ kind: "meeting" as const, value })),
-    ...historicalCalendarOccurrences.map((value) => ({ kind: "calendar" as const, value })),
-  ].sort((a, b) => +new Date(b.value.startAt) - +new Date(a.value.startAt));
+  const { upcoming: upcomingForHome, history: historyForHome } = meetingOverviewLists(items, calendarOccurrences, Date.now());
   const calendarLoading = calendarScope !== null && (calendarBootstrap.isLoading || calendarScheduling.isLoading);
   const calendarError = calendarScope !== null && (calendarBootstrap.isError || calendarScheduling.isError || calendarMembers.isError);
   const calendarStartUnavailable = calendarError || calendarMembers.isLoading;
@@ -341,36 +329,34 @@ export function MeetingPage({ active }: { active: boolean }) {
       invitees,
     });
   }
-  const renderHomeItem = (entry: HomeEntry, upcoming = false) => {
-    if (entry.kind === "calendar") {
-      const occurrence = entry.value;
-      return (
-        <div className="home-meeting-item" key={occurrence.key} data-status="calendar" data-source="calendar">
-          <span className="home-meeting-icon"><Icon /></span>
-          <div className="home-meeting-copy">
-            <div className="row">
-              <h3 title={occurrence.title}>{occurrence.title}</h3>
-              {occurrence.recurring && !(occurrence.collapsedCount && occurrence.collapsedCount > 1) ? <span className="pill">循环日程</span> : null}
-            </div>
-            <p className="sub">
-              {dateStamp(occurrence.startAt)} {occurrence.allDay ? "全天" : `${stamp(occurrence.startAt)}–${stamp(occurrence.endAt)}`}
-              <span aria-hidden="true"> · </span>
-              <span>日历视频会议</span>
-            </p>
-          </div>
-          {upcoming ? (
-            <button
-              className="primary home-meeting-start"
-              disabled={busy || !readiness?.ready || calendarStartUnavailable}
-              onClick={() => void run(() => startCalendarOccurrence(occurrence))}
-              data-testid={`meeting-start-calendar-${occurrence.key}`}
-            >
-              发起会议
-            </button>
-          ) : null}
+  const renderCalendarHomeItem = (occurrence: CalendarMeetingOccurrence, upcoming: boolean) => (
+    <div className="home-meeting-item" key={occurrence.key} data-status="calendar" data-source="calendar">
+      <span className="home-meeting-icon"><Icon /></span>
+      <div className="home-meeting-copy">
+        <div className="row">
+          <h3 title={occurrence.title}>{occurrence.title}</h3>
+          {occurrence.recurring && !(occurrence.collapsedCount && occurrence.collapsedCount > 1) ? <span className="pill">循环日程</span> : null}
         </div>
-      );
-    }
+        <p className="sub">
+          {dateStamp(occurrence.startAt)} {occurrence.allDay ? "全天" : `${stamp(occurrence.startAt)}–${stamp(occurrence.endAt)}`}
+          <span aria-hidden="true"> · </span>
+          <span>日历视频会议</span>
+        </p>
+      </div>
+      {upcoming ? (
+        <button
+          className="primary home-meeting-start"
+          disabled={busy || !readiness?.ready || calendarStartUnavailable}
+          onClick={() => void run(() => startCalendarOccurrence(occurrence))}
+          data-testid={`meeting-start-calendar-${occurrence.key}`}
+        >
+          发起会议
+        </button>
+      ) : null}
+    </div>
+  );
+  const renderHistoryItem = (entry: MeetingHistoryEntry) => {
+    if (entry.kind === "calendar") return renderCalendarHomeItem(entry.value, false);
     const m = entry.value;
     return (
       <div className="home-meeting-item" key={m.id} data-status={m.status} data-source="meeting">
@@ -387,19 +373,18 @@ export function MeetingPage({ active }: { active: boolean }) {
           </p>
         </div>
         <button
-          className={upcoming ? "primary home-meeting-start" : m.status === "live" ? "primary" : "home-meeting-open"}
-          disabled={upcoming && (busy || !readiness?.ready)}
+          className={m.status === "live" ? "primary" : "home-meeting-open"}
           onClick={() => void run(async () => {
             if (useMeetingStore.getState().meeting?.id === m.id) {
               await focusMeetingWindow("meeting");
               return;
             }
             const current = (await meetingAPI.get(m.id)).meeting;
-            if (upcoming || current.status === "live") openPreview(current);
+            if (current.status === "live") openPreview(current);
             else setDetail(current);
           })}
         >
-          {upcoming ? "发起会议" : m.status === "live" ? "加入" : "详情"}
+          {m.status === "live" ? "加入" : "详情"}
         </button>
       </div>
     );
@@ -487,10 +472,10 @@ export function MeetingPage({ active }: { active: boolean }) {
                   <button type="button" className="ghost calendar-all-link" onClick={() => navigate("/calendar")}>在日历中查看全部 <Icon name="chevronRight" /></button>
                 </div>
                 <div className="home-meeting-list">
-                  {loading || calendarLoading ? (
+                  {calendarLoading ? (
                     <div className="home-list-empty" role="status"><span className="meeting-loader" />正在加载会议…</div>
                   ) : upcomingForHome.length ? (
-                    upcomingForHome.slice(0, 4).map((entry) => renderHomeItem(entry, true))
+                    upcomingForHome.slice(0, 4).map((occurrence) => renderCalendarHomeItem(occurrence, true))
                   ) : (
                     <div className="home-list-empty">
                       <span className="empty-icon"><Icon /></span>
@@ -508,7 +493,7 @@ export function MeetingPage({ active }: { active: boolean }) {
                   {loading || calendarLoading ? (
                     <div className="home-list-empty" role="status"><span className="meeting-loader" />正在加载记录…</div>
                   ) : historyForHome.length ? (
-                    historyForHome.map((entry) => renderHomeItem(entry))
+                    historyForHome.map(renderHistoryItem)
                   ) : (
                     <div className="home-list-empty compact">
                       <span className="empty-icon"><Icon /></span>

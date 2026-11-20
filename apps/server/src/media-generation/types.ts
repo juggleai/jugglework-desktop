@@ -87,13 +87,16 @@ export type VideoProviderJobState =
   | { status: "failed"; error: { code: string; message: string; retryable: boolean } }
   | { status: "cancelled" };
 
-export interface VideoGenerationAdapter {
+export interface VideoReconciliationAdapter {
   readonly id: string;
   readonly binding: VideoAdapterBinding;
   matches(model: VideoModelRef): boolean;
-  submit(input: VideoAdapterSubmitInput, signal: AbortSignal): Promise<{ providerJobId: string }>;
   reconcileSubmission?(clientRequestId: string, signal: AbortSignal): Promise<{ providerJobId: string } | null>;
   inspect(providerJobId: string, signal: AbortSignal): Promise<VideoProviderJobState>;
   cancel?(providerJobId: string, signal: AbortSignal): Promise<void>;
   acquireResult(resultReference: string, signal: AbortSignal): Promise<Response>;
+}
+
+export interface VideoGenerationAdapter extends VideoReconciliationAdapter {
+  submit(input: VideoAdapterSubmitInput, signal: AbortSignal): Promise<{ providerJobId: string; reconciliation?: VideoReconciliationAdapter }>;
 }

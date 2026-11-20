@@ -3,6 +3,7 @@ import { claimSessionSubmission } from "../src/react-app/domains/session/sync/su
 import { submitSessionDraft } from "../src/react-app/domains/session/sync/draft-submission";
 import type { Client, ComposerDraft } from "../src/app/types";
 import type { JuggleWorkServerClient } from "../src/app/lib/jugglework-server";
+import { invalidateManagedProviderScope } from "../src/app/lib/managed-provider-scope";
 import { clearQueuedSessionDrafts } from "../src/react-app/domains/session/surface/queued-draft-cleanup";
 import { useComposerStateStore } from "../src/react-app/domains/session/surface/composer-state-store";
 import { submitPetFollowUp } from "../src/react-app/domains/pet/pet-submission";
@@ -120,4 +121,12 @@ test("provider mutation during async preparation cancels delivery and releases t
   };
   expect(await submitSessionDraft(input)).toMatchObject({outcome:"cancelled"}); expect(sent).toBe(0);
   const release = claimSessionSubmission("project","generation-race"); release();
+});
+
+test.each([["lpr_previous", "cancelled", 0], ["explicit-local", "sent", 1]] as const)("checks %s again after asynchronous preparation", async (providerID, outcome, count) => {
+  let sent = 0;
+  const client = { session: { promptAsync: async () => { sent += 1; return {}; } } } as unknown as Client;
+  const host = { baseUrl: `scope-check-${providerID}`, listUserEnvKeys: async () => { invalidateManagedProviderScope(); return { keys: [] }; } } as unknown as JuggleWorkServerClient;
+  await expect(submitSessionText({ client, host, workspaceId: "project", sessionId: `session-${providerID}`, text: "work", model: { providerID, modelID: "chat" }, variant: null, runtimeKey: undefined, isCurrent: () => true })).resolves.toMatchObject({ outcome });
+  expect(sent).toBe(count);
 });

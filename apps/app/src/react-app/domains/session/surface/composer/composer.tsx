@@ -25,7 +25,8 @@ import { resolveExtensionIconUrl } from "@/react-app/design-system/extension-ico
 import { ModelBehaviorSelect } from "@/components/model-behavior-select";
 import { ModelSelect } from "@/components/model-select";
 import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge";
-import { LexicalPromptEditor, type LexicalPromptEditorHandle, type PastedTextToken } from "./editor";
+import type { ComposerPastePart } from "../composer-state-store";
+import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "./editor";
 import type { OfficeComposerGroup } from "./office-selection-draft";
 import { listRunningAppsForMention } from "./app-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
@@ -72,13 +73,6 @@ type MentionItem = {
   label: string;
   reference?: CloudDocReference;
   scope?: string;
-};
-
-type PastedTextChip = {
-  id: string;
-  label: string;
-  text: string;
-  lines: number;
 };
 
 /**
@@ -251,10 +245,9 @@ export type ComposerProps = {
   onRegisterCapability?: (capability: { kind: ComposerCapabilityKind; name: string; prompt: string }) => void;
   /** Sent-prompt history (oldest first) recalled with ArrowUp/ArrowDown (#2012). */
   inputHistory?: string[];
-  registerPastedText?: (text: string) => PastedTextToken;
-  pastedText: PastedTextChip[];
-  onExpandPastedText: (id: string) => void;
-  onRemovePastedText: (id: string) => void;
+  createPastePart?: (text: string) => ComposerPastePart;
+  pastedText: ComposerPastePart[];
+  onPastePartsChange?: (parts: ComposerPastePart[]) => void;
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
   onUploadInboxFiles?: ((files: File[]) => void | Promise<unknown>) | null;
@@ -1084,17 +1077,6 @@ export function ReactSessionComposer(props: ComposerProps) {
     return fuzzysort.go(mentionQuery, mentionItems, { keys: ["label"], limit: 8 }).map((entry) => entry.obj);
   }, [props.restrictedHost, mentionItems, mentionOpen, mentionQuery]);
   const mentionFiltered = [...regularMentions, ...cloudDocItems];
-  const pastedTextTokens = useMemo(
-    () => props.pastedText.map((item) => ({ label: item.label, lines: item.lines, text: item.text })),
-    [props.pastedText],
-  );
-
-  const handleExpandPastedText = useCallback((label: string) => {
-    const target = props.pastedText.find((item) => item.label === label);
-    if (!target) return;
-    props.onExpandPastedText(target.id);
-  }, [props.onExpandPastedText, props.pastedText]);
-
   const activeMenu = slashOpen ? "slash" : mentionOpen ? "mention" : null;
   const activeItems = activeMenu === "slash" ? slashFiltered : activeMenu === "mention" ? mentionFiltered : [];
   const canSend = props.draft.trim().length > 0 || props.attachments.length > 0;
@@ -1908,7 +1890,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               value={draftWithoutAttachments}
               promptSuggestion={promptSuggestion}
               mentions={props.mentions}
-              pastedText={pastedTextTokens}
+              pastedText={props.pastedText}
               disabled={props.disabled}
               placeholder={props.compact && props.compactPlaceholder ? props.compactPlaceholder : props.videoGeneration
                 ? t("composer.video_generation_placeholder")
@@ -1919,9 +1901,9 @@ export function ReactSessionComposer(props: ComposerProps) {
               onUserEdit={props.onUserEdit}
               onSubmit={handleEditorSubmit}
               isComposing={() => imeComposingRef.current}
-              onExpandPastedText={handleExpandPastedText}
+              onPastePartsChange={props.onPastePartsChange}
               onRemoveAttachment={props.onRemoveAttachment}
-              registerPastedText={props.registerPastedText}
+              createPastePart={props.createPastePart}
               onPasteCapture={(event) => {
                 // TIPS: 必须早于 Lexical 的默认粘贴，避免链接被插入两次。
                 const pasted = event.clipboardData?.getData("text/plain")?.trim() ?? "";
@@ -1965,10 +1947,7 @@ export function ReactSessionComposer(props: ComposerProps) {
 
                 const text = event.clipboardData?.getData("text/plain") ?? "";
 
-                // Plain text paste display is owned by PasteChipPlugin inside
-                // the Lexical editor: >50 chars collapse unless the whole
-                // string is a standalone HTTP(S) URL; expanded pasted text gets
-                // the gray pasted-content styling. Do NOT duplicate that here.
+                // PasteChipPlugin handles text insertion and chip expansion.
 
                 if (
                   text.trim() &&

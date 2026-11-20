@@ -24,6 +24,7 @@ import {
   type DesktopBootstrapConfig as ShellDesktopBootstrapConfig,
 } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
+import { duringManagedProviderSwitch, managedProviderIdentityChanged } from "./managed-provider-scope";
 import type { ReloadReason } from "../types";
 import type {
   JuggleWorkExtensionContribution,
@@ -1908,7 +1909,9 @@ function getPendingBootstrapConfig(next: DenSettings): DenBootstrapConfig | null
 }
 
 function applyDesktopBootstrapConfig(config: DenBootstrapConfig) {
+  const deploymentChanged = desktopBootstrapConfig.apiBaseUrl !== config.apiBaseUrl;
   desktopBootstrapConfig = config;
+  if (deploymentChanged && typeof window !== "undefined") managedProviderIdentityChanged();
 }
 
 export function readDenBootstrapConfig(): DenBootstrapConfig {
@@ -2347,8 +2350,12 @@ export function writeDenSettings(next: DenSettings, options?: { persistBootstrap
     }
   }
 
+  const current = readDenSettings();
+  if (previous.apiBaseUrl !== current.apiBaseUrl || previous.authToken !== current.authToken || previous.activeOrgId !== current.activeOrgId) {
+    managedProviderIdentityChanged();
+  }
   dispatchDenSettingsChanged({
-    settings: readDenSettings(),
+    settings: current,
   });
 }
 
@@ -2357,6 +2364,7 @@ export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
     return;
   }
 
+  const previous = readDenSettings();
   if (options?.includeBaseUrls) {
     window.localStorage.removeItem(STORAGE_BASE_URL);
     window.localStorage.removeItem(LEGACY_STORAGE_API_BASE_URL);
@@ -2386,6 +2394,7 @@ export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
   // state this machine still holds, and that state (workspaces, per-workspace
   // cloud config) outlives the session. Clearing it here would make the very
   // case it exists for — sign out A, sign in B — look like a first sign-in.
+  if (previous.authToken || previous.activeOrgId) managedProviderIdentityChanged();
 
   dispatchDenSettingsChanged({
     settings: readDenSettings(),
@@ -2405,6 +2414,11 @@ export async function ensureDenActiveOrganization(options?: { forceServerSync?: 
   });
 
   const response = await client.listOrgs();
+  const originalIdentityCurrent = () => {
+    const live = readDenSettings();
+    return live.baseUrl === settings.baseUrl && live.authToken === token && live.activeOrgId === settings.activeOrgId;
+  };
+  if (!originalIdentityCurrent()) return null;
   const userId = readDenUserId();
   const targetOrg = resolveDenDefaultOrganization(response.orgs, {
     rememberedOrgId: readDenLastOrganization(userId),
@@ -2415,6 +2429,8 @@ export async function ensureDenActiveOrganization(options?: { forceServerSync?: 
   });
 
   if (!targetOrg) {
+    await duringManagedProviderSwitch(async () => undefined);
+    if (!originalIdentityCurrent()) return null;
     writeDenSettings({
       ...settings,
       activeOrgId: null,
@@ -2436,6 +2452,7 @@ export async function ensureDenActiveOrganization(options?: { forceServerSync?: 
     // 已有有效 bootstrap 且服务端组织一致时不请求，避免每次刷新都重新供给；个人工作区
     // 按服务端契约永远不带 IM，也不做无意义的自愈请求。
     const result = await client.setActiveOrganization({ organizationId: targetOrg.id });
+    if (!originalIdentityCurrent()) return null;
     writeDenSettings({
       ...settings,
       activeOrgId: targetOrg.id,
@@ -4007,7 +4024,14 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     async setActiveOrganization(
       input: { organizationId?: string | null; organizationSlug?: string | null },
     ): Promise<{ im: DenIMLoginBootstrap | null } | null> {
-      return ensureActiveOrganization(baseUrls, token, input);
+      const startedWith = readDenSettings();
+      return duringManagedProviderSwitch(() => {
+        const live = readDenSettings();
+        if (startedWith.authToken === token && (live.authToken !== token || live.baseUrl !== startedWith.baseUrl)) {
+          throw new Error("Cloud session changed before organization selection.");
+        }
+        return ensureActiveOrganization(baseUrls, token, input);
+      });
     },
 
     async signInAccount(account: string, password: string): Promise<DenAuthResult> {

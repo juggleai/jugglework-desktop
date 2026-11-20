@@ -768,6 +768,7 @@ export type DesktopCommandMap = {
     args: [input: { baseUrl: string; signedIn: boolean; userId: string | null; organizationId: string | null; config: unknown }];
     result: void;
   };
+  invalidateFileWindowProviderCatalog: { args: []; result: void };
   debugDesktopBootstrapConfig: { args: []; result: unknown };
   clearDesktopBootstrapConfig: { args: []; result: unknown };
   setDesktopBootstrapConfig: {

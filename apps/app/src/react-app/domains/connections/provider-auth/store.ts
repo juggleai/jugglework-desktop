@@ -39,6 +39,7 @@ import {
 } from "../../../../app/utils/providers";
 import { getReactQueryClient } from "../../../infra/query-client";
 import { cloudGroupCatalogKey, ensureProviderListQuery } from "../../../infra/provider-list-query";
+import { confirmManagedProviderScope, managedProviderConfirmationCurrent, managedProviderEpoch, managedProviderHost, notifyManagedProviderCatalogChanged } from "../../../../app/lib/managed-provider-scope";
 import type { JuggleWorkServerStoreSnapshot } from "../jugglework-server-store";
 import {
   applyDisabledProviderEntry,
@@ -1061,6 +1062,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       settings.baseUrl,
       settings.activeOrgId?.trim() ?? "",
       settings.authToken?.trim() ?? "",
+      managedProviderEpoch(),
     ].join("::");
   };
 
@@ -1107,7 +1109,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       baseUrl: settings.baseUrl,
       token,
     });
-    const catalogKey = cloudGroupCatalogKey();
     const request = cloudProviderCatalogSingleflight.run(loadKey, () => client.listOrgLlmProviders(orgId))
       .then((providers) => {
         const supportedProviders = filterImportableCloudOrgProviders(providers);
@@ -1117,7 +1118,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         if (getCloudOrgProvidersKey() !== loadKey) {
           return supportedProviders;
         }
-        getReactQueryClient().setQueryData(catalogKey, supportedProviders.map(getCloudManagedProviderId));
         mutateState((current) => ({
           ...current,
           cloudOrgProviders: supportedProviders,
@@ -1513,6 +1513,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     force?: boolean;
     global?: boolean;
   }) {
+    const scopeEpoch = managedProviderEpoch();
     const c = options.client();
     if (!c) return null;
 
@@ -1577,6 +1578,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     let disabledProviders = options.disabledProviders() ?? [];
     try {
       const config = unwrap(await activeClient.config.get());
+      if (scopeEpoch !== managedProviderEpoch()) return null;
       disabledProviders = Array.isArray(config.disabled_providers)
         ? config.disabled_providers
         : [];
@@ -1593,10 +1595,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           client: activeClient,
           baseUrl: options.providerBaseUrl(),
           directory: options.selectedWorkspaceRoot(),
+          scopeEpoch,
           force: Boolean(optionsArg?.dispose || optionsArg?.force),
         }),
         disabledProviders,
       );
+      if (scopeEpoch !== managedProviderEpoch()) return null;
       applyProviderListState(updated);
       return updated;
     } catch {
@@ -1925,6 +1929,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       silent?: boolean;
       authorityKey?: string;
       connection?: DenOrgLlmProviderConnection;
+      authorityId: string;
     },
   ) {
     if (!optionsArg?.silent) {
@@ -1942,6 +1947,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       throw new Error("Sign in to JuggleWork Cloud and choose an organization first.");
     }
     const authorityKey = optionsArg?.authorityKey ?? getCloudProviderAuthorityKey();
+    const authorityId = optionsArg?.authorityId;
+    if (!authorityId) throw new Error("Managed model identity is unavailable.");
     const assertCurrentAuthority = () => {
       assertCloudProviderAuthorityCurrent(authorityKey, getCloudProviderAuthorityKey());
     };
@@ -2063,7 +2070,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
       const nextImportedProviders = {
         ...state.importedCloudProviders,
-        [provider.id]: buildCloudImportedProvider(provider, Date.now(), orgId, providerGatewayMirror, catalog),
+        [provider.id]: { ...buildCloudImportedProvider(provider, Date.now(), orgId, providerGatewayMirror, catalog), authorityId },
       };
       await persistImportedCloudProviders(nextImportedProviders);
       assertCurrentAuthority();
@@ -2103,7 +2110,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const workspaceKey = currentWorkspaceKey();
     return await cloudProviderWorkspaceMutationQueue.run(workspaceKey, async () => {
       const authorityKey = getCloudProviderAuthorityKey();
-      return await connectCloudProviderInternal(cloudProviderId, { authorityKey });
+      const host = await managedProviderHost();
+      const workspaceId = options.runtimeWorkspaceId()?.trim();
+      if (!host || !workspaceId) throw new Error("Local model authority is unavailable.");
+      const authorityId = await confirmManagedProviderScope(host);
+      await host.setManagedProviderReadiness(workspaceId, authorityId, false);
+      const result = await connectCloudProviderInternal(cloudProviderId, { authorityKey, authorityId });
+      void runCloudProviderSync("model_picker_open");
+      return result;
     });
   }
 
@@ -2125,6 +2139,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         if (!token || !orgId) {
           throw new Error("Sign in to JuggleWork Cloud and choose an organization first.");
         }
+        const host = await managedProviderHost();
+        const workspaceId = options.runtimeWorkspaceId()?.trim();
+        if (!host || !workspaceId) return false;
+        const authorityId = await confirmManagedProviderScope(host);
+        if (importedProviders[target.cloudProviderId]?.authorityId !== authorityId) return false;
+        await host.setManagedProviderReadiness(workspaceId, authorityId, false);
         const den = createDenClient({ baseUrl: settings.baseUrl, token });
         // Normal connect is intentionally idempotent and returns the exact
         // credential currently installed for this device. Hash it locally;
@@ -2145,9 +2165,19 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         await connectCloudProviderInternal(target.cloudProviderId, {
           silent: true,
           authorityKey,
+          authorityId,
           connection,
         });
-        return true;
+        assertCloudProviderAuthorityCurrent(authorityKey, getCloudProviderAuthorityKey());
+        await host.setManagedProviderReadiness(workspaceId, authorityId, true);
+        try {
+          if (!await refreshProviders({ force: true })) throw new Error("Managed model catalog refresh failed.");
+          assertCloudProviderAuthorityCurrent(authorityKey, getCloudProviderAuthorityKey());
+          return true;
+        } catch (error) {
+          await host.setManagedProviderReadiness(workspaceId, authorityId, false);
+          throw error;
+        }
       }),
     );
   }
@@ -2241,6 +2271,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     getCloudProviderSyncContextKey(),
     readDenUserId()?.trim() ?? "",
     currentWorkspaceKey(),
+    managedProviderEpoch(),
   ].join("::");
 
   const hasCloudProviderSyncPrerequisites = () => {
@@ -2412,14 +2443,41 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // server target (patchRuntimeProviders throws without it). Running before
     // the target resolves made the baseline read fall back to an empty source
     // and re-import every org provider — engine dispose churn on settings open.
+    const epoch = managedProviderEpoch();
+    const authorityKey = getCloudProviderAuthorityKey();
     const target = await resolveJuggleWorkConfigTarget("write");
     if (!target.canUseJuggleWorkServer || !target.juggleworkClient || !target.juggleworkWorkspaceId) {
       return false;
     }
-    const authorityKey = getCloudProviderAuthorityKey();
     const assertCurrentAuthority = () => {
       assertCloudProviderAuthorityCurrent(authorityKey, getCloudProviderAuthorityKey());
+      if (!managedProviderConfirmationCurrent(epoch)) throw new StaleCloudProviderAuthorityError();
     };
+    assertCurrentAuthority();
+    const host = await managedProviderHost();
+    if (!host || host.baseUrl !== target.juggleworkClient.baseUrl) return false;
+    const workspaceId = target.juggleworkWorkspaceId;
+    const catalogKey = cloudGroupCatalogKey();
+    const hideManagedCatalog = () => {
+      if (epoch !== managedProviderEpoch()) return;
+      getReactQueryClient().setQueryData(catalogKey, []);
+      notifyManagedProviderCatalogChanged();
+    };
+    // Revoke previous success before any reconciliation that can fail.
+    let authorityId: string;
+    const { revision } = await host.managedProviderRevision();
+    assertCurrentAuthority();
+    try {
+      authorityId = await confirmManagedProviderScope(host, revision);
+    } catch (error) {
+      if (managedProviderConfirmationCurrent(epoch)) {
+        await host.fenceManagedProviderAuthority(revision);
+        hideManagedCatalog();
+      }
+      throw error;
+    }
+    await host.setManagedProviderReadiness(workspaceId, authorityId, false);
+    hideManagedCatalog();
     assertCurrentAuthority();
 
     let importedProviders: Record<string, CloudImportedProvider>;
@@ -2464,7 +2522,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // reload cannot recover anything, so force one idempotent re-import.
     // Treat an unreadable engine list as unknown rather than re-importing on
     // a transient startup/network error.
-    const engineProviderList = await refreshProviders({ force: true }).catch(() => null);
+    const engineProviderList = await host.managedProviderInventory(workspaceId);
     assertCurrentAuthority();
     const engineProviderIds = engineProviderList
       ? new Set((engineProviderList.all ?? []).map((provider) => provider.id))
@@ -2514,7 +2572,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         });
       }
 
-      if (cloudProviderReconcileAction({
+      if (importedProvider.authorityId === authorityId && cloudProviderReconcileAction({
         liveProvider,
         importedProvider,
         organizationId: settings.activeOrgId,
@@ -2524,7 +2582,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         continue;
       }
 
-      if (credentialMissing && !shouldAttemptLostGatewayCredentialRecovery({
+      if (importedProvider.authorityId === authorityId && credentialMissing && !shouldAttemptLostGatewayCredentialRecovery({
         workspaceId: target.juggleworkWorkspaceId,
         importedProvider,
         credentialMissing: true,
@@ -2540,7 +2598,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         // remove-then-reconnect dance could leave the block deleted if the
         // reconnect aborted on a stale in-memory connected-providers guard,
         // so the workspace kept the first-import snapshot forever (#2346).
-        await connectCloudProviderInternal(liveProvider.id, { silent: true, authorityKey });
+        await connectCloudProviderInternal(liveProvider.id, { silent: true, authorityKey, authorityId });
         configChanged = true;
       } catch (error) {
         // A transient import/write failure did not reach the engine reload, so
@@ -2568,7 +2626,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
 
       try {
-        await connectCloudProviderInternal(liveProvider.id, { silent: true, authorityKey });
+        await connectCloudProviderInternal(liveProvider.id, { silent: true, authorityKey, authorityId });
         configChanged = true;
         const firstModel = liveProvider.models[0] ?? null;
         newlyImported.push({
@@ -2586,7 +2644,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     let reloadedProviderList: ProviderListResponse | null = null;
     if (configChanged) {
-      reloadedProviderList = await refreshProviders({ dispose: true }).catch(() => null);
+      await refreshProviders({ dispose: true });
+      reloadedProviderList = await host.managedProviderInventory(workspaceId);
       assertCurrentAuthority();
     }
 
@@ -2610,7 +2669,28 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (failures.length > 0) {
       throw new Error(failures.join("\n"));
     }
-    return true;
+    assertCurrentAuthority();
+    const finalInventory = reloadedProviderList ?? engineProviderList;
+    const connected = new Set(finalInventory.connected);
+    if (liveProviders.some((provider) => {
+      const id = getCloudManagedProviderId(provider);
+      const loaded = finalInventory.all.find((entry) => entry.id === id);
+      return !connected.has(id) || !loaded || provider.models.some((model) => !loaded.models[model.id]);
+    })) return false;
+    await host.setManagedProviderReadiness(workspaceId, authorityId, true);
+    try {
+      assertCurrentAuthority();
+      if (!await refreshProviders({ force: true })) throw new Error("Managed model catalog refresh failed.");
+      assertCurrentAuthority();
+      getReactQueryClient().setQueryData(catalogKey, liveProviders.map(getCloudManagedProviderId));
+      notifyManagedProviderCatalogChanged();
+      return true;
+    } catch (error) {
+      // The host rejects this write if a newer scope has already taken over.
+      await host.setManagedProviderReadiness(workspaceId, authorityId, false);
+      hideManagedCatalog();
+      throw error;
+    }
   }
 
   let latestCloudProviderSyncSucceeded = false;

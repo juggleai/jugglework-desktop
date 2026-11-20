@@ -49,6 +49,8 @@ test.each([
   const previousWindow = globalThis.window;
   const calls: Array<{ path: string; method: string; body: any }> = [];
   let emit!: (event: Event) => void;
+  let catalogChanged: (() => void) | undefined;
+  let managedAvailable = false;
   let subscriptions = 0, releases = 0, busy = false, failSubmission = false;
   const nativeFetch = globalThis.fetch;
   const session = { id: `ses_mount_${seedAgent ?? "default"}_${seedVariant ?? "default"}${fromHistory ? "_history" : ""}`, title: "Existing session", time: { created: 1, updated: 1 } };
@@ -57,7 +59,7 @@ test.each([
     const path = new URL(request.url).pathname;
     const body = request.method === "POST" ? await request.json() : undefined;
     calls.push({ path, method: request.method, body });
-    if (path.endsWith("/provider")) return Response.json({ all: [{ id: "provider", name: "Provider", models: { fallback: { ...model, id: "fallback", variants: { low: {}, medium: {} } }, standard: { ...model, id: "standard", variants: {} }, model } }], connected: ["provider"], default: { provider: "fallback" } });
+    if (path.endsWith("/provider")) return Response.json({ all: [{ id: "provider", name: "Provider", models: { fallback: { ...model, id: "fallback", variants: { low: {}, medium: {} } }, standard: { ...model, id: "standard", variants: {} }, model } }, ...(managedAvailable ? [{ id: "lpr_fixture", name: "Managed", models: { model: { ...model, providerID: "lpr_fixture" } } }] : [])], connected: managedAvailable ? ["provider", "lpr_fixture"] : ["provider"], default: { provider: "fallback" } });
     if (path.endsWith("/snapshot") && !path.includes("/interactions/")) return Response.json({ item: { session, messages: [{ info: { id: "old-user", sessionID: session.id, role: "user", time: { created: 1 }, agent: "build", model: { providerID: "provider", modelID: "fallback", variant: "low" } }, parts: [] }], status: { type: busy ? "busy" : "idle" }, todos: [] } });
     if (path.endsWith("/interactions/snapshot")) return Response.json({ item: { rootSessionId: session.id, permissions: [], questions: [], revision: 1 } });
     if (path.endsWith("/permission-mode")) return Response.json({ state: null, grants: [], supported: true });
@@ -73,12 +75,13 @@ test.each([
   const bridge = {
     state: async () => ({ ...state, baseUrl: server.url.href.replace(/\/$/, "") }),
     onChanged: (listener: typeof changed) => { changed = (next: any) => listener(singleSourceState(next)); return () => {}; },
+    onProviderCatalogChanged: (listener: () => void) => { catalogChanged = listener; return () => { catalogChanged = undefined; }; },
     action: mock(async () => {}), subscribeSessionEvents(input: { workspaceId: string }, listener: typeof emit) { expect(input.workspaceId).toBe("ws_mount"); subscriptions++; emit = listener; return () => { releases++; }; },
   };
   const windowStub = {
     location: { pathname: "/file-window.html" },
     localStorage: { getItem: () => null },
-    addEventListener() {}, removeEventListener() {},
+    addEventListener() {}, removeEventListener() {}, dispatchEvent: () => true,
     setTimeout, clearTimeout, setInterval, clearInterval,
     requestAnimationFrame: (fn: FrameRequestCallback) => setTimeout(() => fn(0), 0), cancelAnimationFrame: clearTimeout,
     __JUGGLEWORK_ELECTRON__: { fileWindow: bridge, invokeDesktop: async (command: string, url: string, init: RequestInit) => {
@@ -117,6 +120,21 @@ test.each([
     expect(composer().queuedCount).toBe(0);
     expect(calls.filter((call) => call.path.endsWith("/runs/start"))).toHaveLength(0);
     expect(useComposerStateStore.getState().queuedDrafts[session.id]?.[0]?.id).toBe(queued.id);
+    if (seedVariant === "high") {
+      const managed = { providerID: "lpr_fixture", modelID: "model" };
+      managedAvailable = true;
+      await act(async () => { composer().onModelChange(managed); catalogChanged!(); });
+      for (let i = 0; i < 20 && composer().selectedModel.providerID !== managed.providerID; i++) await act(async () => { await Bun.sleep(10); });
+      expect(composer().selectedModel).toEqual(managed);
+      await act(async () => { composer().onDraftChange("keep this draft through the scope switch"); });
+      const staleSend = composer().onSend;
+      managedAvailable = false;
+      await act(async () => { catalogChanged!(); await staleSend(); });
+      expect(composer().selectedModel.providerID).not.toBe(managed.providerID);
+      expect(composer().draft).toBe("keep this draft through the scope switch");
+      expect(calls.filter((call) => call.path.endsWith("/runs/start"))).toHaveLength(0);
+      await act(async () => { composer().onModelChange(expectedModel); composer().onModelVariantChange("high"); });
+    }
     // Even a stale callback cannot create a new mention or switch agents here.
     for (const kind of ["file", "agent", "app"] as const) {
       await act(async () => { composer().onDraftChange("@"); });

@@ -159,9 +159,11 @@ import { loadReviewRepositoryContext } from "./reviews/repository-context.js";
 import { prepareCodeReviewWorkspace } from "./reviews/review-workspace.js";
 import { ConnectGithubReviewProvider } from "./reviews/connect-github-provider.js";
 import { publicVideoGenerationJob } from "./media-generation/types.js";
+import { VideoSubmissionError } from "./media-generation/redaction.js";
 import { openAiCompatibleVideoAdapters } from "./media-generation/provider-registry.js";
 import { discoverVideoModels, listReadyVideoModels, noVideoModelResult, type ProviderCatalogSnapshot } from "./media-generation/model-discovery.js";
 import { createWorkspaceProviderCredentialResolver } from "./provider-credential-resolver.js";
+import { isManagedProvider } from "@jugglework/types/provider-credentials";
 import { readEffectiveWorkspaceOpencodeConfig } from "./effective-workspace-opencode-config.js";
 import {
   clearHostMarketplaceMcpOverlay,
@@ -1416,9 +1418,11 @@ export async function startServer(config: ServerConfig, options: {
     async () => githubEventAuthStore.get() ?? resolveGithubEventAuthFromEnv(),
     () => readAutomationDeviceId(config),
   );
+  const mediaCredentials = createWorkspaceProviderCredentialResolver({ config, env });
   const automationExecutor = new AutomationExecutor({
     config,
     repository: automationRepository,
+    filterProviderCatalog: mediaCredentials.filterCatalog,
     registerWorkspace: async (workspace) => {
       await ensureWorkspaceFiles(workspace.path, "starter");
       await seedJuggleWorkWorkspaceConfigIfEmpty(config, workspace.id, defaultWorkspaceJuggleWorkConfig(workspace.path, "starter"));
@@ -1484,7 +1488,7 @@ export async function startServer(config: ServerConfig, options: {
     log: (event, fields) => logger.log("info", event, fields),
   });
   const videoSubmissionEnabled = /^(1|true|yes)$/i.test(process.env.JUGGLEWORK_VIDEO_GENERATION_ENABLED?.trim() ?? "");
-  const mediaCredentials = createWorkspaceProviderCredentialResolver({ config, env });
+  const submittedVideoCredentials = createWorkspaceProviderCredentialResolver({ config, env, reconcileSubmittedVideo: true });
   const resolveMediaWorkspace = (context: Record<string, unknown>) => {
     const workspaceId = typeof context.workspaceId === "string" ? context.workspaceId.trim() : typeof context.workspaceID === "string" ? context.workspaceID.trim() : "";
     const directory = typeof context.directory === "string" ? resolve(context.directory) : typeof context.worktree === "string" ? resolve(context.worktree) : "";
@@ -1494,13 +1498,23 @@ export async function startServer(config: ServerConfig, options: {
     if (matches.length !== 1) throw new ApiError(400, "video_workspace_ambiguous", "Video generation requires one explicit active workspace.");
     return matches[0];
   };
-  const resolveMediaRuntime = async (workspace: WorkspaceInfo) => {
+  const resolveMediaRuntime = async (workspace: WorkspaceInfo, reconcile = false) => {
+    const scopeCurrent = mediaCredentials.capture(workspace.id);
     const runtimeConfig = await readEffectiveWorkspaceOpencodeConfig(config, workspace);
+    const credentials = reconcile ? submittedVideoCredentials : mediaCredentials;
     const adapters = await openAiCompatibleVideoAdapters(
       runtimeConfig,
       workspace.id,
-      (input) => mediaCredentials.resolve(input),
-      (input) => mediaCredentials.organizationProviderProvenance(input),
+      async (input) => {
+        const key = await credentials.resolve(input);
+        return !reconcile && isManagedProvider(input.providerID, input.providerConfig, input.declaredEnvKeys) && !scopeCurrent() ? null : key;
+      },
+      (input) => credentials.organizationProviderProvenance(input),
+      reconcile ? undefined : (_workspaceId, providerID, providerConfig) => isManagedProvider(providerID, providerConfig)
+        ? () => {
+          if (!scopeCurrent()) throw new VideoSubmissionError("rejected", "managed_provider_scope_unavailable", "Managed model scope is unavailable.");
+        }
+        : undefined,
     );
     const providerRecords = ensurePlainObject(runtimeConfig.provider);
     const catalog: ProviderCatalogSnapshot = {
@@ -1518,13 +1532,13 @@ export async function startServer(config: ServerConfig, options: {
     const disabledProviders = Array.isArray(runtimeConfig.disabled_providers)
       ? runtimeConfig.disabled_providers.filter((providerID): providerID is string => typeof providerID === "string")
       : [];
-    return { adapters, catalog, credentialReady, providerRecords, disabledProviders };
+    return { adapters, catalog, credentialReady, providerRecords, disabledProviders, scopeCurrent };
   };
   const mediaGenerationWorker = new MediaGenerationWorker({
     repository: mediaGenerationRepository,
     resolveAdapters: async (workspaceId) => {
       const workspace = config.workspaces.find((candidate) => candidate.id === workspaceId);
-      return workspace ? (await resolveMediaRuntime(workspace)).adapters : [];
+      return workspace ? (await resolveMediaRuntime(workspace, true)).adapters : [];
     },
     workspaceRoot: (workspaceId) => config.workspaces.find((workspace) => workspace.id === workspaceId)?.path ?? null,
   });
@@ -1543,22 +1557,43 @@ export async function startServer(config: ServerConfig, options: {
     async status(context: Record<string, unknown>) {
       const workspace = resolveMediaWorkspace(context);
       const runtime = await resolveMediaRuntime(workspace);
-      const models = await discoverVideoModels({ catalog: runtime.catalog, disabledProviders: runtime.disabledProviders, supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
+      const models = (await discoverVideoModels({ catalog: runtime.catalog, disabledProviders: runtime.disabledProviders, supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady })).filter((model) =>
+        !isManagedProvider(model.ref.providerID, runtime.providerRecords[model.ref.providerID]) || (runtime.scopeCurrent() && model.availability === "ready"));
       const eligible = await submissionEligibleModels(workspace.id, models.filter((model) => model.availability === "ready"));
-      return { submissionEnabled: eligible.length > 0, models };
+      const visible = (model: { ref: { providerID: string } }) => runtime.scopeCurrent() || !isManagedProvider(model.ref.providerID, runtime.providerRecords[model.ref.providerID]);
+      return { submissionEnabled: eligible.some(visible), models: models.filter(visible).map((model) => ({ ...model,
+        ...(isManagedProvider(model.ref.providerID, runtime.providerRecords[model.ref.providerID]) ? { managed: true } : {}),
+      })) };
     },
     async listModels(mode: import("@jugglework/types/media-generation").VideoGenerationMode | undefined, context: Record<string, unknown>) {
       const workspace = resolveMediaWorkspace(context);
       const runtime = await resolveMediaRuntime(workspace);
       const ready = await listReadyVideoModels({ catalog: runtime.catalog, disabledProviders: runtime.disabledProviders, ...(mode ? { mode } : {}), supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
-      const models = await submissionEligibleModels(workspace.id, ready);
-      return models.length || !mode ? { ok: true, models } : noVideoModelResult(mode);
+      const models = (await submissionEligibleModels(workspace.id, ready)).filter((model) =>
+        !isManagedProvider(model.ref.providerID, runtime.providerRecords[model.ref.providerID]) || runtime.scopeCurrent());
+      return models.length || !mode ? { ok: true, models: models.map((model) => ({ ...model,
+        ...(isManagedProvider(model.ref.providerID, runtime.providerRecords[model.ref.providerID]) ? { managed: true } : {}),
+      })) } : noVideoModelResult(mode);
     },
     async generate(input: { prompt: string; mode: import("@jugglework/types/media-generation").VideoGenerationMode; model?: { providerID: string; modelID: string }; sourceImagePath?: string; durationSeconds?: number; resolution?: string; clientRequestId: string }, context: Record<string, unknown>) {
       const workspace = resolveMediaWorkspace(context);
+      const sessionId = typeof context.sessionID === "string"
+        ? context.sessionID
+        : typeof context.sessionId === "string" ? context.sessionId : undefined;
+      const submission = { workspace, sessionId, clientRequestId: input.clientRequestId, prompt: input.prompt, mode: input.mode,
+        ...(input.sourceImagePath ? { sourceImagePath: input.sourceImagePath } : {}),
+        options: { ...(input.durationSeconds ? { durationSeconds: input.durationSeconds } : {}), ...(input.resolution ? { resolution: input.resolution } : {}) } };
+      const existing = mediaGenerationRepository.getByRequest(workspace.id, sessionId, input.clientRequestId);
+      if (existing) {
+        // An exact retry may retrieve the original job even after its model is hidden.
+        // No adapters are available here, so this path can never start an upstream request.
+        const replay = new MediaGenerationService({ repository: mediaGenerationRepository, adapters: [], submissionEnabled: false });
+        return { job: publicVideoGenerationJob(await replay.submit({ ...submission, model: input.model ?? existing.model })) };
+      }
       const runtime = await resolveMediaRuntime(workspace);
       const discovered = await listReadyVideoModels({ catalog: runtime.catalog, disabledProviders: runtime.disabledProviders, mode: input.mode, supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
-      const ready = await submissionEligibleModels(workspace.id, discovered);
+      const ready = (await submissionEligibleModels(workspace.id, discovered)).filter((model) =>
+        !isManagedProvider(model.ref.providerID, runtime.providerRecords[model.ref.providerID]) || runtime.scopeCurrent());
       const selected = input.model ? ready.find((item) => item.ref.providerID === input.model?.providerID && item.ref.modelID === input.model?.modelID) : ready[0];
       if (!selected) return noVideoModelResult(input.mode);
       const selectedProvider = ensurePlainObject(runtime.providerRecords[selected.ref.providerID]);
@@ -1578,6 +1613,7 @@ export async function startServer(config: ServerConfig, options: {
         repository: mediaGenerationRepository,
         adapters: runtime.adapters,
         submissionEnabled,
+        onSubmitted: (job, adapter) => mediaGenerationWorker.rememberAdapter(job, adapter),
         audit: (event) => { void recordAudit(workspace.path, {
           id: event.jobId,
           workspaceId: event.workspaceId,
@@ -1588,16 +1624,12 @@ export async function startServer(config: ServerConfig, options: {
           timestamp: Date.now(),
         }); },
       });
-      const sessionId = typeof context.sessionID === "string"
-        ? context.sessionID
-        : typeof context.sessionId === "string"
-          ? context.sessionId
-          : undefined;
       const messageId = typeof context.messageID === "string" ? context.messageID : typeof context.messageId === "string" ? context.messageId : undefined;
       const origin = sessionId && messageId ? await fileDeliveries!.bindMediaSubmission(workspace.id, sessionId, messageId, input.clientRequestId) : null;
       let job;
       try {
-        job = await service.submit({ workspace, sessionId, clientRequestId: input.clientRequestId, prompt: input.prompt, mode: input.mode, model: selected.ref, ...(input.sourceImagePath ? { sourceImagePath: input.sourceImagePath } : {}), options: { ...(input.durationSeconds ? { durationSeconds: input.durationSeconds } : {}), ...(input.resolution ? { resolution: input.resolution } : {}) } });
+        if (isManagedProvider(selected.ref.providerID, selectedProvider) && !runtime.scopeCurrent()) throw new ApiError(403, "managed_provider_scope_unavailable", "Managed model scope is unavailable.");
+        job = await service.submit({ ...submission, model: selected.ref });
       } catch (error) {
         if (origin && !mediaGenerationRepository.getByRequest(workspace.id, sessionId, input.clientRequestId)) {
           fileDeliveries!.registry(workspace.id).fail(origin, `media:${input.clientRequestId}`, "媒体任务提交失败", false);
@@ -1719,6 +1751,7 @@ export async function startServer(config: ServerConfig, options: {
             creationActor: actor,
             sessionCreationLedger,
             sessionMutations,
+            providerCredentials: mediaCredentials,
           });
           return finalize(response);
         } catch (error) {
@@ -1776,6 +1809,7 @@ export async function startServer(config: ServerConfig, options: {
             creationActor: actor,
             sessionCreationLedger,
             sessionMutations,
+            providerCredentials: mediaCredentials,
           });
           return finalize(response);
         } catch (error) {
@@ -2114,6 +2148,7 @@ async function dispatchSessionPromptAsync(
   sessionId: string,
   prompt: Record<string, unknown>,
   requirePersistence = false,
+  beforeDispatch?: () => void,
 ): Promise<void> {
   const path = `/session/${encodeURIComponent(sessionId)}/prompt_async`;
   let effectivePrompt = prompt;
@@ -2124,6 +2159,7 @@ async function dispatchSessionPromptAsync(
     const toolIds = Array.isArray(result.data) ? result.data.filter((value): value is string => typeof value === "string") : [];
     effectivePrompt = applyMcpWorkspacePolicyToPrompt(prompt, toolIds, policy.disabledServerNames);
   }
+  beforeDispatch?.();
   const response = await loopbackFetch(workspaceOpencodeUrl(config, workspace, path), {
     method: "POST",
     headers: workspaceOpencodeHeaders(config, workspace),
@@ -2286,6 +2322,7 @@ async function proxyOpencodeRequest(input: {
   creationActor: Actor;
   sessionCreationLedger: ReturnType<typeof createSessionCreationLedger>;
   sessionMutations: SessionMutationCoordinator;
+  providerCredentials: ReturnType<typeof createWorkspaceProviderCredentialResolver>;
 }) {
   const workspace = input.workspace;
   const baseUrl = workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).baseUrl?.trim() ?? "" : "";
@@ -2313,12 +2350,29 @@ async function proxyOpencodeRequest(input: {
   }
 
   const method = input.request.method.toUpperCase();
+  const path = normalizeOpencodeProxyPath(proxyPath);
+  const scopeCurrent = workspace && input.providerCredentials.capture(workspace.id);
   // Buffer the request body so it can be forwarded reliably across Node.js
   // stream boundaries (Readable.toWeb streams from the HTTP adapter aren't
   // always accepted directly by Node's global fetch as a body).
   let body = method === "GET" || method === "HEAD"
     ? undefined
     : await input.request.arrayBuffer().then((buf) => (buf.byteLength > 0 ? buf : undefined));
+  let beforeDispatch: (() => void) | undefined;
+  if (workspace && body && method === "POST" && /^\/session\/[^/]+\/(?:prompt_async|message|command|summarize|compact)$/.test(path)) {
+    let parsed: unknown;
+    try { parsed = JSON.parse(new TextDecoder().decode(body)); } catch { /* OpenCode handles malformed bodies. */ }
+    if (isRecord(parsed)) {
+      const model = isRecord(parsed.model) ? parsed.model : parsed;
+      const match = typeof parsed.model === "string" ? /^([^/]+)\/(.+)$/.exec(parsed.model) : null;
+      const providerID = match?.[1] ?? model.providerID;
+      const modelID = match?.[2] ?? model.modelID;
+      if (typeof providerID === "string" && typeof modelID === "string") {
+        beforeDispatch = await input.providerCredentials.prepareTextSubmission(workspace, { providerID, modelID });
+        if (beforeDispatch && !scopeCurrent?.()) throw new ApiError(403, "managed_provider_scope_unavailable", "Managed model scope is unavailable.");
+      }
+    }
+  }
   const creationKey = headers.get("x-jugglework-create-intent");
   headers.delete("x-jugglework-create-intent");
   if (creationKey && method === "POST" && normalizeOpencodeProxyPath(proxyPath) === "/session") {
@@ -2362,6 +2416,7 @@ async function proxyOpencodeRequest(input: {
     body,
   });
   if (noopConfigResponse) return noopConfigResponse;
+  beforeDispatch?.();
   const executionStart = parseSessionExecutionStartProxyRequest(method, proxyPath);
   let executionRun: ReturnType<SessionMutationCoordinator["reserveStart"]> | null = null;
   if (executionStart && workspace) {
@@ -2413,6 +2468,14 @@ async function proxyOpencodeRequest(input: {
       headers,
       body,
     });
+    if (workspace && method === "GET" && response.ok) {
+      if (path === "/provider" || path === "/config/providers") {
+        const payload = await response.json();
+        if (path === "/provider") return jsonResponse(await input.providerCredentials.filterCatalog(workspace.id, payload, scopeCurrent || undefined));
+        const catalog = await input.providerCredentials.filterCatalog(workspace.id, { all: payload.providers, connected: payload.providers.map((provider: { id: string }) => provider.id), default: payload.default ?? {} }, scopeCurrent || undefined);
+        return jsonResponse({ ...payload, providers: catalog.all, default: catalog.default });
+      }
+    }
     if (workspace && method === "GET" && (normalizeOpencodeProxyPath(proxyPath) === "/skill" || normalizeOpencodeProxyPath(proxyPath) === "/app/skills") && response.ok) {
       const disabled = (await readSkillWorkspacePolicy(input.config, workspace.id)).disabledSkillNames;
       if (disabled.length) {
@@ -3265,7 +3328,7 @@ function createRoutes(
     resolveWorkspaceWithoutBootstrap,
     createWorkspaceOpencodeClient,
     unwrapOpencodeResult,
-    dispatchSessionPromptAsync: async (routeConfig, workspace, sessionId, prompt) => {
+    dispatchSessionPromptAsync: async (routeConfig, workspace, sessionId, prompt, beforeDispatch) => {
       const run = sessionMutations.getActive(workspace.id, sessionId);
       const boundPrompt = run && workspace.workspaceType !== "remote"
         ? fileDeliveries.preparePrompt(workspace.id, sessionId, run.runId, prompt)
@@ -3301,6 +3364,7 @@ function createRoutes(
         sessionId,
         enginePrompt,
         run?.origin === "remote-control",
+        beforeDispatch,
       );
     },
     dispatchSessionAbort,
@@ -3445,6 +3509,7 @@ function createRoutes(
     createWorkspaceOpencodeClient,
     listWorkspaceMcp: listMcp,
     enabled: resolveLocalAutomationEnabled(),
+    providerCredentials: createWorkspaceProviderCredentialResolver({ config, env, readOnly: true }),
     githubEventRelay: githubEventRelayClient,
     githubEventAuthStore,
     githubEventPoller: automationEventPoller,

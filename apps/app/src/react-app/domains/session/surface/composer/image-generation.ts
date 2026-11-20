@@ -10,6 +10,7 @@ export type ComposerImageModelOption = {
   modelID: string;
   providerName: string;
   modelName: string;
+  managed?: boolean;
 };
 
 export const IMAGE_ASPECT_RATIO_OPTIONS: ReadonlyArray<{
@@ -49,6 +50,7 @@ export function parseComposerImageModels(payload: unknown): ComposerImageModelOp
     const option: ComposerImageModelOption = {
       providerID,
       modelID,
+      ...(candidate.managed === true ? { managed: true } : {}),
       providerName: typeof candidate.providerName === "string" && candidate.providerName.trim()
         ? candidate.providerName.trim()
         : providerID,

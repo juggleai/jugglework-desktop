@@ -61,6 +61,20 @@ test("subscription IDs remain private; early unsubscribe cancels Main after invo
   assert.deepEqual(calls.at(-1), ["jugglework:file-window:session-unsubscribe", "second-private-id"]);
 });
 
+test("file windows receive catalog invalidation but cannot publish it", () => {
+  let bridge;
+  const ipc = new EventEmitter();
+  const source = readFileSync(new URL("./file-window-preload.mjs", import.meta.url), "utf8").replace(/^import .* from "electron";$/m, "");
+  vm.runInNewContext(source, { process: { platform: "darwin" }, contextBridge: { exposeInMainWorld(_name, value) { bridge = value; } }, ipcRenderer: ipc });
+  let received = 0;
+  const unsubscribe = bridge.fileWindow.onProviderCatalogChanged(() => received++);
+  ipc.emit("jugglework:file-window:provider-catalog-changed", {});
+  unsubscribe();
+  ipc.emit("jugglework:file-window:provider-catalog-changed", {});
+  assert.equal(received, 1);
+  assert.throws(() => bridge.invokeDesktop("invalidateFileWindowProviderCatalog"), /文件窗口不支持此操作/);
+});
+
 test("原生开窗检查早于 React 装配时保留请求，草稿桥就绪后只答复一次", async () => {
   /** @type {any} */
   let bridge;

@@ -13,6 +13,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
+import { isManagedGatewayUrl, isManagedProvider } from "@jugglework/types/provider-credentials";
 
 const MAX_ERROR_BODY_BYTES = 64 * 1024;
 const TLS_RETRY_DELAY_MS = 150;
@@ -441,13 +442,50 @@ async function normalizedProviderErrorResponse(response: Response): Promise<Resp
 
 let installed = false;
 let managedProviderFetch: typeof fetch | null = null;
+let globalDirectory = "";
+let ambiguousGlobalDirectory = false;
 
-function installContextOverflowFetchPatch(): typeof fetch {
+function guardedProviderTransport(base: typeof fetch, getDirectory: () => string, providerID?: string): typeof fetch {
+  return Object.assign(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (providerID || isManagedGatewayUrl(url)) {
+      const directory = getDirectory();
+      const request = new Request(input, init);
+      const serverUrl = process.env.JUGGLEWORK_SERVER_URL?.replace(/\/+$/, "");
+      const token = process.env.JUGGLEWORK_SERVER_TOKEN;
+      const headers = request.headers;
+      const credential = headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1] ?? headers.get("x-api-key");
+      let allowed = false;
+      if (serverUrl && token && directory && credential) {
+        try {
+          const response = await base(`${serverUrl}/internal/managed-provider-dispatch`, {
+            method: "POST", redirect: "error", signal: AbortSignal.any([request.signal, AbortSignal.timeout(5_000)]),
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ directory, providerID, url, digest: createHash("sha256").update(credential).digest("hex") }),
+          });
+          allowed = response.ok && (await response.json() as { allowed?: boolean }).allowed === true;
+        } catch { /* Unavailable authority is a denial. */ }
+      }
+      if (!allowed) return Response.json({ error: { code: "managed_provider_scope_unavailable", message: "Managed model scope is unavailable. Refresh providers and retry." } }, { status: 403 });
+      return base(new Request(request, { redirect: "error" }));
+    }
+    return base(input, init);
+  }, base);
+}
+
+let originalProviderFetch: typeof fetch;
+function installContextOverflowFetchPatch(directory: string): typeof fetch {
+  if (directory) {
+    if (globalDirectory && globalDirectory !== directory) ambiguousGlobalDirectory = true;
+    else globalDirectory = directory;
+  }
   if (installed && managedProviderFetch) return managedProviderFetch;
   installed = true;
   const base = globalThis.fetch;
+  originalProviderFetch = base;
+  const transport = guardedProviderTransport(base, () => ambiguousGlobalDirectory ? "" : globalDirectory);
   const patched = async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
-    return normalizedProviderErrorResponse(await fetchWithEmptyStreamRetry(base, input, init));
+    return normalizedProviderErrorResponse(await fetchWithEmptyStreamRetry(transport, input, init));
   };
   managedProviderFetch = Object.assign(patched, base);
   globalThis.fetch = managedProviderFetch;
@@ -455,20 +493,22 @@ function installContextOverflowFetchPatch(): typeof fetch {
 }
 
 // Single export: the OpenCode plugin loader treats every export as a factory.
-export const JuggleWorkContextOverflow = async () => {
-  const providerFetch = installContextOverflowFetchPatch();
+export const JuggleWorkContextOverflow = async (context?: { directory?: string; worktree?: string }) => {
+  const directory = context?.directory || context?.worktree || "";
+  installContextOverflowFetchPatch(directory);
   return {
     config: async (config: {
       provider?: Record<string, { options?: Record<string, unknown> }>;
     }) => {
       for (const [providerID, provider] of Object.entries(config.provider ?? {})) {
-        if (!/^lpr_/i.test(providerID) || !provider || typeof provider !== "object") continue;
+        if (!provider || typeof provider !== "object" || !isManagedProvider(providerID, provider)) continue;
         const options = provider.options && typeof provider.options === "object" ? provider.options : {};
+        const transport = guardedProviderTransport(originalProviderFetch, () => directory, providerID);
         provider.options = {
           ...options,
           // Bind the guard directly to the provider. Patching global fetch is
           // insufficient when an SDK captured the old function during import.
-          fetch: providerFetch,
+          fetch: async (input: Parameters<typeof fetch>[0], init?: RequestInit) => normalizedProviderErrorResponse(await fetchWithEmptyStreamRetry(transport, input, init)),
           // The custom fetch owns the per-attempt response-header deadline and
           // its bounded retry. Keep OpenCode's outer header timer from
           // aborting that cycle. The outer idle timer stays behind the

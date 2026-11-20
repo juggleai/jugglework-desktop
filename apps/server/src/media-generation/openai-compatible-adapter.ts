@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { externalFetch } from "../server-fetch.js";
-import type { VideoAdapterBinding, VideoAdapterSubmitInput, VideoGenerationAdapter, VideoProviderJobState } from "./types.js";
+import type { VideoAdapterBinding, VideoAdapterSubmitInput, VideoGenerationAdapter, VideoProviderJobState, VideoReconciliationAdapter } from "./types.js";
 import type { VideoModelRef } from "@jugglework/types/media-generation";
 import { redactProviderMessage, VideoSubmissionError } from "./redaction.js";
 
@@ -10,6 +10,7 @@ type OpenAiCompatibleVideoAdapterOptions = {
   modelIDs?: string[];
   baseURL: string;
   credential: () => Promise<string | null>;
+  beforeDispatch?: () => void;
   binding?: Omit<VideoAdapterBinding, "adapterId" | "protocol" | "origin">;
   fetch?: typeof externalFetch;
 };
@@ -85,15 +86,16 @@ export class OpenAiCompatibleVideoAdapter implements VideoGenerationAdapter {
       const response = await this.fetch(this.endpoint(path), {
         ...init,
         headers: { Authorization: `Bearer ${credential}`, ...init.headers },
-        redirect: "follow",
-      });
+        redirect: this.options.beforeDispatch ? "error" : "follow",
+      }, this.options.beforeDispatch);
       return { response, credential };
     } catch (error) {
+      if (error instanceof VideoSubmissionError) throw error;
       throw new VideoSubmissionError("unknown", "video_provider_transport_unknown", redactProviderMessage(error, [credential]));
     }
   }
 
-  async submit(input: VideoAdapterSubmitInput, signal: AbortSignal): Promise<{ providerJobId: string }> {
+  async submit(input: VideoAdapterSubmitInput, signal: AbortSignal): Promise<{ providerJobId: string; reconciliation?: VideoReconciliationAdapter }> {
     let body: BodyInit;
     let headers: HeadersInit | undefined = { "Content-Type": "application/json", "Idempotency-Key": input.clientRequestId };
     const seconds = input.options.durationSeconds;
@@ -125,7 +127,14 @@ export class OpenAiCompatibleVideoAdapter implements VideoGenerationAdapter {
     if (!response.ok) throw new VideoSubmissionError("rejected", response.status === 429 ? "video_provider_rate_limited" : "video_provider_submission_failed", providerMessage(payload, response.status === 429 ? "video_provider_rate_limited" : "video_provider_submission_failed", credential), response.status === 429);
     const id = isRecord(payload) && typeof payload.id === "string" ? payload.id.trim() : "";
     if (!id) throw new VideoSubmissionError("unknown", "video_provider_invalid_response", "The provider submission response did not contain a job identifier.");
-    return { providerJobId: id };
+    if (!this.options.beforeDispatch) return { providerJobId: id };
+    // Keep the accepted job's transport in memory only; it has no submit API.
+    const polling = new OpenAiCompatibleVideoAdapter({ ...this.options, beforeDispatch: undefined, credential: async () => credential });
+    return { providerJobId: id, reconciliation: {
+      id: polling.id, binding: polling.binding, matches: (model) => polling.matches(model),
+      inspect: (_id, signal) => polling.inspect(id, signal),
+      acquireResult: (_reference, signal) => polling.acquireResult(id, signal),
+    } };
   }
 
   async inspect(providerJobId: string, signal: AbortSignal): Promise<VideoProviderJobState> {

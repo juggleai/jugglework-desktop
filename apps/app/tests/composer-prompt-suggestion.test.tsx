@@ -100,7 +100,7 @@ async function mount(overrides: Partial<Props> = {}, render = (value: Props) => 
     onVideoGenerationChange: noop, onDisableVideoGeneration: noop, onRefreshVideoGenerationModels: empty,
     modelVariantLabel: "", modelVariant: null, onModelVariantChange: noop, agentLabel: "", selectedAgent: null, listAgents: empty,
     onSelectAgent: noop, listCommands: empty, recentFiles: [], searchFiles: empty, onInsertMention: noop,
-    pastedText: [], onExpandPastedText: noop, onRemovePastedText: noop, isRemoteWorkspace: false, isSandboxWorkspace: false,
+    pastedText: [], isRemoteWorkspace: false, isSandboxWorkspace: false,
     ...overrides,
   };
   await act(async () => { view = TestRenderer.create(renderComposer(props)); });

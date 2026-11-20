@@ -36,7 +36,6 @@ import {
 import { closeToonFactoryForDenSession } from "@/app/lib/toon-factory-auth-lifecycle";
 import { t } from "@/i18n";
 import { useDenAuth } from "../../cloud/den-auth-provider";
-import { runOrganizationCloudCleanup } from "../../connections/provider-auth/cloud-provider-cleanup";
 import { tryOpenBrowserAuthUrl } from "../../cloud/open-browser-auth";
 import { useCloudSession } from "./cloud-session-provider";
 import { defaultControlPlaneUrl, saveControlPlaneUrl } from "./control-plane-url";
@@ -633,10 +632,16 @@ export function useDenSession({
           return;
         }
         const authorityChange = createDenCredentialAuthorityChange("organization_switched");
+        const beforeSwitch = readDenSettings();
         await closeToonFactoryForDenSession(authorityChange);
-        await runOrganizationCloudCleanup();
+        const isCurrent = () => {
+          const live = readDenSettings();
+          return live.authToken === beforeSwitch.authToken && live.baseUrl === beforeSwitch.baseUrl;
+        };
+        if (!isCurrent()) return;
         // 1. Sync Den server-side (cookie/session)
         await client.setActiveOrganization({ organizationId: nextOrg.id });
+        if (!isCurrent()) return;
 
         // The event is published only after the server confirms the switch.
         writeDenSettings({
@@ -665,11 +670,9 @@ export function useDenSession({
         });
       } catch (error) {
         setOrgsError(error instanceof Error ? error.message : t("den.error_load_orgs"));
+      } finally {
         setOrgsBusy(false);
-        return;
       }
-
-      setOrgsBusy(false);
     },
     [authToken, baseUrl, client, orgs, setActiveOrganization],
   );

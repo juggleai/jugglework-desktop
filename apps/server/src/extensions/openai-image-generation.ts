@@ -16,6 +16,7 @@ import { externalFetch } from "../server-fetch.js";
 import { readEffectiveWorkspaceOpencodeConfig } from "../effective-workspace-opencode-config.js";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
 import { createWorkspaceProviderCredentialResolver } from "../provider-credential-resolver.js";
+import { isManagedProvider } from "@jugglework/types/provider-credentials";
 import { redactProviderMessage } from "../media-generation/redaction.js";
 import { protectedMediaFetch, type ProtectedMediaRequest, type ProtectedMediaResolver } from "../protected-media-fetch.js";
 import { readWorkspaceArtifact } from "../media-generation/artifact-file.js";
@@ -53,6 +54,7 @@ function publicImageModelDescriptor(model: ImageModelDescriptor) {
     modelName: model.modelName,
     capabilities: model.capabilities,
     availability: model.availability,
+    ...(isManagedProvider(model.ref.providerID, model.providerConfig) ? { managed: true } : {}),
     ...(model.availability === "managed_billing_unavailable" ? { diagnostic: MANAGED_MEDIA_BILLING_DIAGNOSTIC } : {}),
   };
 }
@@ -125,8 +127,9 @@ export async function downloadPublicImageResult(
 }
 
 async function configuredImageModels(config: ServerConfig, env: EnvService, workspace: WorkspaceInfo): Promise<ImageModelDescriptor[]> {
-  const effective = await readEffectiveWorkspaceOpencodeConfig(config, workspace);
   const credentials = createWorkspaceProviderCredentialResolver({ config, env });
+  const scopeCurrent = credentials.capture(workspace.id);
+  const effective = await readEffectiveWorkspaceOpencodeConfig(config, workspace);
   const result: ImageModelDescriptor[] = [];
   const providers = isRecord(effective.provider) ? effective.provider : {};
   const disabledProviders = new Set(
@@ -162,7 +165,7 @@ async function configuredImageModels(config: ServerConfig, env: EnvService, work
       });
     }
   }
-  return result;
+  return result.filter((model) => !isManagedProvider(model.ref.providerID, model.providerConfig) || (scopeCurrent() && model.availability === "ready"));
 }
 
 async function credential(model: ImageModelDescriptor, config: ServerConfig, env: EnvService, workspace: WorkspaceInfo): Promise<string> {
@@ -191,7 +194,7 @@ async function readReferences(workspace: WorkspaceInfo, paths: string[], mode: I
   }));
 }
 
-async function callImageProvider(model: ImageModelDescriptor, apiKey: string, input: z.infer<typeof generateSchema>, references: Awaited<ReturnType<typeof readReferences>>) {
+async function callImageProvider(model: ImageModelDescriptor, apiKey: string, input: z.infer<typeof generateSchema>, references: Awaited<ReturnType<typeof readReferences>>, beforeDispatch?: () => void) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), IMAGE_API_TIMEOUT_MS);
   try {
@@ -205,7 +208,8 @@ async function callImageProvider(model: ImageModelDescriptor, apiKey: string, in
           output_format: "png", response_format: "b64_json",
           ...(input.size ? { size: input.size } : {}),
         }),
-      });
+        ...(beforeDispatch ? { redirect: "error" } : {}),
+      }, beforeDispatch);
     } else {
       const form = new FormData();
       form.set("model", model.ref.modelID);
@@ -213,7 +217,8 @@ async function callImageProvider(model: ImageModelDescriptor, apiKey: string, in
       form.set("output_format", "png");
       if (input.size) form.set("size", input.size);
       for (const reference of references) form.append("image[]", new Blob([reference.bytes], { type: reference.mimeType }), reference.filename);
-      response = await externalFetch(`${model.baseURL}/images/edits`, { method: "POST", signal: controller.signal, headers: { Authorization: `Bearer ${apiKey}` }, body: form });
+      response = await externalFetch(`${model.baseURL}/images/edits`, { method: "POST", signal: controller.signal, headers: { Authorization: `Bearer ${apiKey}` }, body: form,
+        ...(beforeDispatch ? { redirect: "error" } : {}) }, beforeDispatch);
     }
     const payload: unknown = await response.json().catch(() => null);
     if (!response.ok) {
@@ -282,6 +287,8 @@ export async function callOpenAiImageGenerationExtensionAction(config: ServerCon
     if (action !== "status" || config.workspaces.length === 0) throw error;
     workspace = { ...config.workspaces[0], path: resolve(config.workspaces[0].path) };
   }
+  const credentials = createWorkspaceProviderCredentialResolver({ config, env });
+  const scopeCurrent = credentials.capture(workspace.id);
   const models = await configuredImageModels(config, env, workspace);
   if (action === "status") return { ok: true, extensionId: OPENAI_IMAGE_GENERATION_EXTENSION_ID, action, result: { configured: models.length > 0, connected: models.some((model) => model.availability === "ready"), models: models.map(publicImageModelDescriptor) }, context };
   if (action === "image_models_list") {
@@ -295,8 +302,16 @@ export async function callOpenAiImageGenerationExtensionAction(config: ServerCon
     const ready = models.filter((model) => model.availability === "ready" && supportsImageGenerationMode(model.capabilities, parsed.data.mode));
     const selected = parsed.data.model ? ready.find((model) => model.ref.providerID === parsed.data.model?.providerID && model.ref.modelID === parsed.data.model?.modelID) : ready[0];
     if (!selected) return { ok: false, error: "no_image_model_available", mode: parsed.data.mode, message: "No configured ready image model supports the requested mode." };
+    const beforeDispatch = isManagedProvider(selected.ref.providerID, selected.providerConfig) ? () => {
+      if (!scopeCurrent()) throw new ApiError(403, "managed_provider_scope_unavailable", "Managed model scope is unavailable.");
+    } : undefined;
     const references = await readReferences(workspace, parsed.data.sourceImagePaths, parsed.data.mode);
-    const payload = await callImageProvider(selected, await credential(selected, config, env, workspace), parsed.data, references);
+    beforeDispatch?.();
+    const apiKey = await credential(selected, config, env, workspace).catch((error: unknown) => {
+      beforeDispatch?.();
+      throw error;
+    });
+    const payload = await callImageProvider(selected, apiKey, parsed.data, references, beforeDispatch);
     const artifact = await publishImage(workspace, await resultBytes(payload), parsed.data.filename);
     return { ok: true, extensionId: OPENAI_IMAGE_GENERATION_EXTENSION_ID, action, path: artifact.path, result: { artifact, model: selected.ref, mode: parsed.data.mode }, context };
   }

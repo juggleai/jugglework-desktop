@@ -18,8 +18,7 @@ import { useCheckDesktopRestriction, useDesktopAllowedModels, useDesktopRestrict
 import { useHostMarketplacePlugins } from "../settings/state/host-marketplace-plugins-provider";
 import { useSessionMcpMaintenance } from "../connections/use-session-mcp-maintenance";
 import type { CloudMcpSubmissionResult } from "../connections/cloud-mcp-submit-readiness";
-import { isManagedModelSubmissionReady } from "../connections/provider-auth/cloud-provider-readiness";
-import { isCloudManagedProviderKey } from "../connections/provider-auth/cloud-provider-config";
+import { managedProviderEpoch } from "@/app/lib/managed-provider-scope";
 import { getModelBehaviorSummary } from "@/app/lib/model-behavior";
 import { type RouteWorkspace, workspaceLabel } from "@/react-app/shell/route-workspaces";
 import { latestRoot, sortedRoots, sessionTreeIds, reconcilePetTaskConnection, selectPetTaskPresentation } from "./pet-model";
@@ -486,6 +485,7 @@ function PetWorkspaceRuntime({ workspace, endpoint, enabled, latest, entries, ch
         const result = await latest.current.selectedSend(draft, target.sessionId);
         if (result.outcome !== "sent") throw new Error(result.outcome === "blocked" ? result.issue.message : "目标上下文已变化，请重新发送");
       } else {
+        const scopeEpoch = managedProviderEpoch();
         const mediaScope = mediaModelQueryScope({ endpoint: endpoint.client.baseUrl, workspaceId: endpoint.workspaceId, workspaceRoot: workspace.path });
         const result = await submitSessionDraft({
           draft, sessionId: target.sessionId, workspaceId: workspace.id, workspaceRoot: workspace.path,
@@ -499,7 +499,7 @@ function PetWorkspaceRuntime({ workspace, endpoint, enabled, latest, entries, ch
           const choice = resolveSessionModelChoice({ choices: readSessionChoices(workspace.id), sessionId: target.sessionId, defaultModel: latest.current.defaultModel, defaultVariant: latest.current.defaultVariant });
           const providers = unwrap(await client.provider.list());
           if (choice.model && (isDesktopModelBlocked({ model: choice.model, checkRestriction: options.current.checkRestriction, allowedModels: options.current.allowedModels, providerSource: getProviderSource(providers, choice.model.providerID) }) || !isModelAvailableInConnectedProviders(providers, choice.model))) throw new Error("该任务的模型不可用，请打开原聊天选择模型");
-          if (choice.model && isCloudManagedProviderKey(choice.model.providerID) && !isManagedModelSubmissionReady({ cloudProviderSyncReady: false, providerList: providers, model: choice.model })) throw new Error(t("app.error_managed_model_preparing"));
+           // This target's fresh host-proxied catalog already excludes unready managed imports.
           const resume = await options.current.maintenance.waitForResumeMaintenance();
           if (resume.outcome === "timed_out" || resume.outcome === "failed") throw new Error("JuggleWork Connect 恢复未完成，请稍后重试");
           await options.current.marketplace.ensureReadyForTarget({ client: endpoint.client, token: endpoint.token, hostToken: endpoint.hostToken, workspaceType: workspace.workspaceType, remoteType: workspace.remoteType });
@@ -510,7 +510,8 @@ function PetWorkspaceRuntime({ workspace, endpoint, enabled, latest, entries, ch
             draft.imageGeneration ? query.fetchQuery(imageModelsQueryOptions(endpoint.client, mediaScope)) : null,
             draft.videoGeneration ? query.fetchQuery(videoModelsQueryOptions(endpoint.client, mediaScope)) : null,
           ]);
-          return { model: choice.model, variant };
+           if (scopeEpoch !== managedProviderEpoch()) throw new Error("组织已变化，请重新发送");
+           return { model: choice.model, variant };
           },
         });
         if (result.outcome !== "sent") throw new Error(result.outcome === "blocked" ? result.issue.message : "目标上下文或模型已变化，请重新发送");

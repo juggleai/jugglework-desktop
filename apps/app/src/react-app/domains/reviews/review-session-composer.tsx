@@ -13,6 +13,8 @@ import { readStoredDefaultModel, writeStoredDefaultModel } from "@/react-app/ker
 import { readSessionChoices, setSessionModelChoice, setSessionVariantChoice } from "@/react-app/kernel/session-model-store";
 import { currentLocale } from "@/i18n";
 import { WorkspaceProvider } from "@/react-app/shell/workspace-provider";
+import { managedProviderEpoch, managedProviderSwitchPending, useManagedProviderCatalogRevision, useManagedProviderEpoch } from "@/app/lib/managed-provider-scope";
+import { isManagedProvider } from "@jugglework/types/provider-credentials";
 
 const EMPTY_LIST = async () => [];
 const text = (en: string, zh: string) => currentLocale() === "zh" ? zh : en;
@@ -23,6 +25,8 @@ type PendingReviewDraft = {
   commandId: string;
   messageID: string;
   scope: object;
+  providerEpoch: number;
+  queuedModel?: ModelRef;
   request?: Parameters<ResolvedWorkspaceEndpoint["client"]["startSessionRun"]>[2];
   attempted?: boolean;
 };
@@ -74,8 +78,11 @@ export function ReviewSessionComposer(props: {
     token: endpoint.token || undefined,
   }), [catalogOpencodeBaseUrl, endpoint.token]);
   const permission = useSessionPermissionMode({ client: endpoint.client, workspaceId, sessionId });
-  const dependencies = useMemo(() => endpoint.client.listAutomationDependencies(endpoint.workspaceId), [endpoint.client, endpoint.workspaceId]);
-  const [dependencyModels, setDependencyModels] = useState<Awaited<typeof dependencies>["models"]>([]);
+  const providerEpoch = useManagedProviderEpoch();
+  const catalogRevision = useManagedProviderCatalogRevision();
+  type Models = Awaited<ReturnType<typeof endpoint.client.listAutomationDependencies>>["models"];
+  const [catalog, setCatalog] = useState<{ epoch: number; revision: number; models: Models }>({ epoch: -1, revision: -1, models: [] });
+  const dependencyModels = catalog.epoch === providerEpoch && catalog.revision === catalogRevision ? catalog.models : catalog.models.filter((item) => !isManagedProvider(item.providerId));
 
   useEffect(() => {
     scope.current = {};
@@ -92,14 +99,16 @@ export function ReviewSessionComposer(props: {
   }, [sessionId, workspaceId]);
   useEffect(() => {
     let alive = true;
-    void dependencies.then((result) => { if (alive) setDependencyModels(result.models); }).catch(() => { if (alive) setDependencyModels([]); });
+    void endpoint.client.listAutomationDependencies(endpoint.workspaceId).then(({ models }) => {
+      if (alive && providerEpoch === managedProviderEpoch()) setCatalog({ epoch: providerEpoch, revision: catalogRevision, models: managedProviderSwitchPending() ? models.filter((item) => !isManagedProvider(item.providerId)) : models });
+    }).catch(() => { if (alive) setCatalog({ epoch: providerEpoch, revision: catalogRevision, models: [] }); });
     return () => { alive = false; };
-  }, [dependencies]);
+  }, [endpoint.client, endpoint.workspaceId, providerEpoch, catalogRevision]);
 
   const fallbackModel = dependencyModels[0]
     ? { providerID: dependencyModels[0].providerId, modelID: dependencyModels[0].modelId }
     : null;
-  const selectedModel: ModelRef = choice.model ?? fallbackModel ?? { providerID: "", modelID: "" };
+  const selectedModel: ModelRef = (choice.model && (!isManagedProvider(choice.model.providerID) || dependencyModels.some((item) => item.providerId === choice.model?.providerID && item.modelId === choice.model.modelID)) ? choice.model : fallbackModel) ?? { providerID: "", modelID: "" };
   const modelEntry = dependencyModels.find((item) => item.providerId === selectedModel.providerID && item.modelId === selectedModel.modelID);
   const behaviorOptions = modelEntry?.variants.map((value) => ({ value, label: variantLabel(value) })) ?? [];
   const effectiveVariant = choice.variant ?? (modelEntry?.variants.includes("medium") ? "medium" : modelEntry?.variants[0] ?? null);
@@ -129,7 +138,7 @@ export function ReviewSessionComposer(props: {
   }, []);
 
   const sendDraft = useCallback(async (pending: PendingReviewDraft, whenBusy: "reject" | "steer") => {
-    if (pending.scope !== scope.current || (!pending.text && pending.attachments.length === 0) || !selectedModel.providerID || !selectedModel.modelID || sending.current || props.disabled) return false;
+    if (pending.scope !== scope.current || providerEpoch !== managedProviderEpoch() || (!pending.text && pending.attachments.length === 0) || !selectedModel.providerID || !selectedModel.modelID || sending.current || props.disabled) return false;
     const activeScope = scope.current;
     const isCurrent = () => scope.current === activeScope;
     sending.current = true;
@@ -160,6 +169,13 @@ export function ReviewSessionComposer(props: {
         : false;
       if (!isCurrent()) return false;
       if (!delivered) {
+        const requestModel = pending.request.prompt.model;
+        if (providerEpoch !== managedProviderEpoch() || (pending.providerEpoch !== providerEpoch && isManagedProvider(pending.queuedModel?.providerID ?? "")) ||
+          (requestModel && isManagedProvider(requestModel.providerID) && (pending.providerEpoch !== providerEpoch ||
+            !dependencyModels.some((item) => item.providerId === requestModel.providerID && item.modelId === requestModel.modelID)))) {
+          setError(text("The model scope changed. No queued request was sent.", "模型所属身份已变化，未发送排队请求。"));
+          return false;
+        }
         pending.attempted = true;
         await endpoint.client.startSessionRun(workspaceId, sessionId, pending.request);
       }
@@ -180,7 +196,7 @@ export function ReviewSessionComposer(props: {
         setSubmitting(false);
       }
     }
-  }, [effectiveVariant, endpoint.client, props, selectedAgent, selectedModel, sessionId, workspaceId]);
+  }, [dependencyModels, effectiveVariant, endpoint.client, props, providerEpoch, selectedAgent, selectedModel, sessionId, workspaceId]);
 
   const currentDraft = useCallback(() => ({
     text: draft.replace(/\[attachment review-att-[^\]]+\]/g, "").trim(),
@@ -188,7 +204,9 @@ export function ReviewSessionComposer(props: {
     commandId: crypto.randomUUID(),
     messageID: `msg_review_${crypto.randomUUID()}`,
     scope: scope.current,
-  }), [attachments, draft]);
+    providerEpoch,
+    queuedModel: selectedModel,
+  }), [attachments, draft, providerEpoch, selectedModel]);
   const submit = useCallback(async (whenBusy: "reject" | "steer") => {
     const pending = currentDraft();
     const activeScope = scope.current;
@@ -327,8 +345,6 @@ export function ReviewSessionComposer(props: {
     onInsertMention={(_kind, value) => setDraft((current) => `${current}${value}`)}
     inputHistory={inputHistory}
     pastedText={[]}
-    onExpandPastedText={() => undefined}
-    onRemovePastedText={() => undefined}
     isRemoteWorkspace={false}
     isSandboxWorkspace={false}
     draftScopeKey={`review:${workspaceId}:${sessionId}`}

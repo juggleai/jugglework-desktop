@@ -11,6 +11,7 @@ export type ComposerVideoModelOption = {
   modelID: string;
   providerName: string;
   modelName: string;
+  managed?: boolean;
   capabilities?: MediaGenerationCapabilities;
 };
 
@@ -56,6 +57,7 @@ export function parseComposerVideoModels(payload: unknown): ComposerVideoModelOp
     const option: ComposerVideoModelOption = {
       providerID,
       modelID,
+      ...(candidate.managed === true ? { managed: true } : {}),
       providerName: typeof candidate.providerName === "string" && candidate.providerName.trim()
         ? candidate.providerName.trim()
         : providerID,

@@ -54,6 +54,23 @@ export const cloudGatewayMirrorEnvName = (owner: CloudGatewayMirrorOwner): strin
 export const isCloudGatewayCredentialEnvName = (value: string): boolean =>
   /^JUGGLEWORK_GATEWAY_KEY_V2_[A-F0-9]+$/.test(value)
 
+export const isManagedGatewayUrl = (value: unknown): boolean => {
+  if (typeof value !== "string") return false
+  try {
+    return /\/jwork\/api\/gateway\/v1(?:\/|$)/i.test(new URL(value).pathname)
+  } catch { return false }
+}
+
+/** Reserved namespaces, including legacy configurations without import metadata. */
+export function isManagedProvider(providerID: string, value?: unknown, envKeys: readonly string[] = []): boolean {
+  const provider = value as { env?: unknown; api?: unknown; options?: { baseURL?: unknown }; models?: Record<string, { api?: { url?: unknown }; provider?: { api?: unknown } }> } | undefined
+  const env = [...envKeys, ...(Array.isArray(provider?.env) ? provider.env : [])]
+  return /^(?:lpr_|jugglework$)/i.test(providerID.trim()) ||
+    env.some((key) => typeof key === "string" && /^(?:JUGGLEWORK|MCP)_GATEWAY_KEY(?:_|$)/i.test(key.trim())) ||
+    isManagedGatewayUrl(provider?.api) || isManagedGatewayUrl(provider?.options?.baseURL) ||
+    Object.values(provider?.models ?? {}).some((model) => isManagedGatewayUrl(model?.api?.url) || isManagedGatewayUrl(model?.provider?.api))
+}
+
 const stableValue = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(stableValue)
   if (!value || typeof value !== "object") return value

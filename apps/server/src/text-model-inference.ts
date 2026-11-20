@@ -13,6 +13,7 @@ export type ResolvedTextModel = {
   protocol: TextProtocol; baseURL: string; key: string; modelId: string;
   upstreamModelId: string; headers: Record<string, string>;
   provider: Record<string, any>; model: Record<string, any>;
+  beforeDispatch?: () => void;
 };
 
 const unresolvedTemplate = /\{(?:env|file):|\$\{/;
@@ -120,15 +121,16 @@ export function createTextModelResolver(options: { config: ServerConfig; env: En
     const ineligible = textModelIneligibility(selected.protocol, model, selected.provider, selected.upstreamModelId);
     if (ineligible) { diagnose?.(ineligible); return null; }
     const envKeys = Array.isArray(selected.configured.env) ? selected.configured.env.filter((key: unknown): key is string => typeof key === "string") : [];
+    const beforeDispatch = credentials.beforeDispatch(workspace.id, ref.providerID, selected.configured);
     const key = await withSignal(signal, () => credentials.resolve({ workspaceId: workspace.id, ...ref, declaredEnvKeys: envKeys, providerConfig: selected.configured }, signal));
     if (!key) { diagnose?.("model_credential_unavailable"); return null; }
-    return { ...selected, key, modelId: ref.modelID };
+    return { ...selected, key, modelId: ref.modelID, beforeDispatch };
   };
 }
 
 /** Protocol/auth transport only: no retries, fallback, model discovery or session mutation. */
 export async function requestTextModel(input: {
-  model: Pick<ResolvedTextModel, "protocol" | "baseURL" | "key" | "upstreamModelId" | "headers">;
+  model: Pick<ResolvedTextModel, "protocol" | "baseURL" | "key" | "upstreamModelId" | "headers" | "beforeDispatch">;
   payload: Record<string, unknown>; signal: AbortSignal; requestSignal?: AbortSignal;
 }): Promise<Response> {
   const { model, signal } = input;
@@ -152,8 +154,9 @@ export async function requestTextModel(input: {
   try {
     response = await withSignal(signal, () => externalFetch(`${model.baseURL}/${operation}`, {
       method: "POST", headers, body: JSON.stringify(body), redirect: "error", signal,
-    }));
-  } catch {
+    }, model.beforeDispatch));
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
     if (input.requestSignal?.aborted) throw new ApiError(499, "request_cancelled", "模型请求已取消");
     if (signal.aborted) throw new ApiError(504, "model_request_timeout", "模型请求超时");
     throw new ApiError(502, "model_transport_failed", "模型请求失败，请检查供应商连接");

@@ -2,10 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { cloudGatewayCredentialEnvName, cloudProviderConfigFingerprint } from "@jugglework/types/provider-credentials";
 
 import { auditLogPath } from "./audit.js";
 import { readJuggleWorkWorkspaceConfig } from "./jugglework-workspace-config-store.js";
 import { startServer } from "./server.js";
+import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 
 const HOST_TOKEN = "provider-auth-host-token";
@@ -22,7 +25,7 @@ afterEach(async () => {
   else process.env.JUGGLEWORK_ENV_STORE = previousEnvStore;
 });
 
-async function boot() {
+async function boot(providerCatalog = { all: [] as Array<{ id: string; models: Record<string, unknown> }>, default: {} as Record<string, string>, connected: [] as string[] }, respond?: (request: Request) => Response | undefined) {
   const root = await mkdtemp(join(tmpdir(), "jugglework-provider-auth-"));
   roots.push(root);
   // Keep the env store and runtime DB inside the temp root. Without this the
@@ -33,8 +36,13 @@ async function boot() {
     hostname: "127.0.0.1",
     port: 0,
     async fetch(request) {
+      const response = respond?.(request);
+      if (response) return response;
       if (request.method === "GET" && new URL(request.url).pathname === "/provider") {
-        return Response.json({ all: [], default: {}, connected: [] });
+        return Response.json(providerCatalog);
+      }
+      if (request.method === "GET" && new URL(request.url).pathname === "/config/providers") {
+        return Response.json({ providers: providerCatalog.all, default: providerCatalog.default });
       }
       const body = request.method === "PUT" ? await request.json() : null;
       upstreamRequests.push({
@@ -86,6 +94,138 @@ function hostHeaders() {
 }
 
 describe("workspace provider auth routes", () => {
+  test("fences discovery and dispatch through personal → organization → personal, including late sync results", async () => {
+    const id = "lpr_fixture";
+    const local = { id: "local", models: { own: {} } };
+    const managed = { id, models: { chat: {}, stale: {} } };
+    const { base, root, config, upstreamRequests } = await boot({ all: [local, managed], default: { local: "own", [id]: "chat" }, connected: ["local", id] });
+    const client = { authorization: `Bearer ${CLIENT_TOKEN}`, "content-type": "application/json" };
+    const authority = `${base}/managed-provider-authority`;
+    const prefix = `${base}/workspace/ws_1`;
+    const gateway = "https://provider.example.test/jwork/api/gateway/v1/lpr_fixture";
+    const credential = "synthetic-session-a";
+    const providerConfig = { npm: "@ai-sdk/openai-compatible", env: [cloudGatewayCredentialEnvName(id)], options: { baseURL: gateway }, models: { chat: {} } };
+    const put = (url: string, body: unknown, headers = hostHeaders()) => fetch(url, { method: "PUT", headers, body: JSON.stringify(body) });
+    const confirm = (revision: string, organizationId: string) => put(authority, { revision, deployment: "https://cloud.example.test/jwork/api", userId: "user", organizationId, session: "a".repeat(64) });
+    const ready = (authorityId: string, isReady: boolean) => put(`${prefix}/managed-provider-readiness`, { authorityId, ready: isReady });
+    const visible = async (expected: unknown[]) => {
+      const response = await fetch(`${prefix}/opencode/provider`, { headers: client });
+      expect(response.status).toBe(200);
+      expect((await response.json() as { all: unknown[] }).all).toEqual(expected);
+      const configResponse = await fetch(`${prefix}/opencode/config/providers`, { headers: client });
+      expect(configResponse.status).toBe(200);
+      expect((await configResponse.json() as { providers: unknown[] }).providers).toEqual(expected);
+    };
+    const allowed = async () => (await (await fetch(`${base}/internal/managed-provider-dispatch`, {
+      method: "POST", headers: client, body: JSON.stringify({ directory: root, providerID: id, url: `${gateway}/chat/completions`, digest: createHash("sha256").update(credential).digest("hex") }),
+    })).json() as { allowed: boolean }).allowed;
+    const fence = async () => (await (await fetch(authority, { method: "DELETE", headers: hostHeaders() })).json() as { revision: string }).revision;
+    const submit = (operation: string, body: unknown) => fetch(`${prefix}/opencode/session/scope-fixture/${operation}`, {
+      method: "POST", headers: client, body: JSON.stringify(body),
+    });
+
+    expect((await fetch(authority, { headers: client })).status).toBe(401);
+    expect((await fetch(`${prefix}/managed-provider-inventory`, { headers: client })).status).toBe(401);
+    const initial = await fence();
+    const personal = await confirm(initial, "personal");
+    expect(personal.status).toBe(200);
+    const { id: firstId } = await personal.json() as { id: string };
+    const { mirror } = await (await put(`${prefix}/cloud-provider-mirror/${id}`, { organizationId: "personal", value: credential })).json() as { mirror: unknown };
+    await writeRuntimeOpencodeConfig(config, "ws_1", () => ({ provider: { [id]: providerConfig } }));
+    const importFor = async (authorityId: string) => {
+      expect((await put(`${prefix}/cloud-provider-imports/${id}`, { item: { cloudProviderId: id, providerId: id, organizationId: "personal", authorityId, metadataVersion: 10, modelIds: ["chat"], providerConfigFingerprint: cloudProviderConfigFingerprint(providerConfig), gatewayMirror: mirror } })).status).toBe(200);
+    };
+    await importFor(firstId);
+    await visible([local]);
+    expect(await allowed()).toBe(false);
+    expect((await ready(firstId, true)).status).toBe(200);
+    const activeList = [local, { id, models: { chat: {} } }];
+    await visible(activeList);
+    expect(await allowed()).toBe(true);
+    expect((await submit("message", { model: { providerID: id, modelID: "chat" }, parts: [] })).status).toBe(200);
+    expect((await ready(firstId, false)).status).toBe(200);
+    await visible([local]);
+    expect(await allowed()).toBe(false);
+    const beforeRejected = upstreamRequests.length;
+    for (const [operation, payload] of [
+      ["prompt_async", { model: { providerID: id, modelID: "chat" }, parts: [] }],
+      ["summarize", { providerID: id, modelID: "chat" }],
+      ["command", { model: `${id}/chat`, command: "compact", arguments: "" }],
+    ] as const) {
+      const response = await submit(operation, payload);
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ code: "managed_provider_scope_unavailable" });
+    }
+    expect(upstreamRequests).toHaveLength(beforeRejected);
+    expect((await submit("message", { model: { providerID: "local", modelID: "own" }, parts: [] })).status).toBe(200);
+    expect((await ready(firstId, true)).status).toBe(200);
+
+    const orgRevision = await fence();
+    expect((await ready(firstId, true)).status).toBe(409);
+    const org = await confirm(orgRevision, "organization");
+    expect(org.status).toBe(200);
+    expect((await ready((await org.json() as { id: string }).id, true)).status).toBe(200);
+    await visible([local]);
+    expect(await allowed()).toBe(false);
+    const returnRevision = await fence();
+    expect((await confirm(orgRevision, "organization")).status).toBe(409);
+    const again = await confirm(returnRevision, "personal");
+    const { id: secondId } = await again.json() as { id: string };
+    expect(secondId).not.toBe(firstId);
+    expect((await ready(secondId, true)).status).toBe(200);
+    await visible([local]);
+    expect(await allowed()).toBe(false);
+    await importFor(secondId);
+    const delayedFailure = await fetch(`${authority}?revision=${encodeURIComponent(firstId)}`, { method: "DELETE", headers: hostHeaders() });
+    expect(await delayedFailure.json()).toEqual({ revision: null });
+    await visible(activeList);
+    expect(await allowed()).toBe(true);
+  });
+
+  test("video generation rejects old scope but returns an already submitted job on exact replay", async () => {
+    let posts = 0;
+    const { base, config } = await boot(undefined, (request) => {
+      const path = new URL(request.url).pathname;
+      if (path === "/video-fixture/videos" && request.method === "POST") {
+        posts++;
+        return Response.json({ id: "fixture-upstream-job" });
+      }
+      if (path === "/video-fixture/videos/fixture-upstream-job") return Response.json({ status: "in_progress" });
+    });
+    const prefix = `${base}/workspace/ws_1`;
+    const authority = `${base}/managed-provider-authority`;
+    const put = async (url: string, body: unknown) => {
+      const response = await fetch(url, { method: "PUT", headers: hostHeaders(), body: JSON.stringify(body) });
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    const { revision } = await (await fetch(authority, { headers: hostHeaders() })).json() as { revision: string };
+    const { id: authorityId } = await put(authority, { revision, deployment: "https://cloud.example.test", userId: "user", organizationId: "org", session: "a".repeat(64) }) as { id: string };
+    const providerID = "lpr_video_fixture", modelID = "video";
+    const provider = { npm: "@ai-sdk/openai-compatible", env: [cloudGatewayCredentialEnvName(providerID)],
+      options: { baseURL: `${config.workspaces[0]!.baseUrl}/video-fixture` }, models: { [modelID]: { mediaGeneration: { textToVideo: true } } } };
+    await writeRuntimeOpencodeConfig(config, "ws_1", () => ({ provider: { [providerID]: provider } }));
+    const { mirror } = await put(`${prefix}/cloud-provider-mirror/${providerID}`, { organizationId: "org", value: "fixture-only" }) as { mirror: unknown };
+    await put(`${prefix}/cloud-provider-imports/${providerID}`, { item: { cloudProviderId: providerID, providerId: providerID, organizationId: "org", authorityId,
+      metadataVersion: 10, modelIds: [modelID], providerConfigFingerprint: cloudProviderConfigFingerprint(provider), gatewayMirror: mirror } });
+    const call = (action: string, args: unknown) => fetch(`${base}/experimental/extensions/call`, {
+      method: "POST", headers: { authorization: `Bearer ${CLIENT_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ extensionId: "media-generation", action, args, context: { workspaceId: "ws_1" } }),
+    });
+    const input = { prompt: "waves", mode: "text-to-video", model: { providerID, modelID }, clientRequestId: "submitted-before-switch" };
+    await put(`${prefix}/managed-provider-readiness`, { authorityId, ready: true });
+    const started = await (await call("video_generate", input)).json() as { result: { job: { id: string } } };
+    expect(started.result.job).toMatchObject({ providerJobId: "fixture-upstream-job" });
+    await fetch(authority, { method: "DELETE", headers: hostHeaders() });
+
+    expect(await (await call("video_models_list", { mode: input.mode })).json()).toMatchObject({ result: { ok: false, error: "no_video_model_available" } });
+    expect(await (await call("video_generate", { ...input, clientRequestId: "new-after-switch" })).json()).toMatchObject({ result: { ok: false, error: "no_video_model_available" } });
+    expect(await (await call("video_generate", input)).json()).toMatchObject({ result: { job: { id: started.result.job.id } } });
+    expect((await call("video_generate", { ...input, prompt: "different request" })).status).toBe(409);
+    expect(await (await call("video_job_get", { jobId: started.result.job.id })).json()).toMatchObject({ result: { job: { id: started.result.job.id } } });
+    expect(posts).toBe(1);
+  });
+
   test("preflights host authority and derives provider visibility without claiming execution", async () => {
     const { base } = await boot();
     const preflight = await fetch(`${base}/workspace/ws_1/provider-auth`, { headers: hostHeaders() });

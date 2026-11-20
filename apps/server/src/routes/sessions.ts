@@ -7,6 +7,7 @@ import {
   desktopRemotePromptPartSchema,
 } from "@jugglework/types/desktop-remote-control";
 import { isChatSelectableProviderModel } from "@jugglework/types/media-generation";
+import { createWorkspaceProviderCredentialResolver } from "../provider-credential-resolver.js";
 import { z } from "zod";
 import {
   detectResponseLanguageFromText,
@@ -78,6 +79,7 @@ interface RegisterSessionRoutesOptions {
     workspace: WorkspaceInfo,
     sessionId: string,
     prompt: Record<string, unknown>,
+    beforeDispatch?: () => void,
   ) => Promise<void>;
   dispatchSessionAbort: (config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) => Promise<boolean>;
   sessionMutations: SessionMutationCoordinator;
@@ -391,11 +393,18 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     onSessionDeleted,
   } = options;
   const resolveSuggestionModel = createTextModelResolver({ config, env: options.env });
+  const credentials = createWorkspaceProviderCredentialResolver({ config, env: options.env, readOnly: true });
+
+  async function preparePromptModel(workspace: WorkspaceInfo, model: unknown) {
+    if (!isRecord(model) || typeof model.providerID !== "string" || typeof model.modelID !== "string") return undefined;
+    return credentials.prepareTextSubmission(workspace, { providerID: model.providerID, modelID: model.modelID });
+  }
 
   async function readModelCatalog(workspace: WorkspaceInfo, signal?: AbortSignal) {
+    const scopeCurrent = credentials.capture(workspace.id);
     const catalog = await createWorkspaceOpencodeClient(config, workspace).provider.list(undefined, { signal });
     if (catalog.error || !catalog.data || !catalog.response.ok) throw new ApiError(502, "model_catalog_unavailable", "Model catalog unavailable");
-    return catalog.data;
+    return credentials.filterCatalog(workspace.id, catalog.data, scopeCurrent);
   }
 
   async function readModelVariants(workspace: WorkspaceInfo, signal: AbortSignal) {
@@ -1136,6 +1145,15 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     if (remoteVariant !== undefined && workspace.workspaceType !== "local") {
       throw new ApiError(400, "variant_unavailable", "Variant selection requires a local workspace");
     }
+    const scopeCurrent = credentials.capture(workspace.id);
+    const prepareSubmission = async () => {
+      const beforeDispatch = await preparePromptModel(workspace, input.prompt.model);
+      if (!beforeDispatch) return undefined;
+      return () => {
+        if (!scopeCurrent()) throw new ApiError(403, "managed_provider_scope_unavailable", "Managed model scope is unavailable.");
+        beforeDispatch();
+      };
+    };
     if (input.origin === "remote-control" && isRecord(input.prompt.model)) {
       if (input.whenBusy !== "reject") throw new ApiError(400, "invalid_payload", "Explicit model requires whenBusy reject");
       await validateExplicitModel(workspace, input.prompt.model as { providerID: string; modelID: string });
@@ -1223,10 +1241,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
             })
             : undefined;
           try {
+            const beforeDispatch = await prepareSubmission();
+            beforeDispatch?.();
             await options.preparePromptAdmission({ workspaceId: workspace.id, sessionId: input.sessionId, source: "local-steer", id: input.startCommandCorrelationId }, {
               officeSelectionRefs: input.prompt.officeSelectionRefs as string[] | undefined,
               officeInstructions: input.prompt.officeInstructions as OfficeSelectionSubmission["officeInstructions"],
             });
+            beforeDispatch?.();
             await admitOpencodePrompt(createWorkspaceOpencodeClient(config, workspace), {
               workspaceId: workspace.id,
               sessionId: input.sessionId,
@@ -1322,11 +1343,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
         }
       }
       try {
+        const beforeDispatch = await prepareSubmission();
         await dispatchSessionPromptAsync(
           config,
           workspace,
           input.sessionId,
           selectedResponseLanguage ? withResponseLanguageSystem(input.prompt, selectedResponseLanguage) : input.prompt,
+          beforeDispatch,
         );
       } catch (error) {
         languageMutation?.rollback();

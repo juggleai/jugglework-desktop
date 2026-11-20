@@ -28,6 +28,10 @@ function harness() {
   };
   let authenticated = true;
   let availablePoints = 100_000;
+  let revision = "initial";
+  let active: Parameters<JuggleWorkApiClient["confirmManagedProviderAuthority"]>[0] | null = null;
+  let ready = false;
+  let nextRevision = 0;
   const status = (providerId: string): RuntimeProviderStatus => ({
     providerId, published: null, imported: Boolean(imports[providerId]), loaded: Boolean(imports[providerId]),
     authenticated: Boolean(imports[providerId]) && authenticated, enabled: imports[providerId] ? true : null,
@@ -36,6 +40,8 @@ function harness() {
     })),
   });
   const cloud = {
+    currentUser: async () => ({ id: "user_1" }),
+    setActiveOrganization: async (_token: string, id: string) => { calls.push(`select:${id}`); organization = id; },
     organizationState: async () => ({ items: [
       { id: "org_one", name: "One", slug: "one" },
       { id: "org_two", name: "Two", slug: "two" },
@@ -53,10 +59,33 @@ function harness() {
     selectOrganization: async (_origin: string, id: string) => { if (profile) profile = { ...profile, organizationId: id }; },
   } as unknown as CloudProfileStore;
   const api = {
+    managedProviderRevision: async () => ({ revision }),
+    fenceManagedProviderAuthority: async (expected?: string) => {
+      if (expected !== undefined && expected !== revision) return { revision: null };
+      active = null;
+      ready = false;
+      return { revision: revision = `revision-${++nextRevision}` };
+    },
+    confirmManagedProviderAuthority: async (scope: NonNullable<typeof active>) => {
+      assert.equal(scope.revision, revision);
+      assert.equal(scope.organizationId, organization);
+      assert.match(scope.session, /^[a-f0-9]{64}$/);
+      if (!active || active.organizationId !== scope.organizationId || active.session !== scope.session) {
+        ready = false;
+        revision = `revision-${++nextRevision}`;
+      }
+      active = scope;
+      return { id: revision };
+    },
+    setManagedProviderReadiness: async (_workspace: string, id: string, value: boolean) => {
+      if (!active || revision !== id) throw new JuggleWorkApiError("Stale", 409, "stale_managed_provider_authority");
+      ready = value;
+      return { ok: true };
+    },
     workspaceConfig: async () => ({ opencode: configuredModel ? { model: configuredModel } : {}, jugglework: { cloudImports: { providers: { ...imports } } } }),
-    providerList: async () => ({ connected: ["opencode", ...Object.keys(imports)], default: { opencode: "big-pickle" }, all: [
+    providerList: async () => ({ connected: ["opencode", ...Object.keys(imports).filter((id) => ready && imports[id]?.authorityId === revision)], default: { opencode: "big-pickle" }, all: [
       { id: "opencode", models: { "big-pickle": { name: "Big Pickle" } } },
-      ...cloudProviders.filter((provider) => imports[provider.id]).map((provider) => ({
+      ...cloudProviders.filter((provider) => ready && imports[provider.id]?.authorityId === revision).map((provider) => ({
         id: provider.id, models: Object.fromEntries(provider.models.map((model) => [model.id, { name: model.name }])),
       })),
     ] }),
@@ -109,6 +138,7 @@ test("login startup imports enabled organization providers and chooses its first
   assert.deepEqual(result.imported, ["lpr_first", "lpr_second"]);
   assert.deepEqual(state.calls.filter((call) => call === "reload"), ["reload", "reload"]);
   assert.equal(state.imports.lpr_first?.modelIds.length, 2);
+  assert.equal(state.imports.lpr_first?.authorityId, (await state.api.managedProviderRevision()).revision);
   assert.doesNotMatch(state.output.join(" "), /secret-cloud-token|secret-provider-key/);
 });
 
@@ -145,6 +175,32 @@ test("same cloud row is reimported when organization ownership changes", async (
   assert.deepEqual(result.imported, ["lpr_first", "lpr_second"]);
   assert.equal(state.imports.lpr_first?.organizationId, "org_two");
   assert.equal(state.calls.filter((call) => call === "remove-mirror").length, 2);
+});
+
+test("an explicit owned-runtime switch is confirmed by Den before exposing the new scope", async () => {
+  const state = harness();
+  await synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } });
+  const previous = state.imports.lpr_first?.authorityId;
+  state.options.cloudOrg = "two";
+  const result = await synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } });
+  assert.equal(result.autoModel, "lpr_first/model-b");
+  assert.ok(state.calls.includes("select:org_two"));
+  assert.notEqual(state.imports.lpr_first?.authorityId, previous);
+});
+
+test("a failed catalog refresh revokes readiness and a connected CLI leaves the host's imports alone", async () => {
+  const state = harness();
+  await synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } });
+  const list = state.api.providerList;
+  state.api.providerList = async () => { throw new Error("catalog unavailable"); };
+  await assert.rejects(synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } }), /catalog unavailable/);
+  state.api.providerList = list;
+  assert.deepEqual((await list("ws")).connected, ["opencode"]);
+  const existing = { ...state.imports };
+  state.setOrganization("org_two");
+  const result = await synchronizeCloudRuntime({ ...state, workspace: { id: "ws" }, ownedRuntime: false });
+  assert.deepEqual(result.imported, []);
+  assert.deepEqual(state.imports, existing);
 });
 
 test("one posted point preserves an expensive default and admits the first published model", async () => {

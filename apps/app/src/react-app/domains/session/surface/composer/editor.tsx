@@ -8,6 +8,7 @@ import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin.js";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin.js";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext.js";
 import {
+  $addUpdateTag,
   $applyNodeReplacement,
   $createRangeSelection,
   $createParagraphNode,
@@ -35,6 +36,7 @@ import {
   TextNode,
   type EditorConfig,
   type LexicalEditor,
+  type LexicalNode,
   type NodeKey,
 } from "lexical";
 import { ComposerCloudDocNode, $createCloudDocNode, $insertCloudDocReference } from "./cloud-doc-node";
@@ -53,7 +55,7 @@ import {
   type ComposerCapabilityKind,
 } from "./capability-tags";
 import { parseClipboardUriList, shouldCollapsePastedText } from "./pasted-text";
-import { insertStyledPastedText } from "./pasted-text-insertion";
+import { insertPastedText } from "./pasted-text-insertion";
 import { insertTextAtSelection } from "./editor-insertion";
 import { $continueComposerList, $editingBlock, $restoreRichDraft, $startComposerList, composerRichTheme, registerComposerMarkdown } from "./markdown-editing";
 import { LinkNode } from "@lexical/link";
@@ -61,10 +63,9 @@ import { ListNode, ListItemNode } from "@lexical/list";
 import { HeadingNode } from "@lexical/rich-text";
 import { ComposerSelectionToolbar } from "./selection-toolbar";
 import { ComposerOfficeInstructionNode, ComposerOfficeSelectionTagNode, $createOfficeInstructionNode, $readOfficeComposerDraft, $syncOfficeInstructionNode, registerOfficeSelectionEditing, OfficeComposerContext } from "./office-selection-node";
-import { getComposerOfficeGroups, releasableOfficeReferences, useComposerStateStore } from "../composer-state-store";
+import { getComposerOfficeGroups, releasableOfficeReferences, useComposerStateStore, type ComposerPastePart } from "../composer-state-store";
 import type { OfficeComposerGroup } from "./office-selection-draft";
 
-export type PastedTextToken = { label: string; lines: number; text: string };
 const EXTERNAL_SYNC_TAG = "composer-external-sync";
 const SUGGESTION_ACCEPT_TAG = "composer-suggestion-accept";
 
@@ -81,7 +82,7 @@ type EditorProps = {
   value: string;
   promptSuggestion?: string | null;
   mentions: Record<string, ComposerMentionKind>;
-  pastedText?: PastedTextToken[];
+  pastedText?: ComposerPastePart[];
   attachments?: ComposerAttachmentToken[];
   disabled: boolean;
   placeholder: string;
@@ -90,11 +91,11 @@ type EditorProps = {
   onUserEdit?: () => void;
   onSubmit?: (options: { queue: boolean }) => void | Promise<void>;
   isComposing?: () => boolean;
-  onExpandPastedText?: (label: string) => void;
+  onPastePartsChange?: (parts: ComposerPastePart[]) => void;
   onRemoveAttachment?: (id: string) => void;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
   onPasteCapture?: React.ClipboardEventHandler<HTMLDivElement>;
-  registerPastedText?: (text: string) => PastedTextToken;
+  createPastePart?: (text: string) => ComposerPastePart;
   onDrop?: React.DragEventHandler<HTMLDivElement>;
   onDragOver?: React.DragEventHandler<HTMLDivElement>;
   onDragLeave?: React.DragEventHandler<HTMLDivElement>;
@@ -425,8 +426,7 @@ function updatePastedTextChipDom(dom: HTMLElement, label: string, lines: number)
 
 type SerializedComposerPastedTextNode = Spread<
   {
-    pastedLabel: string;
-    pastedLines: number;
+    pastedPart?: ComposerPastePart;
     type: "composer-pasted-text";
     version: 1;
   },
@@ -434,49 +434,40 @@ type SerializedComposerPastedTextNode = Spread<
 >;
 
 class ComposerPastedTextNode extends TextNode {
-  __pastedLabel: string;
-  __pastedLines: number;
+  __part: ComposerPastePart;
 
   static override getType() {
     return "composer-pasted-text";
   }
 
   static override clone(node: ComposerPastedTextNode) {
-    return new ComposerPastedTextNode(node.__pastedLabel, node.__pastedLines, node.__key);
+    return new ComposerPastedTextNode(node.__part, node.__key);
   }
 
-  static override importJSON(serializedNode: SerializedComposerPastedTextNode) {
-    return $createComposerPastedTextNode(serializedNode.pastedLabel, serializedNode.pastedLines);
+  static override importJSON(serialized: SerializedComposerPastedTextNode) {
+    // Older serialized nodes contain only the placeholder.
+    return serialized.pastedPart ? $createComposerPastedTextNode(serialized.pastedPart) : $createTextNode(serialized.text);
   }
 
-  constructor(label = "", lines = 0, key?: NodeKey) {
-    super(`[pasted text ${label}]`, key);
-    this.__pastedLabel = label;
-    this.__pastedLines = lines;
+  constructor(part: ComposerPastePart, key?: NodeKey) {
+    super(`[pasted text ${part.label}]`, key);
+    this.__part = part;
   }
 
-  getPastedLabel() {
-    return this.__pastedLabel;
+  getPart() {
+    return this.getLatest().__part;
   }
 
   override exportJSON(): SerializedComposerPastedTextNode {
-    return {
-      ...super.exportJSON(),
-      pastedLabel: this.__pastedLabel,
-      pastedLines: this.__pastedLines,
-      type: "composer-pasted-text",
-      version: 1,
-    };
+    return { ...super.exportJSON(), pastedPart: this.__part, type: "composer-pasted-text", version: 1 };
   }
 
   override createDOM(_config: EditorConfig) {
-    return createPastedTextChipDom(this.__pastedLabel, this.__pastedLines);
+    return createPastedTextChipDom(this.__part.label, this.__part.lines);
   }
 
   override updateDOM(prevNode: ComposerPastedTextNode, dom: HTMLElement) {
-    if (prevNode.__pastedLabel !== this.__pastedLabel || prevNode.__pastedLines !== this.__pastedLines) {
-      updatePastedTextChipDom(dom, this.__pastedLabel, this.__pastedLines);
-    }
+    if (prevNode.__part !== this.__part) updatePastedTextChipDom(dom, this.__part.label, this.__part.lines);
     return false;
   }
 
@@ -497,8 +488,8 @@ class ComposerPastedTextNode extends TextNode {
   }
 }
 
-function $createComposerPastedTextNode(label: string, lines: number) {
-  return $applyNodeReplacement(new ComposerPastedTextNode(label, lines));
+function $createComposerPastedTextNode(part: ComposerPastePart) {
+  return $applyNodeReplacement(new ComposerPastedTextNode(part));
 }
 
 // 文件图标（document 轮廓），用于非图片附件卡片。
@@ -756,7 +747,7 @@ function appendSegmentWithNewlines(
 function setPrompt(
   value: string,
   mentions: Record<string, ComposerMentionKind>,
-  pastedText?: PastedTextToken[],
+  pastedText?: ComposerPastePart[],
   attachments?: ComposerAttachmentToken[],
   officeGroups?: OfficeComposerGroup[],
 ) {
@@ -801,7 +792,7 @@ function setPrompt(
     if (pasteMatch?.[1]) {
       const target = pastedTextByLabel.get(pasteMatch[1]);
       if (target) {
-        paragraph.append($createComposerPastedTextNode(target.label, target.lines));
+        paragraph.append($createComposerPastedTextNode(target));
         continue;
       }
     }
@@ -886,7 +877,7 @@ function SyncPlugin(props: {
   officeGroups?: OfficeComposerGroup[];
   value: string;
   mentions: Record<string, ComposerMentionKind>;
-  pastedText?: PastedTextToken[];
+  pastedText?: ComposerPastePart[];
   attachments?: ComposerAttachmentToken[];
   disabled: boolean;
 }) {
@@ -996,7 +987,7 @@ function ComposerEditingPlugin(props: Pick<EditorProps, "onSubmit" | "disabled" 
   return null;
 }
 
-function PasteChipPlugin({ registerPastedText }: Pick<EditorProps, "registerPastedText">) {
+function PasteChipPlugin({ createPastePart }: Pick<EditorProps, "createPastePart">) {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
@@ -1018,21 +1009,21 @@ function PasteChipPlugin({ registerPastedText }: Pick<EditorProps, "registerPast
         }
         const text = event.clipboardData?.getData("text/plain") ?? "";
         if (!text.trim()) return false;
-        if (registerPastedText && shouldCollapsePastedText(text) &&
+        if (createPastePart && shouldCollapsePastedText(text) &&
           !(selection.anchor.getNode().getTopLevelElement() instanceof ComposerOfficeInstructionNode)) {
           event.preventDefault();
-          const part = registerPastedText(text);
-          const chip = $createComposerPastedTextNode(part.label, part.lines);
+          const part = createPastePart(text);
+          const chip = $createComposerPastedTextNode(part);
           selection.insertNodes([chip]);
           setSelectionAfterNode(chip);
           return true;
         }
         event.preventDefault();
-        return insertStyledPastedText(text);
+        return insertPastedText(text);
       },
       COMMAND_PRIORITY_CRITICAL,
     );
-  }, [editor, registerPastedText]);
+  }, [editor, createPastePart]);
 
   return null;
 }
@@ -1043,29 +1034,15 @@ function pastedExpandButton(target: EventTarget | null) {
   return button instanceof HTMLButtonElement ? button : null;
 }
 
-function replacePastedTextChip(label: string, text: string, button: HTMLButtonElement) {
-  const nearest = $getNearestNodeFromDOMNode(button);
-  if (nearest instanceof ComposerPastedTextNode && nearest.getPastedLabel() === label) {
-    nearest.select(0, nearest.getTextContentSize());
-    return insertStyledPastedText(text);
-  }
-  for (const node of $nodesOfType(ComposerPastedTextNode)) {
-    if (node.getPastedLabel() !== label) continue;
-    node.select(0, node.getTextContentSize());
-    return insertStyledPastedText(text);
-  }
-  return false;
+export function $expandPastedTextChip(chip: LexicalNode | null) {
+  if (!(chip instanceof ComposerPastedTextNode)) return;
+  $addUpdateTag(HISTORY_PUSH_TAG);
+  chip.select(0, chip.getTextContentSize());
+  insertPastedText(chip.getPart().text);
 }
 
-function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpandPastedText?: (label: string) => void }) {
+function PastedTextExpandPlugin() {
   const [editor] = useLexicalComposerContext();
-  const pastedTextRef = useRef(props.pastedText);
-  const onExpandPastedTextRef = useRef(props.onExpandPastedText);
-
-  useEffect(() => {
-    pastedTextRef.current = props.pastedText;
-    onExpandPastedTextRef.current = props.onExpandPastedText;
-  }, [props.onExpandPastedText, props.pastedText]);
 
   useEffect(() => {
     const handleMouseDown = (event: MouseEvent) => {
@@ -1077,17 +1054,9 @@ function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpan
     const handleClick = (event: MouseEvent) => {
       const button = pastedExpandButton(event.target);
       if (!button) return;
-      const label = button.dataset.pastedExpandLabel;
-      if (!label) return;
       event.preventDefault();
       event.stopPropagation();
-      const target = pastedTextRef.current?.find((item) => item.label === label);
-      if (target) {
-        editor.update(() => {
-          replacePastedTextChip(label, target.text, button);
-        });
-      }
-      onExpandPastedTextRef.current?.(label);
+      editor.update(() => $expandPastedTextChip($getNearestNodeFromDOMNode(button)));
     };
 
     return editor.registerRootListener((rootElement, previousRootElement) => {
@@ -1343,6 +1312,8 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
   const promptSuggestion = !props.disabled && draftEmpty && editorEmpty ? props.promptSuggestion : null;
   const valueRef = useRef(props.value);
   const onChangeRef = useRef(props.onChange);
+  const pastePartsChangeRef = useRef(props.onPastePartsChange);
+  pastePartsChangeRef.current = props.onPastePartsChange;
   const onUserEditRef = useRef(props.onUserEdit);
   onUserEditRef.current = props.onUserEdit;
   const officeSessionRef = useRef(props.officeSessionId);
@@ -1392,6 +1363,8 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
             if (typeof window !== "undefined") void window.__JUGGLEWORK_ELECTRON__?.office?.releaseReferences?.({ workspaceId, sessionId, referenceIds }).catch(() => {});
           }
         }
+        // Keep submission data in step with the chips restored by undo/redo.
+        pastePartsChangeRef.current?.($nodesOfType(ComposerPastedTextNode).map((node) => node.getPart()));
         const next = parsed.draft;
         if (next === valueRef.current) return;
         valueRef.current = next;
@@ -1464,8 +1437,8 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
           disabled={props.disabled}
         />
         <ComposerEditingPlugin onSubmit={props.onSubmit} disabled={props.disabled} isComposing={props.isComposing} />
-        <PasteChipPlugin registerPastedText={props.registerPastedText} />
-        <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
+        <PasteChipPlugin createPastePart={props.createPastePart} />
+        <PastedTextExpandPlugin />
         <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />
         <CloudDocClickPlugin sessionId={props.officeSessionId} />
         <MentionChipNavigationPlugin />

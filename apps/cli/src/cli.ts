@@ -240,26 +240,26 @@ async function repl(controller: SessionController, renderer: CliRenderer, option
           renderer.info(`Reasoning effort: ${modelContext.reasoningEffort ?? "runtime default"}`);
           renderer.info(`Source: ${modelContext.source === "cli" ? "CLI selection" : modelContext.source === "organization" ? "organization default" : modelContext.source === "workspace" ? "workspace configuration" : "runtime default"}`);
           break;
-        case "org":
-          await executeCloudCommand({ ...options, command: { group: "org", action: "use", target: rest.length ? rest.join(" ") : null } }, renderer);
-          {
+        case "org": {
+          try {
+            if (ownedRuntime) await controller.api.fenceManagedProviderAuthority();
+            await executeCloudCommand({ ...options, command: { group: "org", action: "use", target: rest.length ? rest.join(" ") : null } }, renderer);
             options.cloudOrg = rest.length ? rest.join(" ") : null;
             if (options.model && isCloudManagedProviderKey(options.model.split("/")[0] ?? "")) {
               options.model = null;
               options.reasoningEffort = null;
             }
-            try {
-              const synced = await synchronizeCloudRuntime({ options, api: controller.api, workspace: controller.workspace, renderer, ownedRuntime });
-              if (synced.autoModel) options.model = synced.autoModel;
-              managedModel = synced.autoModel;
-              modelContext = await resolveModelContext(controller.api, controller.workspace, options, synced.autoModel ? "organization" : "cli");
-              cloudSyncError = null;
-            } catch (error) {
-              cloudSyncError = error instanceof Error ? error.message : String(error);
-              throw error;
-            }
+            const synced = await synchronizeCloudRuntime({ options, api: controller.api, workspace: controller.workspace, renderer, ownedRuntime });
+            if (synced.autoModel) options.model = synced.autoModel;
+            managedModel = synced.autoModel;
+            modelContext = await resolveModelContext(controller.api, controller.workspace, options, synced.autoModel ? "organization" : "cli");
+            cloudSyncError = null;
+          } catch (error) {
+            if (ownedRuntime) cloudSyncError = error instanceof Error ? error.message : String(error);
+            throw error;
           }
           break;
+        }
         case "permissions": {
           const requested = rest[0]?.toLowerCase();
           if (requested && requested !== "request-approval" && requested !== "full-access") {

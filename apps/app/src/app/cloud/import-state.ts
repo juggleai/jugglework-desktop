@@ -228,16 +228,17 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
         organizationId: typeof entry.organizationId === "string"
           ? entry.organizationId.trim() || null
           : null,
+        authorityId: typeof entry.authorityId === "string" ? entry.authorityId : null,
         providerConfigFingerprint: typeof entry.providerConfigFingerprint === "string"
           ? entry.providerConfigFingerprint
           : null,
         gatewayMirror: isRecord(entry.gatewayMirror) &&
-          typeof entry.gatewayMirror.workspaceId === "string" &&
+           (entry.gatewayMirror.workspaceId == null || typeof entry.gatewayMirror.workspaceId === "string") &&
           typeof entry.gatewayMirror.organizationId === "string" &&
           typeof entry.gatewayMirror.cloudProviderId === "string" &&
           typeof entry.gatewayMirror.key === "string"
           ? {
-              workspaceId: entry.gatewayMirror.workspaceId,
+               ...(typeof entry.gatewayMirror.workspaceId === "string" ? { workspaceId: entry.gatewayMirror.workspaceId } : {}),
               organizationId: entry.gatewayMirror.organizationId,
               cloudProviderId: entry.gatewayMirror.cloudProviderId,
               key: entry.gatewayMirror.key,
