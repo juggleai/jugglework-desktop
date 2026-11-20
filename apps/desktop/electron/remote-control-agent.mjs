@@ -90,6 +90,40 @@ const DEFAULT_REVOCATION_VERIFY_MAX_DELAY = 5 * 60_000;
 const REVOCATION_NOT_FOUND_MAX_ATTEMPTS = 3;
 const DEFAULT_POLICY_MAX_AGE_MS = 6 * 60_000;
 const DEFAULT_LOCAL_STOP_ACK_TIMEOUT_MS = 1_500;
+// A control plane that validates `device.hello.capabilities` against its own
+// feature enum closes the socket with policy violation 1008 and this stable
+// reason. The newest session capabilities are additive, so a Desktop talking to
+// an older control plane re-advertises a smaller supported subset instead of
+// failing enrollment forever.
+const CAPABILITY_DOWNGRADE_CLOSE_SUFFIX = "_unsupported_capability_gate";
+// A persisted downgrade is only reused while the control plane, app version,
+// and policy version match. The age bound lets a later app session retry the
+// full advertisement even when the server never republishes its policy.
+const CAPABILITY_PROFILE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+// Ordered from newest to oldest session capability. Each rung drops everything
+// the previous rung dropped plus one generation, so a rejected advertisement
+// converges on a subset the connected control plane accepts. `session.model.set`
+// is listed alongside its feature because an old control plane rejects unknown
+// operation names as well.
+const CAPABILITY_PROFILES = Object.freeze([
+  Object.freeze({ dropFeatures: Object.freeze([]), dropOperations: Object.freeze([]) }),
+  Object.freeze({
+    dropFeatures: Object.freeze(["session.prompt-variant"]),
+    dropOperations: Object.freeze([]),
+  }),
+  Object.freeze({
+    dropFeatures: Object.freeze(["session.prompt-variant", "session.permission-mode"]),
+    dropOperations: Object.freeze(["session.permission-mode.set"]),
+  }),
+  Object.freeze({
+    dropFeatures: Object.freeze(["session.prompt-variant", "session.permission-mode", "session.model-selection"]),
+    dropOperations: Object.freeze(["session.permission-mode.set", "session.model.set"]),
+  }),
+  Object.freeze({
+    dropFeatures: Object.freeze(["session.prompt-variant", "session.permission-mode", "session.model-selection", "session.prompt-model"]),
+    dropOperations: Object.freeze(["session.permission-mode.set", "session.model.set"]),
+  }),
+]);
 const MAX_ACTIVE_RUNS = 100;
 const MAX_CONTROLLER_DISPLAY_NAME_LENGTH = 80;
 const MAX_CONTROLLER_DISPLAY_NAMES = 5;
@@ -152,6 +186,7 @@ const ERROR_MESSAGES = Object.freeze({
  *   settingsStore: RemoteControlSettingsStore,
  *   credentialStore: RemoteControlCredentialStore,
  *   e2eeKeyStore?: { active(): Promise<{ keyId: string, publicKey: string, algorithm: string, createdAt: string }>, advertisement(keyId: string): Promise<{ keyId: string, publicKey: string, algorithm: string, createdAt: string }>, privateKey(keyId: string): Promise<unknown>, revokeAll(): Promise<void> },
+ *   capabilityProfileStore?: { read(): Promise<{ controlPlaneBaseUrl: string, appVersion: string, policyVersion: string, dropFeatures: string[] | readonly string[], dropOperations: string[] | readonly string[], acceptedAt: string } | null>, write(input: unknown): Promise<unknown>, clear(): Promise<void> } | null,
  *   operationRegistry: RemoteControlOperationRegistry,
  *   commandJournal: RemoteControlCommandJournal,
  *   createCloudClient(controlPlaneBaseUrl: string): RemoteControlCloudClient,
@@ -396,6 +431,37 @@ function validCapabilities(value) {
   return desktopRemoteCapabilityAdvertisementSchema.safeParse(value).success;
 }
 
+/** @param {string} code */
+function isCapabilityDowngradeCode(code) {
+  return typeof code === "string" && code.endsWith(CAPABILITY_DOWNGRADE_CLOSE_SUFFIX);
+}
+
+/** @param {readonly string[]} left @param {readonly string[]} right */
+function sameIdentifierSet(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  const values = new Set(right);
+  return left.every((entry) => values.has(entry));
+}
+
+/**
+ * Remove the announced subset a rejected handshake taught us this control
+ * plane cannot accept. Filtering is monotonic, so the result always stays a
+ * schema-valid advertisement.
+ * @param {RemoteControlCapabilities} capabilities
+ * @param {{ dropFeatures: readonly string[], dropOperations: readonly string[] }} profile
+ * @returns {RemoteControlCapabilities}
+ */
+function applyCapabilityProfile(capabilities, profile) {
+  if (profile.dropFeatures.length === 0 && profile.dropOperations.length === 0) return capabilities;
+  const dropFeatures = new Set(profile.dropFeatures);
+  const dropOperations = new Set(profile.dropOperations);
+  return {
+    schemaVersion: capabilities.schemaVersion,
+    operations: capabilities.operations.filter((entry) => !dropOperations.has(entry.operation)),
+    features: capabilities.features.filter((entry) => !dropFeatures.has(entry)),
+  };
+}
+
 /** @param {unknown} value */
 function validError(value) {
   if (!isRecord(value)) return false;
@@ -595,6 +661,7 @@ export function createRemoteControlAgent(options) {
     settingsStore,
     credentialStore,
     e2eeKeyStore = null,
+    capabilityProfileStore = null,
     operationRegistry,
     commandJournal,
     createCloudClient,
@@ -624,6 +691,7 @@ export function createRemoteControlAgent(options) {
   if (!settingsStore || typeof settingsStore.read !== "function" || typeof settingsStore.disable !== "function" || !credentialStore ||
     typeof credentialStore.inspect !== "function" || typeof credentialStore.read !== "function" || typeof credentialStore.delete !== "function" ||
     !(e2eeKeyStore === null || (typeof e2eeKeyStore.active === "function" && typeof e2eeKeyStore.advertisement === "function" && typeof e2eeKeyStore.privateKey === "function" && typeof e2eeKeyStore.revokeAll === "function")) ||
+    !(capabilityProfileStore === null || (typeof capabilityProfileStore.read === "function" && typeof capabilityProfileStore.write === "function" && typeof capabilityProfileStore.clear === "function")) ||
     !operationRegistry || typeof operationRegistry.advertise !== "function" || typeof operationRegistry.dispatch !== "function" ||
     !commandJournal || typeof commandJournal.prepare !== "function" || typeof commandJournal.complete !== "function" ||
     typeof createCloudClient !== "function" || typeof createWebSocket !== "function" || typeof getDisplayName !== "function" ||
@@ -672,6 +740,11 @@ export function createRemoteControlAgent(options) {
   let cachedAgentToken = null;
   /** @type {RemoteControlCapabilities} */
   let advertisedCapabilities = { schemaVersion: 1, operations: [], features: [] };
+  // Index into CAPABILITY_PROFILES. 0 advertises everything this build knows.
+  let capabilityProfileIndex = 0;
+  let capabilityProfileResolved = false;
+  let capabilityDowngradeAttempts = 0;
+  let persistedCapabilityProfileIndex = -1;
   let lifecycleGeneration = 1;
   let provisionalGeneration = 0;
   let connectionGeneration = null;
@@ -736,6 +809,16 @@ export function createRemoteControlAgent(options) {
   function rejectWelcomeWaiters(code, matches = () => true) {
     for (const waiter of [...welcomeWaiters]) {
       if (matches(waiter)) waiter.reject(welcomeWaitError(code, "Remote-control connection did not receive a welcome."));
+    }
+  }
+
+  /** @param {RemoteControlSocket} target @param {number} generation */
+  function rebindWelcomeWaiters(target, generation) {
+    for (const waiter of welcomeWaiters) {
+      // A capability downgrade replaces the socket without invalidating the
+      // wait: the replacement continues the exact same logical connection.
+      waiter.target = target;
+      waiter.generation = generation;
     }
   }
 
@@ -1042,6 +1125,7 @@ export function createRemoteControlAgent(options) {
       transportFailed(target, "capability_advertisement_failed");
       return;
     }
+    capabilities = applyCapabilityProfile(capabilities, await resolveCapabilityProfile());
     if (target !== socket || generation !== lifecycleGeneration || !validCapabilities(capabilities)) return;
     advertisedCapabilities = capabilities;
     send(target, "device.heartbeat", {
@@ -1110,6 +1194,91 @@ export function createRemoteControlAgent(options) {
     reconnectAttempt += 1;
     const entropy = Number.parseInt(messageId().slice(-8), 16) / 0xffffffff;
     return Math.max(250, Math.min(RECONNECT_MAX_DELAY, Math.round(base * (0.8 + entropy * 0.4))));
+  }
+
+  function resetCapabilityProfile() {
+    capabilityProfileIndex = 0;
+    capabilityProfileResolved = false;
+    capabilityDowngradeAttempts = 0;
+    persistedCapabilityProfileIndex = -1;
+  }
+
+  /**
+   * Resolve the advertisement subset once per identity: prefer the subset this
+   * control plane last accepted for the same app and policy version, otherwise
+   * start from the full advertisement. Read failures degrade to full.
+   * @returns {Promise<Readonly<{ dropFeatures: readonly string[], dropOperations: readonly string[] }>>}
+   */
+  async function resolveCapabilityProfile() {
+    if (capabilityProfileResolved) return CAPABILITY_PROFILES[capabilityProfileIndex];
+    capabilityProfileResolved = true;
+    const activeContext = context;
+    if (capabilityProfileStore === null || activeContext === null) return CAPABILITY_PROFILES[0];
+    let stored = null;
+    try { stored = await capabilityProfileStore.read(); } catch { stored = null; }
+    if (!stored ||
+        stored.controlPlaneBaseUrl !== activeContext.controlPlaneBaseUrl ||
+        stored.appVersion !== appVersion ||
+        stored.policyVersion !== activeContext.policyVersion) {
+      return CAPABILITY_PROFILES[0];
+    }
+    const acceptedAt = Date.parse(stored.acceptedAt);
+    const nowMs = timestamp().getTime();
+    if (!Number.isFinite(acceptedAt) || acceptedAt > nowMs || nowMs - acceptedAt > CAPABILITY_PROFILE_MAX_AGE_MS) {
+      return CAPABILITY_PROFILES[0];
+    }
+    const index = CAPABILITY_PROFILES.findIndex((profile) =>
+      sameIdentifierSet(profile.dropFeatures, stored.dropFeatures) &&
+      sameIdentifierSet(profile.dropOperations, stored.dropOperations));
+    if (index <= 0) return CAPABILITY_PROFILES[0];
+    capabilityProfileIndex = index;
+    // The subset is already durable; do not rewrite the identical record.
+    persistedCapabilityProfileIndex = index;
+    return CAPABILITY_PROFILES[index];
+  }
+
+  /**
+   * Advance one rung after a control plane rejects the advertisement. Returns
+   * false once the ladder is exhausted so the caller keeps the fail-closed path.
+   * @param {string} code
+   */
+  function escalateCapabilityDowngrade(code) {
+    if (!isCapabilityDowngradeCode(code)) return false;
+    const next = capabilityProfileIndex + 1;
+    if (capabilityDowngradeAttempts >= CAPABILITY_PROFILES.length - 1 || next >= CAPABILITY_PROFILES.length) return false;
+    capabilityDowngradeAttempts += 1;
+    capabilityProfileIndex = next;
+    const profile = CAPABILITY_PROFILES[next];
+    log("warn", "capability_profile_downgraded", {
+      profileIndex: next,
+      dropFeatures: [...profile.dropFeatures],
+      dropOperations: [...profile.dropOperations],
+    });
+    return true;
+  }
+
+  /** Persist the accepted subset so reconnects skip the rejected handshake. */
+  function persistCapabilityProfile() {
+    if (capabilityProfileStore === null || context === null || capabilityProfileIndex === persistedCapabilityProfileIndex) return;
+    persistedCapabilityProfileIndex = capabilityProfileIndex;
+    const profile = CAPABILITY_PROFILES[capabilityProfileIndex];
+    try {
+      if (capabilityProfileIndex === 0) {
+        void capabilityProfileStore.clear().catch(() => undefined);
+      } else {
+        void capabilityProfileStore.write({
+          schemaVersion: 1,
+          controlPlaneBaseUrl: context.controlPlaneBaseUrl,
+          appVersion,
+          policyVersion: context.policyVersion,
+          dropFeatures: [...profile.dropFeatures],
+          dropOperations: [...profile.dropOperations],
+          acceptedAt: timestamp().toISOString(),
+        }).catch(() => undefined);
+      }
+    } catch {
+      // Persistence is an optimization; the in-memory subset still applies.
+    }
   }
 
   function revocationVerifyDelay() {
@@ -1277,9 +1446,15 @@ export function createRemoteControlAgent(options) {
     // A socket that never reached welcome may have rejected the bearer token.
     // Do not retry that token indefinitely; connected transport failures keep
     // the cache so ordinary network reconnects avoid a new PoP exchange.
-    if (state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED || connectionGeneration === null) {
+    const preWelcome = state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED || connectionGeneration === null;
+    let downgraded = false;
+    if (preWelcome) {
       clearCachedAgentToken();
-      rejectWelcomeWaiters(code, (waiter) => waiter.target === target);
+      // A control plane that rejects the capability advertisement is not
+      // asking for a new identity: keep the enrolled credential, the waiting
+      // welcome caller, and retry with the next smaller supported subset.
+      downgraded = escalateCapabilityDowngrade(code);
+      if (!downgraded) rejectWelcomeWaiters(code, (waiter) => waiter.target === target);
     }
     notifyTransportReset();
     lastErrorCode = code;
@@ -1290,6 +1465,16 @@ export function createRemoteControlAgent(options) {
     connectionGeneration = null;
     terminateSocket(target);
     if (pendingLocalStop?.target === target) finishLocalStop();
+    if (downgraded) {
+      // Reconnect immediately instead of burning the backoff schedule: the
+      // failure is deterministic and the next rung is already selected.
+      clearTimer("reconnect");
+      const generation = lifecycleGeneration;
+      void Promise.resolve()
+        .then(() => (generation === lifecycleGeneration ? connectNow(false) : undefined))
+        .catch(() => undefined);
+      return;
+    }
     scheduleReconnect(lifecycleGeneration);
     log("warn", code);
   }
@@ -1441,6 +1626,8 @@ export function createRemoteControlAgent(options) {
       target.__remoteHeartbeatSeconds = payload.heartbeatSeconds;
       target.__remoteSilenceSeconds = Math.min(payload.staleSeconds, payload.offlineSeconds);
       reconnectAttempt = 0;
+      capabilityDowngradeAttempts = 0;
+      persistCapabilityProfile();
       lastErrorCode = null;
       state = REMOTE_CONTROL_AGENT_STATUS.CONNECTED;
       scheduleHeartbeat(payload.heartbeatSeconds, target, generation);
@@ -1781,6 +1968,7 @@ export function createRemoteControlAgent(options) {
       if (target !== socket || generation !== lifecycleGeneration || !contextAllowsConnection()) return;
       let capabilities;
       try { capabilities = await operationRegistry.advertise(context); } catch { transportFailed(target, "capability_advertisement_failed"); return; }
+      capabilities = applyCapabilityProfile(capabilities, await resolveCapabilityProfile());
       if (target !== socket || generation !== lifecycleGeneration || !validCapabilities(capabilities)) {
         transportFailed(target, "invalid_capability_advertisement");
         return;
@@ -1932,6 +2120,7 @@ export function createRemoteControlAgent(options) {
     if (prior) notifyTransportReset();
     socket = nextSocket;
     connectionGeneration = null;
+    rebindWelcomeWaiters(nextSocket, generation);
     bindSocket(nextSocket, generation, token.expiresAt);
     closeSocket(prior);
   }
@@ -1995,6 +2184,7 @@ export function createRemoteControlAgent(options) {
     if (started) return status();
     started = true;
     protocolBlocked = false;
+    resetCapabilityProfile();
     state = REMOTE_CONTROL_AGENT_STATUS.WAITING_FOR_CONTEXT;
     await refreshLocalSettings();
     if (settings.enabled) {
@@ -2036,6 +2226,7 @@ export function createRemoteControlAgent(options) {
       revocationVerifyAttempt = 0;
       protocolBlocked = false;
       lastErrorCode = null;
+      resetCapabilityProfile();
     } else if (contextChanged && (state === REMOTE_CONTROL_AGENT_STATUS.CONNECTING || state === REMOTE_CONTROL_AGENT_STATUS.AWAITING_WELCOME)) {
       rejectWelcomeWaiters("welcome_context_changed");
       invalidateTransport();

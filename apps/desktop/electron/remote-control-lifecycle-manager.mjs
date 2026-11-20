@@ -9,7 +9,9 @@ const ERROR_MESSAGES = Object.freeze({
   startup_failed: "The new device was saved, but its connection could not be started. Try again.",
   cancelled: "Device identity replacement was cancelled because remote control was disabled.",
 });
-const STARTUP_WELCOME_TIMEOUT_MS = 15_000;
+// A capability-rejected handshake now reconnects with a smaller advertisement
+// before this deadline expires, so allow a few immediate ladder attempts.
+const STARTUP_WELCOME_TIMEOUT_MS = 30_000;
 // Only fixed, content-free codes may cross the renderer boundary. Never expose
 // exception messages, native keychain details, URLs, grants or filesystem paths.
 const ENROLLMENT_FAILURE_CODES = new Set([

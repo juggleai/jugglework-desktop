@@ -54,6 +54,36 @@ const readCapabilities = Object.freeze({
   operations: [{ operation: "workspace.list", payloadVersions: [1] }],
   features: [],
 });
+const fullCapabilities = Object.freeze({
+  schemaVersion: 1,
+  operations: [
+    { operation: "workspace.list", payloadVersions: [1] },
+    { operation: "session.prompt", payloadVersions: [1] },
+    { operation: "session.model.set", payloadVersions: [1] },
+    { operation: "session.permission-mode.set", payloadVersions: [1] },
+  ],
+  features: [
+    "live-activity-v3",
+    "session.prompt-model",
+    "session.prompt-variant",
+    "session.model-selection",
+    "session.permission-mode",
+  ],
+});
+
+/** In-memory stand-in for the persisted capability subset. @param {Record<string, any> | null} [initial] */
+function fakeCapabilityProfileStore(initial = null) {
+  const store = {
+    reads: 0,
+    writes: /** @type {any[]} */ ([]),
+    clears: 0,
+    value: initial ? { ...initial } : null,
+    read: async () => { store.reads += 1; return store.value ? { ...store.value } : null; },
+    write: async (input) => { store.writes.push({ ...input }); store.value = { ...input }; return { ...input }; },
+    clear: async () => { store.clears += 1; store.value = null; },
+  };
+  return store;
+}
 
 /** @typedef {{ schemaVersion: number, signedIn: boolean, controlPlaneBaseUrl: string | null, userId: string | null, organizationId: string | null, policyFresh: boolean, featureGates: Record<string, boolean | number>, policyVersion: string | null, validatedAt: string | null }} TestContext */
 /** @typedef {{ schemaVersion: number, state: string, context: { controlPlaneBaseUrl: string, userId: string, organizationId: string }, deviceId: string }} TestCredential */
@@ -234,7 +264,7 @@ function successLifecycle() {
   };
 }
 
-/** @param {{ enrolled?: boolean, enabled?: boolean, initialCredential?: any, credentialReadError?: Error | null, credentialDeleteError?: Error | null, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, enrollDevice?: (input: unknown) => Promise<any>, issueAgentToken?: (call: number) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, oldOperationDrainTimeoutMs?: number, revocationVerifyMaxDelayMs?: number, getActiveRuns?: () => unknown, verifySessionBinding?: (binding: unknown, options?: { signal?: AbortSignal }) => boolean | Promise<boolean>, onSessionBinding?: (binding: unknown) => boolean | void | Promise<boolean | void>, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void, onPolicyExpired?: () => void, onAuthorizationChanged?: (authorized: boolean) => void, issueTokenError?: Error }} [input] */
+/** @param {{ enrolled?: boolean, enabled?: boolean, initialCredential?: any, credentialReadError?: Error | null, credentialDeleteError?: Error | null, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, enrollDevice?: (input: unknown) => Promise<any>, issueAgentToken?: (call: number) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, oldOperationDrainTimeoutMs?: number, revocationVerifyMaxDelayMs?: number, getActiveRuns?: () => unknown, verifySessionBinding?: (binding: unknown, options?: { signal?: AbortSignal }) => boolean | Promise<boolean>, onSessionBinding?: (binding: unknown) => boolean | void | Promise<boolean | void>, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void, onPolicyExpired?: () => void, onAuthorizationChanged?: (authorized: boolean) => void, issueTokenError?: Error, capabilityProfileStore?: any }} [input] */
 function harness({
   enrolled = true,
   enabled = true,
@@ -242,6 +272,7 @@ function harness({
   credentialReadError = null,
   credentialDeleteError = null,
   capabilities = readCapabilities,
+  capabilityProfileStore = null,
   operationRegistry: operationRegistryOverride = null,
   e2eeKeyStore = null,
   signingCredential = {},
@@ -347,6 +378,7 @@ function harness({
       },
     },
     credentialStore,
+    capabilityProfileStore,
     e2eeKeyStore: e2eeKeyStore ?? {
       active: async () => { e2eeActiveCalls += 1; return {}; },
       advertisement: async () => ({}),
@@ -788,8 +820,126 @@ describe("remote-control agent context and lifecycle", () => {
     });
   });
 
-  it("times out a welcome wait without retaining listeners", async () => {
-    const fixture = harness();
+  it("downgrades a rejected capability advertisement without replacing the enrolled identity", async () => {
+    const profileStore = fakeCapabilityProfileStore();
+    const fixture = harness({ capabilities: fullCapabilities, capabilityProfileStore: profileStore });
+    const first = await connect(fixture);
+    assert.equal(frames(first, "device.hello")[0].payload.capabilities.features.includes("session.prompt-variant"), true);
+
+    const waiting = fixture.agent.waitForWelcome({ timeoutMs: 5_000 });
+    first.unexpectedClose(1008, Buffer.from("unsupported_capability_gate"));
+    await settle();
+    await settle();
+    assert.equal(fixture.sockets.length, 2);
+    assert.equal(fixture.enrollmentCalls, 0);
+    assert.equal(fixture.deleteCalls, 0);
+    assert.equal(fixture.agent.status().lastErrorCode, "transport_closed_1008_unsupported_capability_gate");
+
+    const second = fixture.sockets[1];
+    second.open();
+    await settle();
+    const hello = frames(second, "device.hello")[0].payload;
+    assert.equal(hello.capabilities.features.includes("session.prompt-variant"), false);
+    assert.equal(hello.capabilities.features.includes("session.permission-mode"), true);
+    second.receive(welcome(51));
+    const connected = await waiting;
+    assert.equal(connected.state, REMOTE_CONTROL_AGENT_STATUS.CONNECTED);
+    assert.equal(connected.connectionGeneration, 51);
+    assert.equal(profileStore.writes.length, 1);
+    assert.deepEqual(profileStore.writes[0].dropFeatures, ["session.prompt-variant"]);
+    assert.deepEqual(profileStore.writes[0].dropOperations, []);
+    assert.equal(profileStore.writes[0].controlPlaneBaseUrl, URL);
+    assert.equal(profileStore.writes[0].appVersion, "1.2.3-beta.1");
+    assert.equal(profileStore.writes[0].policyVersion, "policy-1");
+  });
+
+  it("applies a previously accepted capability subset on the first hello", async () => {
+    const profileStore = fakeCapabilityProfileStore({
+      schemaVersion: 1,
+      controlPlaneBaseUrl: URL,
+      appVersion: "1.2.3-beta.1",
+      policyVersion: "policy-1",
+      dropFeatures: ["session.prompt-variant", "session.permission-mode"],
+      dropOperations: ["session.permission-mode.set"],
+      acceptedAt: new Date(NOW).toISOString(),
+    });
+    const fixture = harness({ capabilities: fullCapabilities, capabilityProfileStore: profileStore });
+    const socket = await connect(fixture);
+    const hello = frames(socket, "device.hello")[0].payload;
+    assert.equal(hello.capabilities.features.includes("session.prompt-variant"), false);
+    assert.equal(hello.capabilities.features.includes("session.permission-mode"), false);
+    assert.equal(hello.capabilities.features.includes("session.model-selection"), true);
+    assert.equal(hello.capabilities.operations.some((entry) => entry.operation === "session.permission-mode.set"), false);
+    socket.receive(welcome(52));
+    await settle();
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.CONNECTED);
+    assert.equal(profileStore.writes.length, 0);
+    assert.equal(profileStore.clears, 0);
+  });
+
+  it("ignores a stale capability subset for another control plane or app version", async () => {
+    for (const override of [
+      { controlPlaneBaseUrl: "https://other.example.test/jwork/api" },
+      { appVersion: "1.2.2" },
+      { policyVersion: "policy-2" },
+      { acceptedAt: "2026-08-01T00:00:00.000Z" },
+    ]) {
+      const profileStore = fakeCapabilityProfileStore({
+        schemaVersion: 1,
+        controlPlaneBaseUrl: URL,
+        appVersion: "1.2.3-beta.1",
+        policyVersion: "policy-1",
+        dropFeatures: ["session.prompt-variant"],
+        dropOperations: [],
+        acceptedAt: new Date(NOW).toISOString(),
+        ...override,
+      });
+      const fixture = harness({ capabilities: fullCapabilities, capabilityProfileStore: profileStore });
+      const socket = await connect(fixture);
+      assert.equal(frames(socket, "device.hello")[0].payload.capabilities.features.includes("session.prompt-variant"), true);
+    }
+  });
+
+  it("fails closed and rejects the welcome wait when every capability subset is rejected", async () => {
+    const profileStore = fakeCapabilityProfileStore();
+    const fixture = harness({ capabilities: fullCapabilities, capabilityProfileStore: profileStore });
+    const first = await connect(fixture);
+    const waiting = fixture.agent.waitForWelcome({ timeoutMs: 5_000 });
+
+    let current = first;
+    for (let rung = 0; rung < 5; rung += 1) {
+      current.unexpectedClose(1008, Buffer.from("unsupported_capability_gate"));
+      await settle();
+      await settle();
+      const next = fixture.sockets[fixture.sockets.length - 1];
+      if (next === current) break;
+      next.open();
+      await settle();
+      current = next;
+    }
+
+    await assert.rejects(waiting, (error) => {
+      assert.equal(/** @type {any} */ (error).code, "transport_closed_1008_unsupported_capability_gate");
+      return true;
+    });
+    assert.equal(fixture.sockets.length, 5);
+    assert.equal(fixture.enrollmentCalls, 0);
+    assert.equal(fixture.deleteCalls, 0);
+    assert.equal(profileStore.writes.length, 0);
+  });
+
+  it("does not reconnect a downgraded transport after local stop", async () => {
+    const fixture = harness({ capabilities: fullCapabilities, capabilityProfileStore: fakeCapabilityProfileStore() });
+    const socket = await connect(fixture);
+    socket.unexpectedClose(1008, Buffer.from("unsupported_capability_gate"));
+    await fixture.agent.stopAll();
+    await settle();
+    await settle();
+    assert.equal(fixture.sockets.length, 1);
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.DISABLED);
+  });
+
+  it("times out a welcome wait without retaining listeners", async () => {    const fixture = harness();
     const socket = await connect(fixture);
     const messageListeners = socket.listenerCount("message");
     const waiting = fixture.agent.waitForWelcome({ timeoutMs: 1_000 });

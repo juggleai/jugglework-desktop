@@ -76,6 +76,7 @@ import { installCloseToHide, windowAllClosedAction } from "./window-close-behavi
 import { createRemoteControlSettingsStore } from "./remote-control-settings.mjs";
 import { createOfficeResources } from "./office-resources.mjs";
 import { createRemoteControlCredentialStore } from "./remote-control-credentials.mjs";
+import { createRemoteControlCapabilityProfileStore } from "./remote-control-capability-profile.mjs";
 import { createRemoteControlCloudClient } from "./remote-control-cloud-client.mjs";
 import { createRemoteControlOperationRegistry } from "./remote-control-operations.mjs";
 import { createManagedRuntimeClient } from "./managed-runtime-client.mjs";
@@ -1067,6 +1068,7 @@ const workspaceStore = createWorkspaceStore({
   forceRequireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN,
 });
 const remoteControlSettingsStore = createRemoteControlSettingsStore({ app });
+const remoteControlCapabilityProfileStore = createRemoteControlCapabilityProfileStore({ app });
 const remoteControlCommandJournal = createRemoteControlCommandJournal({ app });
 const remoteControlNotificationController = createRemoteControlNotificationController({
   notify: ({ title, body }) => showDesktopNotification({ title, body }),
@@ -1213,6 +1215,7 @@ function createMainRemoteControlAgent() {
     settingsStore: remoteControlSettingsStore,
     credentialStore,
     e2eeKeyStore,
+    capabilityProfileStore: remoteControlCapabilityProfileStore,
     operationRegistry,
     commandJournal: remoteControlCommandJournal,
     createCloudClient: (controlPlaneBaseUrl) => /** @type {any} */ (createRemoteControlCloudClient({
