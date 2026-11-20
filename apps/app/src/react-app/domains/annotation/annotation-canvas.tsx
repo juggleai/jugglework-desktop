@@ -6,6 +6,9 @@ import Konva from "konva";
 import { useEffect, useRef, useState } from "react";
 import { Arrow, Ellipse, Layer, Line, Rect, Stage } from "react-konva";
 import {
+  annotationArrowHeadSize, annotationInkStyle, annotationLaserStyle, annotationStrokePoints, type WindowAnnotationScene,
+} from "../meeting/window-annotation-events";
+import {
   commitAnnotation, createAnnotationHistory, createDrawElement, eraseElements, isMeaningful, laserOpacity, toNormalized, undoAnnotation,
   updateDrawElement,
   type AnnotationElement, type AnnotationHistory, type AnnotationHistoryState, type AnnotationState, type AnnotationStroke, type NormalizedPoint,
@@ -19,7 +22,6 @@ export type AnnotationCanvasBridge = {
 };
 
 type Laser = { stroke: AnnotationStroke; releasedAt: number | null };
-const LASER_COLOR = "#ff3b30";
 
 function useViewport() {
   const [size, setSize] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -31,7 +33,7 @@ function useViewport() {
   return size;
 }
 
-export function AnnotationCanvas({ state, bridge }: { state: AnnotationState; bridge: AnnotationCanvasBridge }) {
+export function AnnotationCanvas({ state, bridge, onScene }: { state: AnnotationState; bridge: AnnotationCanvasBridge; onScene?: (value: WindowAnnotationScene) => void }) {
   const size = useViewport();
   const [history, setHistory] = useState<AnnotationHistory>(createAnnotationHistory);
   const [draft, setDraft] = useState<AnnotationElement | null>(null);
@@ -139,6 +141,12 @@ export function AnnotationCanvas({ state, bridge }: { state: AnnotationState; br
 
   const hidden = erasing.current;
   const visible = history.present.filter((element) => !hidden?.has(element.id));
+  useEffect(() => {
+    if (!onScene) return;
+    const frame = requestAnimationFrame(() => onScene({ size, elements: draft ? [...visible, draft] : visible,
+      lasers: lasers.map(({ stroke, releasedAt }) => ({ stroke, opacity: laserOpacity(releasedAt, now) })) }));
+    return () => cancelAnimationFrame(frame);
+  });
   const cursor = state.mode !== "draw" ? "default" : tool === "eraser" ? "cell" : "crosshair";
   // Konva renders at devicePixelRatio by default, so strokes stay sharp on Retina captures.
   return (
@@ -151,9 +159,8 @@ export function AnnotationCanvas({ state, bridge }: { state: AnnotationState; br
         </Layer>
         <Layer listening={false}>
           {lasers.map(({ stroke, releasedAt }) => (
-            <Line key={stroke.id} points={stroke.points.map((value, i) => value * (i % 2 ? size.height : size.width))}
-              stroke={LASER_COLOR} strokeWidth={Math.max(3, stroke.size)} lineCap="round" lineJoin="round" tension={0.4}
-              shadowColor={LASER_COLOR} shadowBlur={14} shadowOpacity={0.9} opacity={laserOpacity(releasedAt, now)} />
+            <Line key={stroke.id} points={annotationStrokePoints(stroke, size)} lineCap="round" lineJoin="round"
+              {...annotationLaserStyle(stroke, laserOpacity(releasedAt, now))} />
           ))}
         </Layer>
       </Stage>
@@ -164,15 +171,14 @@ export function AnnotationCanvas({ state, bridge }: { state: AnnotationState; br
 function AnnotationNode({ element, size }: { element: AnnotationElement; size: { width: number; height: number } }) {
   const common = { "data-annotation-id": element.id, stroke: element.color, lineCap: "round" as const, lineJoin: "round" as const };
   if (element.type === "stroke") {
-    return <Line {...common} points={element.points.map((value, i) => value * (i % 2 ? size.height : size.width))}
-      strokeWidth={element.highlight ? element.size * 4 : element.size} tension={0.35}
-      opacity={element.highlight ? 0.35 : 1} globalCompositeOperation={element.highlight ? "multiply" : "source-over"}
-      hitStrokeWidth={Math.max(18, element.size * (element.highlight ? 4 : 1) + 8)} />;
+    const style = annotationInkStyle(element);
+    return <Line {...common} {...style} points={annotationStrokePoints(element, size)}
+      hitStrokeWidth={Math.max(18, style.strokeWidth + 8)} />;
   }
   const x1 = element.x1 * size.width, y1 = element.y1 * size.height, x2 = element.x2 * size.width, y2 = element.y2 * size.height;
   const strokeWidth = element.size, hit = Math.max(18, element.size + 8);
   if (element.kind === "arrow") {
-    const head = Math.max(12, element.size * 3.5);
+    const head = annotationArrowHeadSize(strokeWidth);
     return <Arrow {...common} points={[x1, y1, x2, y2]} strokeWidth={strokeWidth} fill={element.color} pointerLength={head} pointerWidth={head} hitStrokeWidth={hit} />;
   }
   if (element.kind === "rectangle")

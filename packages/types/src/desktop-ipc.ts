@@ -624,6 +624,14 @@ export type ToonFactoryProjectOpenResult = ToonFactoryProjectState & {
 // The command map
 // ---------------------------------------------------------------------------
 
+export type MeetingWindowShareTarget = {
+  kind: "window";
+  captureId: string;
+  sourceId: string;
+  windowId: number;
+  pid: number;
+};
+
 export type MeetingScreenSource = {
   id: string;
   kind: "screen" | "window";
@@ -647,6 +655,8 @@ export type DesktopCommandMap = {
   meetingWhiteboardSave: { args: [input: { meetingId: string; whiteboardId: string; content: string }]; result: void };
   meetingWhiteboardExport: { args: [input: { title?: string; kind: "png" | "excalidraw"; data: string }]; result: { saved: boolean } };
   meetingAnnotationState: { args: []; result: { available: boolean; active: boolean } };
+  meetingWindowShareTarget: { args: []; result: MeetingWindowShareTarget | null };
+  meetingWindowShareReady: { args: [input: { captureId: string; ready: boolean }]; result: void };
   meetingAnnotationOpen: { args: []; result: void };
   meetingAnnotationClose: { args: [input?: { shareStopped?: boolean }]; result: void };
   toonFactoryOpen: { args: [workspaceId: string]; result: ToonFactoryStatus };

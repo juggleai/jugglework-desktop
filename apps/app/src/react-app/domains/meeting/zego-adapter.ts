@@ -1,6 +1,10 @@
 import { meetingDiagnostic, meetingDiagnosticError, meetingDiagnosticStep, meetingNumericMetrics, meetingTrackSnapshot } from "./diagnostics";
 import { ensureMeetingMediaPermissions, handleScreenCaptureDenied, meetingDeviceError } from "./media-permission";
 import type { MeetingJoin } from "./types";
+import type { WindowShareCompositor } from "./window-share-compositor";
+
+type WindowComposition = { captureId: string; compositor: WindowShareCompositor };
+const WINDOW_PUBLICATION_TIMEOUT_MS = 15_000;
 // The vendored Web SDK is loaded once, without initializing JuggleCall.
 let loaded: Promise<void> | null = null;
 async function loadZego() {
@@ -37,6 +41,8 @@ export class MeetingMedia {
   private local?: MediaStream;
   private share?: MediaStream;
   private shareCapture?: MediaStream;
+  private windowComposition?: WindowComposition;
+  private cancelWindowPublication?: () => void;
   private shareStarting = false;
   private shareGeneration = 0;
   // Keep SDK-created source previews alive while their tracks are published.
@@ -249,7 +255,7 @@ export class MeetingMedia {
     if (this.joinInfo && !this.disposed)
       this.engine.renewToken(token, this.joinInfo.roomId);
   }
-  async startShare(devices: MediaDevices = navigator.mediaDevices) {
+  async startShare(devices: MediaDevices = navigator.mediaDevices, prepareWindow?: (capture: MediaStream) => Promise<WindowComposition | undefined>) {
     if (this.share || this.shareStarting || this.disposed || !this.engine) return;
     const run = ++this.shareGeneration;
     this.shareStarting = true;
@@ -277,7 +283,19 @@ export class MeetingMedia {
         capture.getTracks().forEach(track => track.stop());
         return;
       }
-      await this.publishShare(capture, run, "屏幕画面已采集");
+      let composition: WindowComposition | undefined;
+      // Keep the original capture independently owned, including while preparation is pending.
+      this.shareCapture = capture;
+      if (prepareWindow && capture.getVideoTracks()[0]?.getSettings().displaySurface === "window") {
+        try { composition = await prepareWindow(capture); }
+        catch (error) { meetingDiagnostic("rtc.share.composition.unavailable", meetingDiagnosticError(error)); }
+      }
+      if (this.disposed || run !== this.shareGeneration) {
+        composition?.compositor.dispose();
+        return;
+      }
+      this.windowComposition = composition;
+      await this.publishShare(capture, run, "屏幕画面已采集", composition);
     } finally {
       if (run === this.shareGeneration) this.shareStarting = false;
     }
@@ -296,37 +314,98 @@ export class MeetingMedia {
       if (run === this.shareGeneration) this.shareStarting = false;
     }
   }
-  private async publishShare(capture: MediaStream, run: number, capturedLabel: string) {
+  getWindowShareCompositor(captureId: string) {
+    return this.share && !this.cancelWindowPublication && this.windowComposition?.captureId === captureId ? this.windowComposition.compositor : undefined;
+  }
+  clearWindowShareOverlay(captureId: string) {
+    const compositor = this.getWindowShareCompositor(captureId);
+    if (!compositor) return false;
+    compositor.setOverlay(null);
+    return true;
+  }
+  private startWindowPublication(id: string, stream: MediaStream, run: number) {
+    return new Promise<boolean>((resolve, reject) => {
+      // ZEGO 3.12 queues callbacks for the listeners present when emitting. An
+      // attempt-scoped listener rejects queued callbacks from previous attempts.
+      // If ZEGO emits an old event *after* the same ID is reused, its payload
+      // has no attempt ID with which to distinguish it from the current share.
+      const onState = (event: { streamID: string; state: string; errorCode: number }) => {
+        if (this.disposed || run !== this.shareGeneration || event?.streamID !== id) return;
+        if (event.state === "PUBLISHING") resolve(true);
+        else if (event.state === "NO_PUBLISH") reject({ errorCode: event.errorCode || undefined });
+      };
+      const timer = setTimeout(() => reject({ timedOut: true }), WINDOW_PUBLICATION_TIMEOUT_MS);
+      this.cancelWindowPublication = () => {
+        this.cancelWindowPublication = undefined;
+        clearTimeout(timer);
+        this.engine.off("publisherStateUpdate", onState);
+        resolve(false);
+      };
+      this.engine.on("publisherStateUpdate", onState);
+      if (this.engine.startPublishingStream(id, stream) === false) throw new Error("共享发布失败");
+      // Own the accepted stream so stopShare can release it before confirmation.
+      this.share = stream;
+    });
+  }
+  private async publishShare(capture: MediaStream, run: number, capturedLabel: string, composition?: WindowComposition) {
     this.shareCapture = capture;
     let stream: MediaStream | undefined;
+    let confirmation: Promise<boolean> | undefined;
     try {
       // ZEGO 3.12 rejects raw getDisplayMedia streams (1103044). Wrap the
       // child-window tracks in this renderer's realm, then register a custom
       // preview with the SDK before publishing. This does not recapture media.
-      const source = new MediaStream(capture.getVideoTracks());
+      const output = composition?.compositor.stream ?? capture;
+      const source = new MediaStream(output.getVideoTracks());
       stream = await meetingDiagnosticStep("rtc.share.register", {}, () => this.engine.createStream({
         custom: { source, videoOptimizationMode: "detail" },
       }) as Promise<MediaStream>);
       if (this.disposed || run !== this.shareGeneration || !capture.getVideoTracks().some(t => t.readyState === "live")) {
-        if (this.shareCapture === capture) this.shareCapture = undefined;
+        this.clearShareCapture(capture, composition);
         this.releaseShare(stream, capture);
         return;
       }
-      if (this.engine.startPublishingStream(this.streamId(true), stream) === false)
-        throw new Error("共享发布失败");
-      this.share = stream;
-      this.diagnosticStreams.set("share", stream);
+      const id = this.streamId(true);
+      confirmation = composition ? this.startWindowPublication(id, stream, run) : undefined;
+      if (!confirmation) {
+        if (this.engine.startPublishingStream(id, stream) === false) throw new Error("共享发布失败");
+        this.share = stream;
+      }
       const published = stream;
-      for (const track of new Set([...capture.getVideoTracks(), ...stream.getVideoTracks()]))
+      for (const track of new Set([...capture.getVideoTracks(), ...output.getVideoTracks(), ...stream.getVideoTracks()]))
         track.addEventListener("ended", () => { if (this.share === published) this.stopShare(); }, { once: true });
+      if (confirmation) {
+        if (!await confirmation || this.disposed || run !== this.shareGeneration) return;
+        this.cancelWindowPublication?.();
+      }
+      this.diagnosticStreams.set("share", stream);
       meetingDiagnostic("rtc.share.published", { tracks: meetingTrackSnapshot(stream) });
       this.update({ id: "share", userId: this.joinInfo!.userId, stream, screen: true }, "share");
     } catch (error) {
-      if (this.shareCapture === capture) this.shareCapture = undefined;
-      this.releaseShare(stream, capture);
-      meetingDiagnostic("rtc.share.publish.failed", meetingDiagnosticError(error));
-      const code = (error as { errorCode?: number })?.errorCode;
-      throw new Error(`${capturedLabel}，但共享发布失败${typeof code === "number" ? `（${code}）` : ""}，请重试。`);
+      // stopShare already released this attempt, even if a failure won the
+      // promise race just before we stopped and is only now being handled.
+      if (confirmation && run !== this.shareGeneration) return;
+      if (confirmation && this.share === stream) {
+        try { this.stopShare(); }
+        catch (error) { meetingDiagnostic("rtc.share.stop.failed", meetingDiagnosticError(error)); }
+      } else {
+        if (run === this.shareGeneration) this.cancelWindowPublication?.();
+        this.clearShareCapture(capture, composition);
+        this.releaseShare(stream, capture);
+      }
+      const failure = error as { errorCode?: number; timedOut?: boolean } | null;
+      const timedOut = failure?.timedOut === true;
+      meetingDiagnostic("rtc.share.publish.failed", { ...meetingDiagnosticError(error), timedOut });
+      const code = failure?.errorCode;
+      const reason = timedOut ? "（等待发布确认超时）" : typeof code === "number" ? `（${code}）` : "";
+      throw new Error(`${capturedLabel}，但共享发布失败${reason}，请重试。`);
+    }
+  }
+  private clearShareCapture(capture: MediaStream, composition?: WindowComposition) {
+    if (this.shareCapture === capture) this.shareCapture = undefined;
+    if (composition && this.windowComposition === composition) {
+      this.windowComposition = undefined;
+      composition.compositor.dispose();
     }
   }
   private releaseShare(stream: MediaStream | undefined, capture: MediaStream | undefined) {
@@ -339,14 +418,19 @@ export class MeetingMedia {
   stopShare() {
     this.shareGeneration++;
     this.shareStarting = false;
+    const pending = !!this.cancelWindowPublication;
+    this.cancelWindowPublication?.();
     const stream = this.share, capture = this.shareCapture;
+    const composition = this.windowComposition;
+    this.windowComposition = undefined;
     this.share = undefined;
     this.shareCapture = undefined;
     this.diagnosticStreams.delete("share");
     try { if (stream) this.engine.stopPublishingStream(this.streamId(true)); }
     finally {
+      composition?.compositor.dispose();
       this.releaseShare(stream, capture);
-      if (stream) this.update(null, "share");
+      if (stream && !pending) this.update(null, "share");
     }
   }
   dispose() {

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import ts from 'typescript';
+import { create } from 'zustand';
 const diagnosticSource = await fs.readFile(new URL('../src/react-app/domains/meeting/diagnostics.ts', import.meta.url), 'utf8');
 const diagnosticUrl = 'data:text/javascript;base64,' + Buffer.from(ts.transpileModule(diagnosticSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText).toString('base64');
 const deadlineSource = await fs.readFile(new URL('../src/react-app/domains/meeting/device-operation.ts', import.meta.url), 'utf8');
@@ -416,10 +417,11 @@ test('screen sharing distinguishes capture failures and releases failed or late 
  const updates=[];
  const media=new MeetingMedia((tile,id)=>updates.push({tile,id}),()=>{},()=>{});
  media.joinInfo={roomId:'r',userId:'u',sessionId:'s'};
- let published=0,stopped=0,destroyed=0;const previews=new Set();
- media.engine={async createStream({custom}){assert.ok(custom.source instanceof MediaStream);const preview=new MediaStream(custom.source.getVideoTracks());previews.add(preview);return preview;},destroyStream(stream){destroyed++;previews.delete(stream);stream.getTracks().forEach(t=>t.stop());},startPublishingStream(id,stream){assert.ok(previews.has(stream),'must register raw capture with ZEGO before publishing');published++;return true;},stopPublishingStream(){stopped++;},logoutRoom(){},destroyEngine(){}};
- const capture=()=>{
-  const track=Object.assign(new EventTarget(),{kind:'video',getSettings:()=>({width:800,height:500}),readyState:'live',stop(){this.readyState='ended';}});
+  let published=0,stopped=0,destroyed=0;const previews=new Set();
+  let publisherState;
+  media.engine={async createStream({custom}){assert.ok(custom.source instanceof MediaStream);const preview=new MediaStream(custom.source.getVideoTracks());previews.add(preview);return preview;},destroyStream(stream){destroyed++;previews.delete(stream);stream.getTracks().forEach(t=>t.stop());},startPublishingStream(id,stream){assert.ok(previews.has(stream),'must register raw capture with ZEGO before publishing');published++;queueMicrotask(()=>publisherState?.({streamID:id,state:'PUBLISHING',errorCode:0,extendedData:''}));return true;},stopPublishingStream(){stopped++;},on(name,fn){publisherState=fn;},off(){publisherState=undefined;},logoutRoom(){},destroyEngine(){}};
+  const capture=(displaySurface)=>{
+   const track=Object.assign(new EventTarget(),{kind:'video',getSettings:()=>({width:800,height:500,displaySurface}),readyState:'live',stop(){this.readyState='ended';}});
   return {track,stream:{getTracks:()=>[track],getVideoTracks:()=>[track]}};
  };
  const reject=name=>({getDisplayMedia:async()=>{throw Object.assign(new Error('capture failed'),{name});}});
@@ -433,7 +435,20 @@ test('screen sharing distinguishes capture failures and releases failed or late 
   await media.startShare({getDisplayMedia:async(options)=>{assert.deepEqual(options,{video:true,audio:false});return first.stream;}});
   assert.equal(updates.at(-1).tile.screen,true);assert.equal(published,1);assert.notEqual(updates.at(-1).tile.stream,first.stream);
   first.track.dispatchEvent(new Event('ended'));
-  assert.equal(stopped,1);assert.equal(destroyed,1);assert.equal(first.track.readyState,'ended');assert.equal(updates.at(-1).tile,null);
+   assert.equal(stopped,1);assert.equal(destroyed,1);assert.equal(first.track.readyState,'ended');assert.equal(updates.at(-1).tile,null);
+   const raw=capture('window'), output=capture();
+   const overlays=[]; let disposed=0;
+   await media.startShare({getDisplayMedia:async()=>raw.stream},async source=>{
+    assert.equal(source,raw.stream);
+    return {captureId:'confirmed-window', compositor:{stream:output.stream,setOverlay:draw=>overlays.push(draw),dispose(){disposed++;output.track.stop();}}};
+   });
+   assert.equal(updates.at(-1).tile.stream.getVideoTracks()[0],output.track);
+   assert.equal(media.clearWindowShareOverlay?.('confirmed-window'),true);
+   assert.deepEqual(overlays,[null]);
+   assert.equal(media.clearWindowShareOverlay('stale-window'),false);
+   assert.equal(stopped,1);assert.equal(raw.track.readyState,'live');
+   raw.track.dispatchEvent(new Event('ended'));
+   assert.equal(stopped,2);assert.equal(disposed,1);
   for(const failure of [()=>false,()=>{throw Error('publisher failed');}]){
    const failed=capture();media.engine.startPublishingStream=failure;
    await assert.rejects(media.startShare({getDisplayMedia:async()=>failed.stream}));assert.equal(failed.track.readyState,'ended');
@@ -455,4 +470,170 @@ test('screen sharing distinguishes capture failures and releases failed or late 
   media.dispose();if(oldMediaStream===undefined)delete globalThis.MediaStream;else globalThis.MediaStream=oldMediaStream;
   if(oldNavigator)Object.defineProperty(globalThis,'navigator',oldNavigator);else delete globalThis.navigator;
  }
+});
+
+async function windowShareRuntime(t) {
+ const adapterSource=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
+ const loadRuntime=source=>'data:text/javascript;base64,'+Buffer.from(transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64');
+ const {MeetingMedia}=await import(loadRuntime(adapterSource.replace(/^import .* from "\.\/media-permission";$/m,'')));
+ const {createWindowAnnotationReceiver}=await load('../src/react-app/domains/meeting/window-annotation-events.ts');
+ const listeners=new Map(), started=[], stopped=[], destroyed=[], disposed=[], readiness=[];
+ const storeSource=await fs.readFile(new URL('../src/react-app/domains/meeting/store.ts',import.meta.url),'utf8');
+ const meeting={id:'m',status:'live',hostId:'u',version:1,participants:{u:{sessionId:'s'}}};
+ class Stream {
+  constructor(tracks){this.tracks=tracks;}
+  getTracks(){return this.tracks;}
+  getVideoTracks(){return this.tracks;}
+ }
+ const video=(displaySurface)=>Object.assign(new EventTarget(),{
+  kind:'video',readyState:'live',getSettings:()=>({displaySurface}),stop(){this.readyState='ended';},
+ });
+ const roomWindow=Object.assign(new EventTarget(),{
+  __JUGGLEWORK_ELECTRON__:{invokeDesktop(){}},
+  ZegoExpressEngine:class {
+   on(name,fn){if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(fn);}
+   off(name,fn){listeners.get(name)?.delete(fn);}
+   async loginRoom(){return true;}
+   async createStream({custom}){return new Stream(custom.source.getVideoTracks());}
+   startPublishingStream(id,stream){started.push({id,stream});return true;}
+   stopPublishingStream(id){stopped.push(id);}
+   destroyStream(stream){destroyed.push(stream);stream.getTracks().forEach(track=>track.stop());}
+   logoutRoom(){}
+   destroyEngine(){}
+  },
+ });
+ let capture;
+ const deps={create,MeetingMedia,createWindowAnnotationReceiver,
+  meetingAPI:{join:async()=>({meeting,roomId:'r',userId:'u',sessionId:'s',userName:'Local',appId:1,token:'test',chatroomId:'chat'})},
+  meetingScope:()=> 'org', acquireMediaSession(){}, releaseMediaSession(){},
+  joinMeetingChatroom:async()=>({leave:async()=>{},signal:async()=>{}}),
+  readMeetingDesktopConfig:async()=>({enabled:true,appId:1,filePath:'/test/meeting.json'}),
+  readMeetingWindowShareTarget:async()=>({captureId:capture.id,kind:'window',sourceId:'window:1:0',windowId:1,pid:1}),
+  createWindowShareCompositor:async stream=>{
+   assert.equal(stream.getVideoTracks()[0],capture.raw);
+   const {id,output}=capture;
+   return {stream:new Stream([output]),setOverlay(){},confirmSize(){},setPaused(){},dispose(){disposed.push(id);output.stop();}};
+  },
+  setMeetingWindowShareReady:async input=>{readiness.push(input);},
+ };
+ const oldWindow=globalThis.window, oldStream=globalThis.MediaStream;
+ globalThis.window=roomWindow;
+ globalThis.MediaStream=Stream;
+ globalThis.__windowShareRuntime=deps;
+ const {useMeetingStore,forceMeetingCleanup}=await import(loadRuntime(
+  `const {${Object.keys(deps).join(',')}}=globalThis.__windowShareRuntime;\n`+storeSource.replace(/^import .*;$/gm,''))+
+  '#'+encodeURIComponent(t.name));
+ t.after(()=>{
+  forceMeetingCleanup();
+  if(oldWindow===undefined)delete globalThis.window;else globalThis.window=oldWindow;
+  if(oldStream===undefined)delete globalThis.MediaStream;else globalThis.MediaStream=oldStream;
+  delete globalThis.__windowShareRuntime;
+ });
+ await useMeetingStore.getState().join(meeting,false,false);
+ const queueState=(streamID,state,errorCode=0,extendedData='')=>{
+  // The vendored SDK queues a call for each listener registered at dispatch time.
+  const callbacks=[...(listeners.get('publisherStateUpdate')??[])];
+  return ()=>callbacks.forEach(fn=>fn({streamID,state,errorCode,extendedData}));
+ };
+ const start=async id=>{
+  capture={id,raw:video('window'),output:video()};
+  const current=capture, count=started.length;
+  const request=useMeetingStore.getState().toggleShare({getDisplayMedia:async()=>new Stream([current.raw])});
+  // Keep rejected requests observed while the test drives SDK events.
+  void request.catch(()=>{});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(started.length,count+1);
+  assert.match(started.at(-1).id,/_screen$/);
+  return {...current,request,publication:started.at(-1)};
+ };
+ return {start, queueState, readiness, stopped, destroyed, disposed, state:useMeetingStore.getState};
+}
+
+test('composited window readiness waits for PUBLISHING on the local screen stream', {timeout:1000}, async t=>{
+ const rtc=await windowShareRuntime(t);
+ const share=await rtc.start('first-window');
+ assert.deepEqual(rtc.readiness,[],'SDK acceptance alone must not enable Electron annotation');
+ rtc.queueState('r_u_s_camera','PUBLISHING')();
+ rtc.queueState('another_user_screen','PUBLISHING')();
+ rtc.queueState(share.publication.id,'PUBLISH_REQUESTING')();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(rtc.readiness,[]);
+ rtc.queueState(share.publication.id,'PUBLISHING')();
+ await share.request;
+ assert.deepEqual(rtc.readiness,[{captureId:'first-window',ready:true}]);
+ assert.equal(rtc.state().tiles.find(tile=>tile.id==='share').stream.getVideoTracks()[0],share.output);
+});
+
+test('a duplicate share request cannot supersede a window share awaiting publication', {timeout:1000}, async t=>{
+ const rtc=await windowShareRuntime(t);
+ const share=await rtc.start('first-window');
+ await rtc.state().toggleShare({getDisplayMedia:()=>assert.fail('duplicate picker must not open')});
+ rtc.queueState(share.publication.id,'PUBLISHING')();
+ await share.request;
+ assert.deepEqual(rtc.readiness,[{captureId:'first-window',ready:true}]);
+});
+
+test('initial NO_PUBLISH reports failure and releases the composited window share', {timeout:1000}, async t=>{
+ const rtc=await windowShareRuntime(t);
+ const share=await rtc.start('rejected-window');
+ rtc.queueState(share.publication.id,'NO_PUBLISH',1102018,'SDK error')();
+ await assert.rejects(share.request,/共享发布失败.*1102018/);
+ assert.deepEqual(rtc.readiness,[]);
+ assert.deepEqual(rtc.state().tiles,[]);
+ assert.equal(share.raw.readyState,'ended');
+ assert.equal(share.output.readyState,'ended');
+ assert.deepEqual(rtc.disposed,['rejected-window']);
+ assert.deepEqual(rtc.destroyed,[share.publication.stream]);
+});
+
+test('ending a window capture while publication is pending cannot enable annotation on a replacement', {timeout:1000}, async t=>{
+ const rtc=await windowShareRuntime(t);
+ const first=await rtc.start('cancelled-window');
+ const lateSuccess=rtc.queueState(first.publication.id,'PUBLISHING');
+ const lateFailure=rtc.queueState(first.publication.id,'NO_PUBLISH');
+ first.raw.dispatchEvent(new Event('ended'));
+ await first.request;
+ assert.equal(first.raw.readyState,'ended');
+ assert.equal(first.output.readyState,'ended');
+ assert.deepEqual(rtc.stopped,[first.publication.id]);
+ assert.deepEqual(rtc.destroyed,[first.publication.stream]);
+ const next=await rtc.start('replacement-window');
+ lateSuccess();
+ lateFailure();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(rtc.readiness,[],'cancelled and queued old events must not enable either capture');
+ assert.equal(next.raw.readyState,'live');
+ rtc.queueState(next.publication.id,'PUBLISHING')();
+ await next.request;
+ assert.deepEqual(rtc.readiness,[{captureId:'replacement-window',ready:true}]);
+});
+
+test('cancellation wins over a publication failure whose continuation has not run', {timeout:1000}, async t=>{
+ const rtc=await windowShareRuntime(t);
+ const share=await rtc.start('closing-window');
+ rtc.queueState(share.publication.id,'NO_PUBLISH',1102018,'SDK error')();
+ share.raw.dispatchEvent(new Event('ended'));
+ await share.request;
+ assert.deepEqual(rtc.readiness,[]);
+ assert.deepEqual(rtc.disposed,['closing-window']);
+ assert.deepEqual(rtc.destroyed,[share.publication.stream]);
+});
+
+test('a window publication that never confirms times out and ignores late success', {timeout:1000}, async t=>{
+ const rtc=await windowShareRuntime(t);
+ const timers=new Map(), realSet=globalThis.setTimeout, realClear=globalThis.clearTimeout;
+ globalThis.setTimeout=(fn,delay)=>{const timer=Symbol();timers.set(timer,{fn,delay});return timer;};
+ globalThis.clearTimeout=timer=>{timers.delete(timer);};
+ t.after(()=>{globalThis.setTimeout=realSet;globalThis.clearTimeout=realClear;});
+ const share=await rtc.start('timed-out-window');
+ const lateSuccess=rtc.queueState(share.publication.id,'PUBLISHING');
+ for(const [timer,{fn,delay}] of timers) if(delay<=60_000){timers.delete(timer);fn();}
+ await assert.rejects(share.request,/共享发布失败.*超时/);
+ lateSuccess();
+ assert.deepEqual(rtc.readiness,[]);
+ assert.deepEqual(rtc.state().tiles,[]);
+ assert.deepEqual(rtc.stopped,[share.publication.id]);
+ assert.deepEqual(rtc.destroyed,[share.publication.stream]);
+ assert.equal(share.raw.readyState,'ended');
+ assert.equal(share.output.readyState,'ended');
 });

@@ -86,5 +86,5 @@ export function undoAnnotation(history: AnnotationHistory): AnnotationHistory {
 /** Laser trails stay opaque while drawn (releasedAt null), then fade linearly. */
 export function laserOpacity(releasedAt: number | null, now: number) {
   if (releasedAt === null) return 1;
-  return Math.max(0, 1 - (now - releasedAt) / LASER_FADE_MS);
+  return Math.max(0, Math.min(1, 1 - (now - releasedAt) / LASER_FADE_MS));
 }

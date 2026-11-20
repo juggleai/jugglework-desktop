@@ -115,6 +115,8 @@ function plistValue(plistPath, key) {
 
 export function verifyBundleMetadata(appPath, expectedVersion = null) {
   const appPlist = path.join(appPath, "Contents", "Info.plist");
+  const meetingTracker = path.join(appPath, "Contents", "Resources", "helpers", "MeetingWindowTracker");
+  if (!existsSync(meetingTracker)) fail(`Meeting window tracking helper not found: ${meetingTracker}`);
   const helperPlist = path.join(
     appPath,
     "Contents",

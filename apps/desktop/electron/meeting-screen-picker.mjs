@@ -2,10 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 
 // Own the pending Chromium request, not an independently armed source ID.
 // Confirming a thumbnail resolves this exact request; closing never captures.
-export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getMeetingWindow, getDisplays = () => [], timeoutMs = 120_000 }) {
+export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getMeetingWindow, getDisplays = () => [],
+  resolveWindowIdentity = async (/** @type {number} */ _windowId) => /** @type {{pid: number} | null} */ (null), timeoutMs = 120_000 }) {
   let pending = null;
-  // The source the user last confirmed. Only a whole screen that maps to a
-  // connected display can be annotated; the renderer can query, never set it.
+  // The renderer can read, but cannot set, the source verified by the picker.
+  /** @type {{kind: 'screen', displayId: number} | import('@jugglework/types/desktop-ipc').MeetingWindowShareTarget | null} */
   let shared = null;
   function notify(channel, requestId) {
     const main = getMainWindow();
@@ -37,7 +38,12 @@ export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getM
   }
   return {
     /** Display id of the whole screen currently being shared, or null. */
-    sharedDisplayId: () => shared?.displayId ?? null,
+    sharedDisplayId: () => shared?.kind === 'screen' ? shared.displayId : null,
+    sharedTarget: () => shared && { ...shared },
+    readSharedWindow(event) {
+      assertCaller(event);
+      return shared?.kind === 'window' ? { ...shared } : null;
+    },
     clearShared() { shared = null; },
     handle(request, callback) {
       const main = getMainWindow();
@@ -91,7 +97,21 @@ export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getM
         if (!source) throw new Error("所选窗口已关闭，请刷新列表后重新选择。");
         if (current.owner.isDestroyed() || current.frame !== current.owner.webContents.mainFrame) { finish(current); return false; }
         const displayId = source.id.startsWith("screen:") ? Number(source.display_id) : NaN;
-        shared = Number.isInteger(displayId) && getDisplays().some(d => d.id === displayId) ? { displayId } : null;
+        const match = /^window:([1-9]\d*):\d+$/.exec(source.id);
+        let target = null;
+        if (Number.isInteger(displayId) && getDisplays().some(d => d.id === displayId)) {
+          target = { kind: /** @type {const} */ ('screen'), displayId };
+        } else if (match && Number(match[1]) <= 0xffffffff) {
+          const windowId = Number(match[1]);
+          try {
+            const identity = await resolveWindowIdentity(windowId);
+            if (identity && Number.isSafeInteger(identity.pid) && identity.pid > 0 && identity.pid <= 0x7fffffff)
+              target = { kind: /** @type {const} */ ('window'), captureId: current.id, sourceId: source.id, windowId, pid: identity.pid };
+          } catch { /* Identity lookup must not prevent ordinary sharing. */ }
+        }
+        if (pending !== current) return false;
+        if (current.owner.isDestroyed() || current.frame !== current.owner.webContents.mainFrame) { finish(current); return false; }
+        shared = target;
         finish(current, source);
         return true;
       } finally { current.selecting = false; }

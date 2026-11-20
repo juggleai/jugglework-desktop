@@ -15,4 +15,5 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ANNOTATION__", {
   },
   command: (command) => ipcRenderer.send("jugglework:annotation:command", command),
   history: (history) => ipcRenderer.send("jugglework:annotation:history", history),
+  scene: (scene) => ipcRenderer.send("jugglework:annotation:scene", scene),
 });

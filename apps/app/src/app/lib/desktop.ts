@@ -845,6 +845,12 @@ export function exportMeetingWhiteboard(input: { title?: string; kind: "png" | "
 export function readMeetingAnnotationState() {
   return invokeElectronHelper("meetingAnnotationState");
 }
+export function readMeetingWindowShareTarget() {
+  return invokeElectronHelper("meetingWindowShareTarget");
+}
+export function setMeetingWindowShareReady(input: { captureId: string; ready: boolean }) {
+  return invokeElectronHelper("meetingWindowShareReady", input);
+}
 export function openMeetingAnnotation() {
   return invokeElectronHelper("meetingAnnotationOpen");
 }

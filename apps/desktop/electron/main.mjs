@@ -1,5 +1,6 @@
 import { createMeetingScreenPicker } from "./meeting-screen-picker.mjs";
 import { createMeetingAnnotation } from "./meeting-annotation.mjs";
+import { createMeetingWindowTracker } from "./meeting-window-tracker.mjs";
 import { createWhiteboardStore } from "./whiteboard-store.mjs";
 import { createWhiteboardCommands } from "./whiteboard-ipc.mjs";
 import { installMeetingDiagnostics } from "./meeting-diagnostics.mjs";
@@ -972,8 +973,13 @@ const meetingWhiteboard = createWhiteboardCommands({
   getMainWindow: () => mainWindow,
   getMeetingWindow: () => meetingWindow,
 });
+const meetingWindowTracker = process.platform === "darwin" && process.env.JUGGLEWORK_WINDOW_ANNOTATION === "1"
+  ? createMeetingWindowTracker({ helperPath: app.isPackaged
+    ? path.join(process.resourcesPath, "helpers/MeetingWindowTracker")
+    : path.resolve(__dirname, "../resources/helpers/MeetingWindowTracker") })
+  : null;
 const meetingScreenPicker = createMeetingScreenPicker({ desktopCapturer, getMainWindow: () => mainWindow, getMeetingWindow: () => meetingWindow,
-  getDisplays: () => screen.getAllDisplays() });
+  getDisplays: () => screen.getAllDisplays(), resolveWindowIdentity: meetingWindowTracker?.resolveWindowIdentity });
 const meetingAnnotation = createMeetingAnnotation({
   BrowserWindow,
   // `screen` is only usable after app ready; resolve it lazily.
@@ -987,6 +993,9 @@ const meetingAnnotation = createMeetingAnnotation({
   getMainWindow: () => mainWindow,
   getMeetingWindow: () => meetingWindow,
   getSharedDisplayId: () => meetingScreenPicker.sharedDisplayId(),
+  getSharedWindow: () => { const target = meetingScreenPicker.sharedTarget(); return target?.kind === "window" ? target : null; },
+  watchWindow: meetingWindowTracker?.watchWindow,
+  getDisplayMatching: (bounds) => screen.getDisplayMatching(bounds),
   clearShared: () => meetingScreenPicker.clearShared(),
   loadPage: async (window, view) => {
     const url = process.env.JUGGLEWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
@@ -2556,6 +2565,8 @@ const desktopCommandHandlers = {
   "meetingWhiteboardSave": (event, input) => meetingWhiteboard.save(event, input),
   "meetingWhiteboardExport": (event, input) => meetingWhiteboard.exportFile(event, input),
   "meetingAnnotationState": async (event) => meetingAnnotation.state(event),
+  "meetingWindowShareTarget": async (event) => meetingScreenPicker.readSharedWindow(event),
+  "meetingWindowShareReady": async (event, input) => { if (input) meetingAnnotation.windowShareReady(event, input); },
   "meetingAnnotationOpen": (event) => meetingAnnotation.open(event),
   "meetingAnnotationClose": async (event, input) => meetingAnnotation.close(event, { shareStopped: input?.shareStopped === true }),
   "toonFactoryOpen": async (event, ...args) => {

@@ -103,3 +103,44 @@ test('choosing a whole screen records its display; windows and cancels do not', 
   f.picker.clearShared(); assert.equal(f.picker.sharedDisplayId(), null);
   id = f.start(); await f.picker.choose(f.event, id, null); assert.equal(f.picker.sharedDisplayId(), null);
 });
+
+test('a verified window is bound to the current capture and readable only by the application main frame', async () => {
+  const f = fixture({ resolveWindowIdentity: async id => id === 2 ? { pid: 812 } : null });
+  const id = f.start();
+  await f.picker.list(f.event, id);
+  await f.picker.choose(f.event, id, 'window:2:0');
+  assert.deepEqual(f.picker.readSharedWindow?.(f.event), { kind: 'window', captureId: id, sourceId: 'window:2:0', windowId: 2, pid: 812 });
+  assert.throws(() => f.picker.readSharedWindow({ ...f.event, senderFrame: {} }), /仅主窗口/);
+  assert.equal(f.picker.sharedDisplayId(), null);
+  f.picker.clearShared();
+  assert.equal(f.picker.readSharedWindow(f.event), null);
+});
+
+test('failed window identity lookup does not prevent ordinary capture', async () => {
+  const f = fixture({ resolveWindowIdentity: async () => { throw new Error('unavailable'); } });
+  const id = f.start();
+  await f.picker.list(f.event, id);
+  assert.equal(await f.picker.choose(f.event, id, 'window:2:0'), true);
+  assert.equal(f.answers[0].video.id, 'window:2:0');
+  assert.equal(f.picker.readSharedWindow?.(f.event), null);
+});
+
+test('a cancelled identity lookup cannot overwrite a newer capture', async () => {
+  let release = (_value) => {};
+  let started = () => {};
+  const looking = new Promise(resolve => { started = () => resolve(undefined); });
+  const f = fixture({ resolveWindowIdentity: id => id === 2
+    ? new Promise(resolve => { release = resolve; started(); }) : Promise.resolve({ pid: 913 }) });
+  const oldId = f.start();
+  await f.picker.list(f.event, oldId);
+  const oldChoice = f.picker.choose(f.event, oldId, 'window:2:0');
+  assert.equal(await Promise.race([looking.then(() => 'lookup'), oldChoice.then(() => 'capture')]), 'lookup');
+  await f.picker.choose(f.event, oldId, null);
+  const newId = f.start();
+  await f.picker.list(f.event, newId);
+  await f.picker.choose(f.event, newId, 'window:3:0');
+  release({ pid: 812 });
+  assert.equal(await oldChoice, false);
+  assert.equal(f.picker.readSharedWindow(f.event).captureId, newId);
+  assert.deepEqual(f.answers.map(answer => answer?.video.id ?? null), [null, 'window:3:0']);
+});

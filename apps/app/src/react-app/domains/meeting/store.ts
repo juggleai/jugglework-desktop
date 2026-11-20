@@ -2,7 +2,9 @@ import { ensureMeetingMediaPermissions } from "./media-permission";
 import { withMeetingDeviceDeadline } from "./device-operation";
 import { meetingDiagnostic, meetingDiagnosticError, meetingDiagnosticStep } from "./diagnostics";
 import { acceptDeviceState, type MeetingShareKind, type MemberDeviceState } from "./device-state";
-import { openMeetingWhiteboard, readMeetingDesktopConfig } from "@/app/lib/desktop";
+import { openMeetingWhiteboard, readMeetingDesktopConfig, readMeetingWindowShareTarget, setMeetingWindowShareReady } from "@/app/lib/desktop";
+import { createWindowShareCompositor } from "./window-share-compositor";
+import { createWindowAnnotationReceiver } from "./window-annotation-events";
 import { create } from "zustand";
 import { meetingAPI, meetingScope } from "./api";
 import { meetingClosed, type Meeting, type MeetingJoin } from "./types";
@@ -23,8 +25,14 @@ let deviceChanging = false;
 let signalSeq = 0;
 let lastSnapshot = 0;
 let stopWake: (() => void) | undefined;
-// A screen share request that is still waiting for the picker / capture.
+// Keep ownership through picker, capture, and any initial publication wait.
 let screenShareRequest: Promise<void> | null = null;
+let stopWindowAnnotation: (() => void) | undefined;
+const windowAnnotationChannel = "jugglework:meeting:window-annotation";
+function clearWindowAnnotation() {
+  stopWindowAnnotation?.();
+  stopWindowAnnotation = undefined;
+}
 function announceState() {
   if (!lease || !chatroom) return;
   const state = useMeetingStore.getState();
@@ -39,6 +47,8 @@ function announceState() {
 
 function dispose() {
   generation++;
+  screenShareRequest = null;
+  clearWindowAnnotation();
   stopWake?.();
   stopWake = undefined;
   deviceChanging = false;
@@ -149,6 +159,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       media = new MeetingMedia(
         (tile, id) => {
           if (run !== generation) return;
+          if (id === "share" && !tile) clearWindowAnnotation();
           set((s) => ({
             tiles: [
               ...s.tiles.filter((t) => t.id !== id),
@@ -284,13 +295,46 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   },
   async toggleShare(devices) {
     if (get().tiles.some((t) => t.id === "share") || get().whiteboard) {
+      clearWindowAnnotation();
       media?.stopShare();
       set({ whiteboard: null });
-    } else if (media) {
+    } else if (media && !screenShareRequest) {
       set({ shareKind: "screen" });
-      const request = media.startShare(devices);
+      const owner = media;
+      let captureId: string | undefined;
+      const request = owner.startShare(devices, window.__JUGGLEWORK_ELECTRON__?.invokeDesktop ? async capture => {
+        const target = await readMeetingWindowShareTarget();
+        if (!target) return;
+        const compositor = await createWindowShareCompositor(capture);
+        captureId = target.captureId;
+        return { captureId, compositor };
+      } : undefined);
       screenShareRequest = request;
-      try { await request; } finally { if (screenShareRequest === request) screenShareRequest = null; }
+      try {
+        await request;
+        if (media !== owner || screenShareRequest !== request) return;
+        if (!captureId) { announceState(); return; }
+        const id = captureId;
+        const output = owner.getWindowShareCompositor(id);
+        if (!output) { announceState(); return; }
+        clearWindowAnnotation();
+        const receive = createWindowAnnotationReceiver(id, output, reason => {
+          if (media !== owner || owner.getWindowShareCompositor(id) !== output) return;
+          if (reason === "target-closed") { clearWindowAnnotation(); owner.stopShare(); announceState(); }
+          if (reason === "resized") set({ error: "窗口大小已改变，已退出标注，窗口共享仍在继续。" });
+        });
+        const listener = (event: Event) => {
+          if (media === owner && owner.getWindowShareCompositor(id) === output) receive((event as CustomEvent).detail);
+        };
+        window.addEventListener(windowAnnotationChannel, listener);
+        const remove = () => {
+          window.removeEventListener(windowAnnotationChannel, listener);
+          void setMeetingWindowShareReady({ captureId: id, ready: false }).catch(() => {});
+        };
+        stopWindowAnnotation = remove;
+        try { await setMeetingWindowShareReady({ captureId: id, ready: true }); }
+        catch { if (stopWindowAnnotation === remove) clearWindowAnnotation(); }
+      } finally { if (screenShareRequest === request) screenShareRequest = null; }
     }
     announceState();
   },

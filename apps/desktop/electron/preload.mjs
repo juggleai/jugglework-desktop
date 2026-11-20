@@ -477,6 +477,10 @@ for (const channel of ["jugglework:meeting:screen-picker", "jugglework:meeting:s
   });
 }
 
+ipcRenderer.on("jugglework:meeting:window-annotation", (_event, detail) => {
+  window.dispatchEvent(new CustomEvent("jugglework:meeting:window-annotation", { detail }));
+});
+
 ipcRenderer.on(NATIVE_DEEP_LINK_EVENT, (_event, urls) => {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(NATIVE_DEEP_LINK_EVENT, { detail: urls }));

@@ -122,6 +122,7 @@ mac:
       filter:
         - "JuggleWork Computer Use.app/**"
         - "JuggleWork File Browser.app/**"
+        - MeetingWindowTracker
   target:
     - dmg
     - zip
