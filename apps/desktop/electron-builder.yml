@@ -149,7 +149,8 @@ linux:
     - provider: generic
       url: https://downloads.jugglechat.cn/jugglework/releases/stable/linux
 win:
-  icon: resources/icons/icon.ico
+  # Rounded-corner artwork for the Windows shortcut and executable icon.
+  icon: resources/icons/icon-rounded.ico
   extraResources:
     - from: resources/sidecars
       to: sidecars
