@@ -155,6 +155,8 @@ export function createRemoteControlLifecycleManager({
   let settleReplacement = () => {};
   /** @type {Promise<unknown> | null} */
   let disablePending = null;
+  let enabling = false;
+  let enableController = null;
 
   function project(status) {
     return Object.freeze({
@@ -171,7 +173,7 @@ export function createRemoteControlLifecycleManager({
   }
 
   function assertMutationAvailable() {
-    if (pending || disablePending) throw new Error(ERROR_MESSAGES.replacement_in_progress);
+    if (pending || disablePending || enabling) throw new Error(ERROR_MESSAGES.replacement_in_progress);
   }
 
   function assertCurrent(epoch, signal) {
@@ -185,13 +187,17 @@ export function createRemoteControlLifecycleManager({
     if (disablePending) return disablePending;
     cancellationEpoch += 1;
     replacementController?.abort();
+    enableController?.abort();
     const pendingReplacement = replacementSettled;
     const agent = getAgent();
     const operation = (async () => {
-      const settings = await disableSettings();
-      applyLocalEffects(settings);
       const beforeStopStatus = agent.status();
-      const stopped = agent.stopAll();
+      const persisted = disableSettings();
+      const stopped = Promise.resolve(agent.stopAll());
+      // Fence commands immediately, even if writing the disabled state fails.
+      void stopped.catch(() => {});
+      const settings = await persisted;
+      applyLocalEffects(settings);
       let cancelError;
       try { await cancelPendingWork(); } catch (error) { cancelError = error; }
       await stopped;
@@ -210,6 +216,39 @@ export function createRemoteControlLifecycleManager({
     return tracked;
   }
 
+  async function enableExisting(persistSettings) {
+    assertMutationAvailable();
+    const agent = getAgent();
+    const prior = agent.status();
+    if (!prior.enrolled || !prior.enrollmentAuthorized || prior.revoked || prior.lastErrorCode === "device_reregistration_required") {
+      throw new Error(ERROR_MESSAGES.not_eligible);
+    }
+    enabling = true;
+    const epoch = cancellationEpoch;
+    const controller = new AbortController();
+    enableController = controller;
+    try {
+      const settings = await persistSettings();
+      assertCurrent(epoch, controller.signal);
+      applyLocalEffects(settings);
+      await agent.refreshLocalSettings();
+      assertCurrent(epoch, controller.signal);
+      const connected = await agent.waitForWelcome({ timeoutMs: STARTUP_WELCOME_TIMEOUT_MS, signal: controller.signal });
+      assertCurrent(epoch, controller.signal);
+      if (connected?.connected !== true) throw new Error(ERROR_MESSAGES.startup_failed);
+      await synchronizePendingPolicy();
+      assertCurrent(epoch, controller.signal);
+      if (!agent.status().connected) throw new Error(ERROR_MESSAGES.startup_failed);
+      return settings;
+    } catch {
+      if (epoch === cancellationEpoch && prior.locallyDisabled) await disable().catch(() => {});
+      throw new Error(ERROR_MESSAGES.startup_failed);
+    } finally {
+      enableController = null;
+      enabling = false;
+    }
+  }
+
   async function cleanup(agent, { deleteIdentity }) {
     let settings;
     try { settings = await disableSettings(); } catch {}
@@ -225,7 +264,7 @@ export function createRemoteControlLifecycleManager({
   }
 
   async function reregisterAndEnable(input) {
-    if (pending || disablePending) {
+    if (pending || disablePending || enabling) {
       const error = safeError("replacement_in_progress");
       return Object.freeze({ ok: false, status: status(), error });
     }
@@ -321,5 +360,5 @@ export function createRemoteControlLifecycleManager({
     }
   }
 
-  return Object.freeze({ disable, reregisterAndEnable, assertMutationAvailable, status, project });
+  return Object.freeze({ disable, enableExisting, reregisterAndEnable, assertMutationAvailable, status, project });
 }

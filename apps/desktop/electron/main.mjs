@@ -2607,7 +2607,10 @@ const desktopCommandHandlers = {
   },
   "desktopRemoteControlSettingsUpdate": async (event, ...args) => {
       if (args[0]?.enabled === false) return remoteControlLifecycleManager.disable();
-      if (args[0]?.enabled === true) remoteControlLifecycleManager.assertMutationAvailable();
+      if (args[0]?.enabled === true) {
+        const patch = args[0];
+        return remoteControlLifecycleManager.enableExisting(() => remoteControlSettingsStore.update(patch));
+      }
       const settings = await remoteControlSettingsStore.update(args[0] ?? {});
       remoteControlSleepController.setPreventSleepWhileWaiting(settings.enabled && settings.preventSleepWhileWaiting);
       return reconcilePersistedRemoteControlSettings({

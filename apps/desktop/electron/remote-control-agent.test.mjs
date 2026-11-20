@@ -519,6 +519,7 @@ describe("remote-control agent context and lifecycle", () => {
     await fixture.agent.syncContext(signedInContext());
     assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.DISABLED);
     assert.equal(fixture.agent.status().locallyDisabled, true);
+    assert.equal(fixture.agent.status().enrolled, true);
     assert.equal(fixture.deleteCalls, 0);
     assert.equal(fixture.e2eeRevokeCalls, 0);
     assert.equal(fixture.credential.deviceId, DEVICE_ID);
@@ -638,6 +639,30 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(fixture.agent.status().enrolled, false);
     assert.equal(fixture.deleteCalls, 2);
     assert.equal(fixture.e2eeRevokeCalls, 2);
+  });
+
+  it("does not discard an enrollment when the same authorization is refreshed mid-exchange", async () => {
+    let releaseEnrollment = () => {};
+    let enrollmentStarted = () => {};
+    const started = new Promise((resolve) => { enrollmentStarted = () => resolve(); });
+    const gate = new Promise((resolve) => { releaseEnrollment = () => resolve(); });
+    const fixture = harness({
+      enabled: false,
+      enrollDevice: async () => {
+        enrollmentStarted();
+        await gate;
+        return enrolledCredential({ deviceId: NEW_DEVICE_ID });
+      },
+    });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    const replacement = fixture.agent.replaceIdentity(REPLACEMENT_INPUT);
+    await started;
+    await fixture.agent.syncContext(signedInContext());
+    releaseEnrollment();
+    assert.equal((await replacement).enrolled, true);
+    assert.equal(fixture.enrollmentCalls, 1);
+    assert.equal(fixture.credential.deviceId, NEW_DEVICE_ID);
   });
 
   it("independently attempts credential and E2EE cleanup and returns only a stable diagnostic", async () => {

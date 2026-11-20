@@ -110,6 +110,46 @@ function harness({ failAt = null, pauseAt = null, enrollmentCode = undefined, re
 }
 
 describe("remote-control lifecycle manager", () => {
+  it("reuses a registered identity and waits for welcome before completing enable", async () => {
+    const fixture = harness({ pauseAt: "welcome" });
+    const enabling = fixture.manager.enableExisting(async () => ({ enabled: true }));
+    await fixture.stageStarted;
+    assert.equal(fixture.calls.includes("policy"), false);
+    fixture.releaseStage();
+    assert.deepEqual(await enabling, { enabled: true });
+    assert.deepEqual(fixture.calls, ["effects-enabled", "refresh", "welcome", "policy"]);
+  });
+
+  it("fences remote work before the disabled setting finishes persisting", async () => {
+    const fixture = harness({ pauseAt: "disable-settings" });
+    const disabling = fixture.manager.disable();
+    await fixture.stageStarted;
+    assert.ok(fixture.calls.includes("stop"));
+    fixture.releaseStage();
+    await disabling;
+    assert.equal(fixture.settings.enabled, false);
+  });
+
+  it("keeps existing credentials when re-enable fails to receive welcome", async () => {
+    const fixture = harness({ failAt: "welcome" });
+    await assert.rejects(fixture.manager.enableExisting(async () => ({ enabled: true })));
+    assert.equal(fixture.settings.enabled, false);
+    assert.equal(fixture.manager.status().enrolled, true);
+    assert.equal(fixture.manager.status().connected, false);
+    assert.equal(fixture.calls.includes("delete"), false);
+  });
+
+  it("lets disable win over an existing identity awaiting welcome", async () => {
+    const fixture = harness({ pauseAt: "welcome" });
+    const enabling = assert.rejects(fixture.manager.enableExisting(async () => ({ enabled: true })));
+    await fixture.stageStarted;
+    await fixture.manager.disable();
+    fixture.releaseStage();
+    await enabling;
+    assert.equal(fixture.settings.enabled, false);
+    assert.equal(fixture.manager.status().connected, false);
+    assert.equal(fixture.calls.includes("replace"), false);
+  });
   it("retains a safe substage for exceptions without a recognized code", async () => {
     for (const stage of ["delete_material", "prepare_credential", "exchange", "secret-stage"]) {
       const fixture = harness({ failAt: "enrollment", replacementStage: stage });

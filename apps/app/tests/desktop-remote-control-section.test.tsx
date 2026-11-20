@@ -7,6 +7,7 @@ import type { DesktopRemoteControlAgentStatus } from "@jugglework/types/desktop-
 import { setLocale } from "../src/i18n";
 import { refreshRemoteControlRecoveryState, RemoteControlActivityIndicator, requestRemoteControlReregistration, shouldShowRemoteControlAuthorizationRefresh, shouldShowRemoteControlReconnect, shouldShowRemoteControlReregister, statusPresentation } from "../src/react-app/domains/settings/cloud/desktop-remote-control-section";
 import { CloudSessionProvider, useCloudSession } from "../src/react-app/domains/settings/cloud/cloud-session-provider";
+import { enableDeviceConnection } from "../src/react-app/domains/settings/cloud/device-connection-menu-item";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -35,6 +36,50 @@ function status(overrides: Partial<DesktopRemoteControlAgentStatus> = {}): Deskt
     ...overrides,
   };
 }
+
+describe("Account menu device connection", () => {
+  const scope = { controlPlaneBaseUrl: "https://cloud.example.test", userId: "user-1", organizationId: "org-1" };
+  const fresh = async () => ({ config: { desktopRemoteFeatureGates: { schemaVersion: 1, enrollment: true, readOnlyControl: true } }, scope });
+
+  test("reuses an enrolled device and enables only the waiting sleep preference", async () => {
+    const calls: unknown[] = [];
+    await enableDeviceConnection({
+      refreshFresh: fresh,
+      currentScope: () => scope,
+      readStatus: async () => status(),
+      updateSettings: async (patch) => {
+        calls.push(patch);
+        return { schemaVersion: 1, ...patch } as Awaited<ReturnType<Parameters<typeof enableDeviceConnection>[0]["updateSettings"]>>;
+      },
+      createEnrollmentGrant: async () => { throw new Error("should not request a grant"); },
+      reregisterAndEnable: async () => { throw new Error("should not replace identity"); },
+    });
+    expect(calls).toEqual([{
+      enabled: true, preventSleepWhileWaiting: true, backgroundMode: false,
+      launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false,
+    }]);
+  });
+
+  test("registers through the compound command after refreshing policy and checking scope", async () => {
+    const calls: unknown[] = [];
+    const input = {
+      refreshFresh: async () => { calls.push("policy"); return fresh(); },
+      currentScope: () => scope,
+      readStatus: async () => status({ enrolled: false, connected: false, locallyDisabled: true }),
+      updateSettings: async () => { throw new Error("should not enable before enrollment"); },
+      createEnrollmentGrant: async (id: string) => { calls.push(id); return { grant: "one-time-grant" }; },
+      reregisterAndEnable: async (args: { grant: string; scope: typeof scope }) => {
+        calls.push(args);
+        return { ok: true as const, status: status(), error: null };
+      },
+    };
+    await enableDeviceConnection(input);
+    expect(calls).toEqual(["policy", "org-1", { grant: "one-time-grant", scope }]);
+    calls.length = 0;
+    await expect(enableDeviceConnection({ ...input, currentScope: () => ({ ...scope, organizationId: "other" }) })).rejects.toThrow();
+    expect(calls).toEqual(["policy"]);
+  });
+});
 
 describe("Desktop remote-control status presentation", () => {
   test("distinguishes connected transport from active remote control", () => {

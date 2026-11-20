@@ -45,6 +45,8 @@ import { useUpdateCheckRequestStore } from "@/react-app/domains/settings/state/u
 import { useDesktopUpdateIndicatorStore } from "@/react-app/domains/settings/state/desktop-update-indicator-store";
 import { isNotificationVisible, productTaskNotificationScopeKey, useNotificationStore } from "@/react-app/kernel/notification-store";
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
+import { DeviceConnectionMenuItem, useDeviceConnection } from "@/react-app/domains/settings/cloud/device-connection-menu-item";
+import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { setTaskScope, useTaskScope, type TaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
 import { useLocalWorkspaceIndicator } from "@/react-app/domains/session/sidebar/workspace-indicator-store";
@@ -420,6 +422,11 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const desktopUpdateController = useDesktopUpdateIndicatorStore((state) => state.controller);
   const bootstrapChat = useJuggleChatStore((state) => state.bootstrap);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const desktopRuntime = isDesktopRuntime();
+  const deviceConnection = useDeviceConnection({
+    open: desktopRuntime && accountMenuOpen,
+    onSignIn: () => { setAccountMenuOpen(false); props.onOpenAccount(); },
+  });
   const [navigationMenuOpen, setNavigationMenuOpen] = useState(false);
   const [pinnedNavigationItems, setPinnedNavigationItems] = useState<PinnableAppNavigationItem[]>(
     readPinnedAppNavigationItems,
@@ -1092,6 +1099,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               {t("navigation.settings")}
               {notificationUnreadCount > 0 ? <span className="ms-auto size-2 rounded-full bg-red-9" aria-hidden="true" /> : null}
             </DropdownMenuItem>
+            {desktopRuntime ? <DeviceConnectionMenuItem {...deviceConnection} /> : null}
             <DropdownMenuItem onClick={openBillingDashboard} data-testid="account-menu-balance">
               <Coins />
               <span>{t("account_menu.balance")}</span>

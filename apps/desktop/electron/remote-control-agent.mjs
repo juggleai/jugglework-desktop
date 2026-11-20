@@ -676,6 +676,7 @@ export function createRemoteControlAgent(options) {
   let provisionalGeneration = 0;
   let connectionGeneration = null;
   let connectionAttempt = 0;
+  let replacingIdentity = false;
   let reconnectAttempt = 0;
   let revocationVerifyAttempt = 0;
   let revocationNotFoundAttempt = 0;
@@ -2049,7 +2050,22 @@ export function createRemoteControlAgent(options) {
       invalidateTransport();
     }
     schedulePolicyExpiry();
-    await reconcile();
+    // A disabled agent never calls connectNow. Restore the scoped enrollment
+    // for the switch without opening a transport or mutating stored material.
+    if (!replacingIdentity && !settings.enabled && !enrollment && !revoked && contextAllowsEnrollment()) {
+      const generation = lifecycleGeneration;
+      const scope = identityKey(next);
+      try {
+        const stored = await credentialStore.read(credentialContext(next));
+        if (generation === lifecycleGeneration && identityKey(context) === scope &&
+            !replacingIdentity && !settings.enabled && !enrollment && !revoked && contextAllowsEnrollment() && validEnrollment(stored, next)) enrollment = stored;
+      } catch {
+        // Missing, mismatched or inaccessible credentials are not usable here.
+      }
+    }
+    // Equivalent policy publications must not advance the lifecycle generation
+    // during the disabled phase of a scoped enrollment exchange.
+    if (!(replacingIdentity && !switched && !contextChanged && !settings.enabled && contextAllowsEnrollment())) await reconcile();
     reconcileAuthorizations();
     return status();
   }
@@ -2104,8 +2120,12 @@ export function createRemoteControlAgent(options) {
     revocationVerifyAttempt = 0;
     protocolBlocked = false;
     const generation = lifecycleGeneration;
+    const replacementAuthorization = authorizationKey(activeContext);
+    const canContinue = () => !signal?.aborted && generation === lifecycleGeneration &&
+      authorizationKey(context) === replacementAuthorization && contextAllowsEnrollment() && !settings.enabled;
     let destructiveBoundaryCrossed = false;
     let replacementStage = "drain_operations";
+    replacingIdentity = true;
     try {
       await drainOldOperations(oldOperationDrainTimeoutMs);
       if (signal?.aborted) throw Object.assign(new Error("Remote-control identity replacement was cancelled."), { code: "replacement_cancelled" });
@@ -2115,15 +2135,16 @@ export function createRemoteControlAgent(options) {
           if (validEnrollment(existing, activeContext)) replacedDeviceId = existing.deviceId;
         } catch {}
       }
+      if (!canContinue()) throw new TypeError("Remote-control authorization changed before identity replacement.");
       destructiveBoundaryCrossed = true;
       replacementStage = "delete_material";
       await deleteDeviceMaterial();
-      if (signal?.aborted || generation !== lifecycleGeneration || activeContext !== context || !contextAllowsEnrollment() || settings.enabled) {
+      if (!canContinue()) {
         throw new TypeError("Remote-control authorization changed during identity replacement.");
       }
       replacementStage = "display_name";
       const displayName = await getDisplayName();
-      if (signal?.aborted || generation !== lifecycleGeneration || activeContext !== context || !contextAllowsEnrollment() || settings.enabled) {
+      if (!canContinue()) {
         throw new TypeError("Remote-control authorization changed during identity replacement.");
       }
       const credential = await createCloudClient(/** @type {string} */ (activeContext.controlPlaneBaseUrl)).enrollDevice({
@@ -2135,13 +2156,13 @@ export function createRemoteControlAgent(options) {
         signal,
         onStage: (stage) => { replacementStage = stage; },
       });
-      if (signal?.aborted || generation !== lifecycleGeneration || activeContext !== context || !contextAllowsEnrollment() || settings.enabled ||
+      if (!canContinue() ||
           !validEnrollment(credential, activeContext) || credential.deviceId === replacedDeviceId) {
         throw new TypeError("Enrollment returned an invalid device binding.");
       }
       replacementStage = "e2ee_key";
       await e2eeKeyStore?.active();
-      if (signal?.aborted || generation !== lifecycleGeneration || activeContext !== context || !contextAllowsEnrollment() || settings.enabled) {
+      if (!canContinue()) {
         throw new TypeError("Remote-control authorization changed during identity replacement.");
       }
       enrollment = credential;
@@ -2171,6 +2192,8 @@ export function createRemoteControlAgent(options) {
         replacementStage: stages.has(replacementStage) ? replacementStage : "unknown",
       });
       throw failure;
+    } finally {
+      replacingIdentity = false;
     }
   }
 

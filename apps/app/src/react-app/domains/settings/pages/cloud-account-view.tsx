@@ -14,7 +14,6 @@ import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
 import { SignInFallbackNotice } from "@/react-app/domains/cloud/signin-fallback-notice";
 import { CloudAccountSection, type AccountUsageSession } from "../cloud/cloud-account-section";
-import { DesktopRemoteControlSection } from "../cloud/desktop-remote-control-section";
 import { useCloudSession } from "../cloud/cloud-session-provider";
 import { CloudDevMode } from "../cloud/dev-mode";
 import type { useDenSession } from "../cloud/use-den-session";
@@ -201,10 +200,6 @@ export function CloudAccountView({ developerMode, session, sessions }: CloudAcco
             sessions={sessions}
           />
           </SettingsSection>
-
-          <Separator />
-
-          <DesktopRemoteControlSection />
 
           <Separator />
 
