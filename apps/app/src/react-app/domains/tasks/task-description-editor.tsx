@@ -1,5 +1,5 @@
 import * as React from "react";
-import { $createTaskImage, $readDescription, $writeDescription, composerRichTheme, descriptionAddress, descriptionNodes, descriptionTransformers, registerMarkdownShortcuts, renderDescription, TaskImageNode } from "./task-description-markdown";
+import { $readDescription, $writeDescription, composerRichTheme, descriptionAddress, descriptionNodes, descriptionTransformers, registerMarkdownShortcuts, renderDescription, TaskImageNode } from "./task-description-markdown";
 import { $createLinkNode, $toggleLink } from "@lexical/link";
 import { $insertList, $isListNode, $removeList } from "@lexical/list";
 import { AutoFocusPlugin } from "@lexical/react/LexicalAutoFocusPlugin.js";
@@ -10,15 +10,19 @@ import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin.js";
 import { ListPlugin } from "@lexical/react/LexicalListPlugin.js";
 import { $createQuoteNode, $isQuoteNode, registerRichText } from "@lexical/rich-text";
 import { $addUpdateTag, $createParagraphNode, $createTextNode, $getNodeByKey, $getRoot, $getSelection, $isRangeSelection, $nodesOfType, $setSelection, CLEAR_HISTORY_COMMAND, COMMAND_PRIORITY_HIGH, COMMAND_PRIORITY_NORMAL, HISTORY_PUSH_TAG, KEY_ENTER_COMMAND, PASTE_COMMAND, SKIP_DOM_SELECTION_TAG, type RangeSelection } from "lexical";
-import { ArrowUp, AtSign, Bold, Check, ImageIcon, Italic, Link, List, ListOrdered, Paperclip, Quote, Smile, Strikethrough, Underline, X } from "lucide-react";
+import { SendHorizontal, AtSign, Bold, ImageIcon, Italic, Link, List, ListOrdered, Paperclip, Quote, Smile, Strikethrough, Underline } from "lucide-react";
 import { t } from "@/i18n";
 import { TaskEmojiPicker } from "./task-emoji-picker";
 import { TaskDescriptionMentions } from "./task-description-mentions";
 import type { DenOrganizationMember } from "@/app/lib/den";
+import { TaskFilePicker, type TaskFilePurpose, type TaskFileUpload } from "./task-file-picker";
+import { joinTaskAttachments, splitTaskAttachments, type AttachmentRef } from "./task-description-markdown";
+import { CommentAttachments } from "./task-comment-attachments";
 
-type Props = { value: string; onChange: (value: string) => void; onBlur?: () => void; readOnly?: boolean; testId?: string; compact?: boolean; members?: readonly DenOrganizationMember[] };
-type CommentProps = Required<Pick<Props, "value" | "onChange" | "members">> & { onSend: () => void; pending: boolean };
-type CommentControls = { expanded: boolean; toggle: () => void; canSend: boolean; send: () => void; frame: React.RefObject<HTMLFormElement | null> };
+type FileTools = { upload?: TaskFileUpload; onPickerChange?: (open: boolean) => void; initialAttachment?: boolean; separateAttachments?: boolean };
+type Props = FileTools & { value: string; onChange: (value: string) => void; onBlur?: () => void; readOnly?: boolean; testId?: string; compact?: boolean; members?: readonly DenOrganizationMember[] };
+type CommentProps = Pick<FileTools, "upload"> & Required<Pick<Props, "value" | "onChange" | "members">> & { onSend: () => void; pending: boolean };
+type CommentControls = { expanded: boolean; toggle: () => void; canSend: boolean; send: () => void; frame: React.RefObject<HTMLFormElement | null>; cards: React.ReactNode; add: (file: AttachmentRef) => void; stacked: boolean };
 const tools = { bold: Bold, strike: Strikethrough, italic: Italic, underline: Underline, ordered: ListOrdered, bullet: List, quote: Quote, link: Link, emoji: Smile, mention: AtSign, image: ImageIcon };
 type Tool = keyof typeof tools;
 const toggleTools = ["bold", "strike", "italic", "underline", "ordered", "bullet", "quote"] as const;
@@ -42,17 +46,29 @@ const toolClass = "flex size-8 shrink-0 items-center justify-center rounded-md t
 const tooltipClass = "pointer-events-none invisible absolute bottom-full z-10 mb-1 whitespace-nowrap rounded-md bg-foreground px-2 py-1 text-xs text-background group-hover/tool:visible group-focus-visible/tool:visible";
 const toggleClass = "aria-pressed:bg-blue-3 aria-pressed:text-blue-10 aria-pressed:hover:bg-blue-4 aria-pressed:hover:text-blue-10";
 
-function Toolbar({ comment }: { comment?: CommentControls }) {
+function Toolbar({ comment, upload, initialAttachment, onPickerChange, separateAttachments }: FileTools & { comment?: CommentControls }) {
   const [editor] = useLexicalComposerContext();
   const saved = React.useRef<RangeSelection | null>(null);
   const resourceRange = React.useRef<RangeSelection | null>(null);
-  const [resource, setResource] = React.useState<"link" | "image" | "emoji" | null>(null);
+  const [picker, setPicker] = React.useState<{ purpose: TaskFilePurpose; range: RangeSelection | null } | null>(() => initialAttachment ? { purpose: "task_attachment", range: null } : null);
+  React.useLayoutEffect(() => {
+    if (picker && upload) { onPickerChange?.(true); return () => onPickerChange?.(false); }
+  }, [picker, upload, onPickerChange]);
+  const [resource, setResource] = React.useState<"link" | "emoji" | null>(null);
   const toolbar = React.useRef<HTMLDivElement>(null);
   const [address, setAddress] = React.useState("");
   const [linkText, setLinkText] = React.useState("");
   const [active, setActive] = React.useState<readonly Tool[]>([]);
-  const url = resource && descriptionAddress(address, resource === "image");
-  const canConfirm = Boolean(url && (resource !== "link" || linkText.trim()));
+  const url = resource === "link" && descriptionAddress(address);
+  const canConfirm = Boolean(url && linkText.trim());
+
+  function openFilePicker(purpose: TaskFilePurpose, range: RangeSelection | null) {
+    if (!upload || picker) return;
+    // Replacing a focused toolbar/input can blur with a null relatedTarget
+    // during the React commit, before the picker's layout effects run.
+    onPickerChange?.(true);
+    setResource(null); setPicker({ purpose, range });
+  }
 
   React.useLayoutEffect(() => {
     function sync(reset: boolean) {
@@ -80,16 +96,19 @@ function Toolbar({ comment }: { comment?: CommentControls }) {
   }
 
   function run(tool: Tool) {
+    if (tool === "image") {
+      openFilePicker("task_image", saved.current); return;
+    }
     if (tool === "emoji") {
       if (resource === "emoji") { setResource(null); editor.focus(); return; }
       resourceRange.current = saved.current;
       setResource("emoji"); return;
     }
     setResource(null);
-    if (tool === "image" || tool === "link") {
+    if (tool === "link") {
       // Keep focus inside the frame when keyboard activation replaces this button.
       resourceRange.current = saved.current;
-      if (tool === "link") setLinkText(editor.getEditorState().read(() => resourceRange.current?.getTextContent() ?? ""));
+      setLinkText(editor.getEditorState().read(() => resourceRange.current?.getTextContent() ?? ""));
       editor.getRootElement()?.focus({ preventScroll: true });
       setAddress(""); setResource(tool); return;
     }
@@ -125,35 +144,25 @@ function Toolbar({ comment }: { comment?: CommentControls }) {
     if (confirm && !canConfirm) return;
     apply(range => {
       if (!confirm || !url) return;
-      if (resource === "image") range.insertNodes([$createTaskImage(range.getTextContent() || t("tasks.rich_text_image"), url)]);
-      else if (!range.isCollapsed() && range.getTextContent() === linkText) $toggleLink(url);
+      if (!range.isCollapsed() && range.getTextContent() === linkText) $toggleLink(url);
       else range.insertNodes([$createLinkNode(url).append($createTextNode(linkText).setFormat(range.format))]);
     }, resourceRange.current);
     setResource(null);
   }
 
-  function imageFields() {
-    return <>
-      <input autoFocus type="url" aria-label={t("tasks.rich_text_image")} placeholder="https://" value={address} onChange={event => setAddress(event.target.value)}
-        className="min-w-0 flex-1 px-2 text-sm outline-none" onKeyDown={event => {
-          if (!event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && (event.key === "Enter" || event.key === "Escape")) {
-            event.preventDefault(); event.stopPropagation(); finish(event.key === "Enter");
-          }
-        }} />
-      <button type="button" className={toolClass} title={t("common.confirm")} aria-label={t("common.confirm")} disabled={!url} onClick={() => finish(true)}><Check size={18} /></button>
-      <button type="button" className={toolClass} title={t("common.cancel")} aria-label={t("common.cancel")} onClick={() => finish(false)}><X size={18} /></button>
-    </>;
-  }
-
   function toolButton(tool: Tool) {
       const Icon = tools[tool]; const label = t(`tasks.rich_text_${tool}`);
       return <button key={tool} type="button" data-testid={`task-${comment ? "comment" : "description"}-format-${tool}`} aria-label={label}
+        disabled={tool === "image" && !upload}
         aria-haspopup={tool === "emoji" ? "dialog" : undefined} aria-expanded={tool === "emoji" ? resource === "emoji" : undefined}
         aria-pressed={toggleTools.some(toggle => toggle === tool) ? active.includes(tool) : undefined}
         onClick={() => run(tool)} className={`${toolClass} group/tool relative ${toggleClass}${!comment && tool === "emoji" ? " ml-auto" : ""}`}><Icon size={18} /><span role="tooltip" className={tooltipClass}>{label}</span></button>;
   }
 
   const aaLabel = t(comment?.expanded ? "tasks.hide_comment_formatting" : "tasks.show_comment_formatting");
+  const attachmentLabel = t("tasks.add_attachment");
+  const attachment = <button type="button" data-testid={`task-${comment ? "comment" : "description"}-attachment`} disabled={!upload} aria-label={attachmentLabel} title={attachmentLabel} className={toolClass} onClick={() => openFilePicker("task_attachment", saved.current)}><Paperclip size={18} /></button>;
+  const filePicker = picker && upload && <TaskFilePicker {...picker} upload={upload} onAttachment={comment?.add} close={() => { setPicker(null); editor.focus(); }} />;
   return <div ref={toolbar} className={comment ? "min-w-0 max-w-full" : "relative"} onBlur={event => { if (resource === "emoji" && !event.currentTarget.contains(event.relatedTarget)) setResource(null); }}><div role="toolbar" aria-label={t("composer.format_toolbar")} data-testid={comment ? "task-comment-toolbar" : "task-create-description-toolbar"}
     className={comment ? "flex flex-wrap items-center justify-end gap-0.5 p-1" : "flex min-h-12 flex-wrap items-center gap-0.5 border-t border-dls-border px-2"}
     onMouseDown={event => { if (!(event.target as Element).closest("input")) event.preventDefault(); }}>
@@ -162,12 +171,11 @@ function Toolbar({ comment }: { comment?: CommentControls }) {
       <div className="ml-auto flex max-w-full flex-wrap justify-end gap-0.5">
         <button type="button" data-testid="task-comment-format-toggle" aria-label={aaLabel} aria-pressed={comment.expanded} aria-expanded={comment.expanded} onClick={() => { setResource(null); comment.toggle(); }} className={`${toolClass} group/tool relative ${toggleClass}`}>Aa<span className={tooltipClass} role="tooltip">{aaLabel}</span></button>
         {toolButton("emoji")}{toolButton("mention")}{toolButton("image")}
-        <button type="button" aria-disabled="true" aria-label={t("tasks.comment_attachment_unavailable")} className={`${toolClass} group/tool relative cursor-not-allowed`}><Paperclip size={18} /><span role="tooltip" className={`${tooltipClass} right-0`}>{t("tasks.comment_attachment_unavailable")}</span></button>
-        <button type="submit" disabled={!comment.canSend || resource !== null} aria-label={t("tasks.send_comment")} title={t("tasks.send_comment")} className={toolClass}><ArrowUp size={18} /></button>
+        {attachment}
+        <button type="submit" disabled={!comment.canSend || resource !== null} aria-label={t("tasks.send_comment")} title={t("tasks.send_comment")} className={`${toolClass} enabled:text-blue-10`}><SendHorizontal size={18} /></button>
       </div>
-    </> : resource === "image" ? imageFields() : (Object.keys(tools) as Tool[]).map(toolButton)}
-    {comment && resource === "image" && <div role="dialog" aria-label={t("tasks.rich_text_image")} className="absolute bottom-full right-0 z-20 mb-1 flex w-full max-w-[420px] items-center rounded-xl border border-dls-border bg-dls-surface p-2 shadow-xl" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setResource(null); }}>{imageFields()}</div>}
-  </div>{resource === "emoji" && <TaskEmojiPicker anchor={comment?.frame ?? toolbar} onPick={value => { apply(range => range.insertText(value), resourceRange.current); setResource(null); }} onCancel={() => { apply(() => {}, resourceRange.current); setResource(null); }} />}{resource === "link" && <div role="dialog" aria-label={t("tasks.rich_text_link")} className="absolute bottom-full left-0 z-20 mb-1 grid w-full max-w-[420px] gap-3 rounded-xl border border-dls-border bg-dls-surface p-4 text-sm shadow-xl"
+    </> : <>{(Object.keys(tools) as Tool[]).map(toolButton)}{upload && !separateAttachments && attachment}</>}
+  </div>{filePicker}{resource === "emoji" && <TaskEmojiPicker anchor={comment?.frame ?? toolbar} onPick={value => { apply(range => range.insertText(value), resourceRange.current); setResource(null); }} onCancel={() => { apply(() => {}, resourceRange.current); setResource(null); }} />}{resource === "link" && <div role="dialog" aria-label={t("tasks.rich_text_link")} className="absolute bottom-full left-0 z-20 mb-1 grid w-full max-w-[420px] gap-3 rounded-xl border border-dls-border bg-dls-surface p-4 text-sm shadow-xl"
     onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setResource(null); }}
     onKeyDown={event => {
       if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
@@ -181,7 +189,7 @@ function Toolbar({ comment }: { comment?: CommentControls }) {
   </div>}</div>;
 }
 
-function DocumentBody({ value, onChange, autoFocus, members, comment }: Pick<Props, "value" | "onChange" | "members"> & { autoFocus?: boolean; comment?: CommentControls }) {
+function DocumentBody({ value, onChange, autoFocus, members, comment, ...fileTools }: Pick<Props, "value" | "onChange" | "members"> & FileTools & { autoFocus?: boolean; comment?: CommentControls }) {
   const [editor] = useLexicalComposerContext();
   const lastValue = React.useRef(value);
   React.useLayoutEffect(() => registerRichText(editor), [editor]);
@@ -227,12 +235,12 @@ function DocumentBody({ value, onChange, autoFocus, members, comment }: Pick<Pro
   }, [editor, onChange]);
   const placeholder = t(comment ? "tasks.add_comment" : "tasks.add_description");
   return <>
-    <div className={`relative min-h-0 min-w-0 overflow-y-auto ${comment ? (comment.expanded ? "max-h-40" : "max-h-40 flex-[1_1_6rem]") : "flex-1"}`}>
+    <div className={`relative min-h-0 min-w-0 overflow-y-auto ${comment ? (comment.stacked ? "max-h-40" : "max-h-40 flex-[1_1_6rem]") : "flex-1"}`}>
       <ContentEditable data-testid={comment ? "task-comment-input" : undefined} aria-label={comment ? placeholder : t("tasks.description_field")} aria-multiline="true" onDropCapture={event => event.preventDefault()}
         aria-placeholder={placeholder} placeholder={<span className="pointer-events-none absolute left-4 top-3 text-sm text-dls-secondary">{placeholder}</span>}
         className="min-h-full whitespace-pre-wrap break-words px-4 py-3 text-sm outline-none" />
     </div>
-    <HistoryPlugin /><ListPlugin /><Toolbar comment={comment} />{members && <TaskDescriptionMentions members={members} />}{autoFocus && <AutoFocusPlugin defaultSelection="rootEnd" />}
+    {comment?.cards}<HistoryPlugin /><ListPlugin /><Toolbar comment={comment} {...fileTools} />{members && <TaskDescriptionMentions members={members} />}{autoFocus && <AutoFocusPlugin defaultSelection="rootEnd" />}
   </>;
 }
 
@@ -241,7 +249,7 @@ function $hasCommentContent() {
   return Boolean($getRoot().getTextContent().trim()) || $nodesOfType(TaskImageNode).length > 0;
 }
 
-function CommentForm({ value, onChange, onSend, pending, members }: CommentProps) {
+function CommentForm({ value, onChange, onSend, pending, members, upload }: CommentProps) {
   const [editor] = useLexicalComposerContext();
   const frame = React.useRef<HTMLFormElement>(null);
   const [expanded, setExpanded] = React.useState(false);
@@ -249,46 +257,56 @@ function CommentForm({ value, onChange, onSend, pending, members }: CommentProps
   React.useLayoutEffect(() => editor.registerUpdateListener(({ editorState, dirtyElements, dirtyLeaves }) => {
     if (dirtyElements.size || dirtyLeaves.size) setHasContent(editorState.read($hasCommentContent));
   }), [editor]);
-  const canSend = !pending && hasContent;
+  const [picking, setPicking] = React.useState(false);
+  const { body, files } = React.useMemo(() => splitTaskAttachments(value), [value]);
+  const canSend = !pending && !picking && (hasContent || files.length > 0);
+  const stacked = expanded || files.length > 0;
   const send = React.useCallback(() => { if (canSend) onSend(); }, [canSend, onSend]);
   return <form ref={frame} data-testid="task-comment-editor" onSubmit={event => { event.preventDefault(); send(); }}
-    className={`relative flex min-w-0 rounded-xl border border-dls-border bg-dls-surface focus-within:border-blue-8 ${expanded ? "flex-col" : "flex-wrap items-center justify-end"}`}>
-    <DocumentBody value={value} onChange={onChange} members={members} comment={{ expanded, toggle: () => setExpanded(v => !v), canSend, send, frame }} />
+    className={`relative flex min-w-0 rounded-xl border border-dls-border bg-dls-surface focus-within:border-blue-8 ${stacked ? "flex-col" : "flex-wrap items-center justify-end"}`}>
+    <DocumentBody value={body} onChange={next => onChange(joinTaskAttachments(next, files))} members={members} upload={pending ? undefined : upload} onPickerChange={setPicking} comment={{
+      expanded, stacked, toggle: () => setExpanded(v => !v), canSend, send, frame,
+      add: file => onChange(joinTaskAttachments(body, [...files, file])),
+      cards: <CommentAttachments draft files={files} remove={pending || picking ? undefined : index => onChange(joinTaskAttachments(body, files.filter((_, i) => i !== index)))} />,
+    }} />
   </form>;
 }
 
 export function TaskCommentEditor(props: CommentProps) {
   return <LexicalComposer initialConfig={{ namespace: "TaskComment", theme, nodes: descriptionNodes,
-    editorState: () => $readDescription(props.value), onError: error => { throw error; } }}>
+    editorState: () => $readDescription(splitTaskAttachments(props.value).body), onError: error => { throw error; } }}>
     <CommentForm {...props} />
   </LexicalComposer>;
 }
 
 export function TaskDescriptionEditor(props: Props) {
   const [expanded, setExpanded] = React.useState(false);
+  const [initialAttachment, setInitialAttachment] = React.useState(false);
+  const picking = React.useRef(false);
+  const onPickerChange = React.useCallback((open: boolean) => { picking.current = open; props.onPickerChange?.(open); }, [props.onPickerChange]);
   const preview = !!props.readOnly || (!!props.compact && !expanded);
   const editorId = props.testId ?? (props.compact ? "task-detail-description-editor" : "task-create-description-editor");
   const content = React.useMemo(() => preview && props.value.trim() ? renderDescription(props.value) : null, [preview, props.value]);
 
   if (preview) {
     const interactive = !props.readOnly;
-    return <div data-testid={props.compact ? "task-detail-description-preview" : editorId}
+    return <div className="min-w-0 flex-1"><div data-testid={props.compact ? "task-detail-description-preview" : editorId}
       role={interactive ? "button" : undefined} tabIndex={interactive ? 0 : undefined} aria-expanded={interactive ? false : undefined}
       onClick={interactive ? () => setExpanded(true) : undefined} onKeyDown={interactive ? event => {
         if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setExpanded(true); }
       } : undefined}
       className={`min-w-0 flex-1 overflow-y-auto rounded-xl text-left ${props.compact ? "max-h-[168px]" : "h-[168px]"} ${interactive ? "cursor-text hover:bg-dls-hover focus-visible:outline-ring" : ""}`}>
       <div className="whitespace-pre-wrap break-words px-4 py-2 text-sm">{content ?? <span className="text-dls-secondary">{t("tasks.add_description")}</span>}</div>
-    </div>;
+    </div>{interactive && props.upload && !props.separateAttachments && <button type="button" className="flex items-center gap-1 px-4 py-1 text-sm text-blue-10" onClick={() => { setInitialAttachment(true); setExpanded(true); }}><Paperclip size={16} />{t("tasks.add_attachment")}</button>}</div>;
   }
   return <div data-testid={editorId} onBlur={event => {
-    if (event.currentTarget.contains(event.relatedTarget)) return;
+    if (picking.current || event.currentTarget.contains(event.relatedTarget)) return;
     props.onBlur?.();
-    if (props.compact) setExpanded(false);
+    if (props.compact) { setExpanded(false); setInitialAttachment(false); }
   }} className="relative flex h-[168px] min-w-0 flex-1 flex-col rounded-xl border border-dls-border bg-dls-surface focus-within:border-blue-8 focus-within:ring-2 focus-within:ring-blue-8/15">
     <LexicalComposer initialConfig={{ namespace: "TaskDescription", theme, nodes: descriptionNodes,
       editorState: () => $readDescription(props.value), onError: error => { throw error; } }}>
-      <DocumentBody value={props.value} onChange={props.onChange} members={props.members} autoFocus={!!props.compact} />
+      <DocumentBody value={props.value} onChange={props.onChange} members={props.members} upload={props.upload} separateAttachments={props.separateAttachments} initialAttachment={initialAttachment} onPickerChange={onPickerChange} autoFocus={!!props.compact && !initialAttachment} />
     </LexicalComposer>
   </div>;
 }

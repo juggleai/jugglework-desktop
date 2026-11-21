@@ -8,6 +8,7 @@ import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { ContentEditableElement } from "@lexical/react/LexicalContentEditable.js";
 import { $readDescription, $writeDescription, descriptionNodes, TaskImageNode } from "../src/react-app/domains/tasks/task-description-markdown";
 import { TaskCommentEditor, TaskDescriptionEditor } from "../src/react-app/domains/tasks/task-description-editor";
+import type { TaskFileUpload } from "../src/react-app/domains/tasks/task-file-picker";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 let view: TestRenderer.ReactTestRenderer;
@@ -16,6 +17,8 @@ afterEach(async () => { if (view) await act(async () => view.unmount()); });
 const byId = (id: string) => view.root.findByProps({ "data-testid": id });
 const clickTool = (name: string) => act(async () => byId(`task-description-format-${name}`).props.onClick());
 const write = () => currentEditor().getEditorState().read($writeDescription);
+const choose = (file: File) => act(async () => view.root.findByProps({ type: "file" }).props.onChange({ currentTarget: { files: [file], value: "file" } }));
+const openAttachment = (editor = "description") => act(async () => byId(`task-${editor}-attachment`).props.onClick());
 const update = (fn: () => void) => act(async () => currentEditor().update(fn, { discrete: true }));
 
 const commentTool = (name: string) => byId(`task-comment-format-${name}`);
@@ -35,7 +38,7 @@ test("comment formatting toggle keeps the draft, selection and editor instance",
   const editor = currentEditor();
   const toolbar = byId("task-comment-toolbar");
   expect(toolbar.findAllByType("button")).toHaveLength(6);
-  expect(toolbar.findByProps({ "aria-disabled": "true" }).findByProps({ role: "tooltip" }).props.children).toBeTruthy();
+  expect(byId("task-comment-attachment").props.disabled).toBe(true);
   const toggleLabel = () => commentTool("toggle").findByProps({ role: "tooltip" }).props.children;
   const closedLabel = toggleLabel();
   await update(() => $getRoot().getAllTextNodes()[0].select(6, 10));
@@ -92,19 +95,26 @@ test("mention Enter takes precedence over sending, including when there are no m
   expect(onSend).not.toHaveBeenCalled();
 });
 
-test("Enter in the comment image URL field confirms the image without submitting the comment", async () => {
+test("comment image opens the native image picker once and cancellation preserves the draft and toolbar", async () => {
   const onSend = mock();
-  await act(async () => { view = TestRenderer.create(<TaskCommentEditor value="draft" onChange={() => {}} onSend={onSend} members={[]} pending={false} />); });
+  const upload = mock<TaskFileUpload>(async () => ({ name: "pic.png", url: "https://files.test/pic.png" }));
+  const input = Object.assign(new EventTarget(), { click: mock() });
+  await act(async () => { view = TestRenderer.create(<TaskCommentEditor value="draft" onChange={() => {}} onSend={onSend} members={[]} pending={false} upload={upload} />, {
+    createNodeMock: element => element.type === "input" ? input : null,
+  }); });
+  const buttons = () => byId("task-comment-toolbar").findAllByType("button");
+  const before = buttons();
   await clickCommentTool("image");
-  const popup = view.root.findByProps({ role: "dialog" });
-  const url = popup.findByType("input");
+  expect(input.click).toHaveBeenCalledTimes(1);
+  expect(view.root.findByProps({ type: "file" }).props.accept).toBe("image/png,image/jpeg,image/webp,image/gif");
+  expect(view.root.findAllByProps({ type: "url" })).toHaveLength(0);
+  expect(buttons()).toEqual(before);
   expect(byId("task-comment-editor").findByProps({ type: "submit" }).props.disabled).toBe(true);
-  await act(async () => url.props.onChange({ target: { value: "https://example.com/demo.png" } }));
-  const event = { key: "Enter", nativeEvent: {}, preventDefault: mock(), stopPropagation: mock() };
-  await act(async () => url.props.onKeyDown(event));
-  expect(event.preventDefault).toHaveBeenCalled();
-  expect(event.stopPropagation).toHaveBeenCalled();
-  expect(write()).toContain("](https://example.com/demo.png)");
+  await act(async () => { input.dispatchEvent(new Event("cancel")); });
+  expect(view.root.findAllByProps({ type: "file" })).toHaveLength(0);
+  expect(byId("task-comment-editor").findByProps({ type: "submit" }).props.disabled).toBe(false);
+  expect(write()).toBe("draft");
+  expect(upload).not.toHaveBeenCalled();
   expect(onSend).not.toHaveBeenCalled();
 });
 
@@ -194,6 +204,142 @@ test("canceling a new link leaves the description unchanged", async () => {
   expect(write()).toBe("Original");
   expect(view.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
 });
+
+for (const compact of [false, true]) {
+  test(`${compact ? "existing" : "new"} task description image button directly opens an image-only native picker`, async () => {
+    const file = new File(["picture"], "map.png", { type: "image/png" });
+    const upload = mock(async () => ({ name: file.name, url: "https://files.test/map.png" }));
+    const click = mock();
+    await act(async () => { view = TestRenderer.create(<TaskDescriptionEditor compact={compact} upload={upload} value="ab" onChange={() => {}} />, {
+      createNodeMock: element => element.type === "input" ? { click, addEventListener() {}, removeEventListener() {} } : null,
+    }); });
+    if (compact) await act(async () => byId("task-detail-description-preview").props.onClick());
+    await update(() => $getRoot().getAllTextNodes()[0].select(1, 1));
+    const buttons = () => byId("task-create-description-toolbar").findAllByType("button");
+    const original = buttons();
+    await clickTool("image");
+    expect(buttons()).toEqual(original);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(view.root.findAllByProps({ type: "url" })).toHaveLength(0);
+    expect(view.root.findByProps({ type: "file" }).props.accept.split(",")).toEqual(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+    await choose(new File(["pdf"], "doc.pdf", { type: "application/pdf" }));
+    expect(buttons()).toEqual(original);
+    expect(upload).not.toHaveBeenCalled(); expect(write()).toBe("ab");
+    await choose(file);
+    expect(upload).toHaveBeenCalledWith(file, "task_image", expect.any(AbortSignal));
+    expect(write()).toBe('a![map.png](https://files.test/map.png "task-file")b');
+  });
+}
+
+test("detail attachment preserves the draft across picker blur and reopens only the uploaded file", async () => {
+  const name = '预算](![x](https://evil.test))\\\n<u>**&#93;</u>.pdf';
+  const file = new File(["data"], name, { type: "application/pdf" });
+  const upload = mock(async () => ({ url: "https://files.test/download(1)?a=b", name }));
+  const save = mock();
+  function Detail() {
+    const [value, setValue] = React.useState("[site](https://site.test)");
+    return <TaskDescriptionEditor compact upload={upload} value={value} onChange={setValue} onBlur={() => save(value)} />;
+  }
+  await act(async () => { view = TestRenderer.create(<Detail />); });
+  await act(async () => view.root.findByType("button").props.onClick());
+  expect(view.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
+  expect(view.root.findByProps({ type: "file" }).props.hidden).toBe(true);
+  expect(view.root.findByProps({ type: "file" }).props.accept).toBeUndefined();
+  const blur = () => act(async () => byId("task-detail-description-editor").props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null }));
+  await blur();
+  expect(save).not.toHaveBeenCalled();
+  await choose({ name, size: 20 * 1024 ** 2 + 1, type: file.type } as File);
+  expect(view.root.findByProps({ role: "alert" }).props.children).toContain("20 MiB");
+  expect(upload).not.toHaveBeenCalled();
+  await choose(file);
+  expect(upload).toHaveBeenCalledWith(file, "task_attachment", expect.any(AbortSignal));
+  await blur();
+  const preview = byId("task-detail-description-preview");
+  const anchor = preview.findByType("a");
+  expect(anchor.props.href).toBe("https://files.test/download%281%29?a=b");
+  expect(anchor.props.download).toBe(name);
+  expect(anchor.props.rel).toContain("noopener");
+  expect(preview.findAllByType("img")).toHaveLength(0);
+  expect(preview.findAllByType("u")).toHaveLength(0);
+  await act(async () => preview.props.onClick());
+  expect(write()).toBe(save.mock.calls[0][0]);
+});
+
+test("comment image validates files, blocks submit while choosing/uploading and retries without losing selection", async () => {
+  const file = new File(["img"], "plan.png", { type: "image/png" });
+  const upload = mock<TaskFileUpload>(async () => ({ name: file.name, url: "https://files.test/plan.png" }));
+  upload.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ name: file.name, url: "javascript:alert(1)" });
+  const send = mock();
+  await act(async () => { view = TestRenderer.create(<TaskCommentEditor value="left right" onChange={() => {}} members={[]} pending={false} onSend={send} upload={upload} />); });
+  await update(() => $getRoot().getAllTextNodes()[0].select(5, 10));
+  await clickCommentTool("image");
+  await update(() => $setSelection(null));
+  await choose({ ...file, name: file.name, type: file.type, size: 5 * 1024 ** 2 + 1 } as File);
+  expect(upload).not.toHaveBeenCalled();
+  expect(view.root.findByProps({ role: "alert" }).props.children).toContain("5 MiB");
+  await choose(file);
+  const retry = () => act(async () => view.root.findByProps({ role: "group" }).findAllByType("button")[0].props.onClick());
+  await retry();
+  expect(write()).toBe("left right");
+  await act(async () => byId("task-comment-editor").props.onSubmit({ preventDefault() {} }));
+  await enter(); expect(send).not.toHaveBeenCalled();
+  await retry();
+  expect(upload).toHaveBeenLastCalledWith(file, "task_image", expect.any(AbortSignal));
+  expect(write()).toBe('left ![plan.png](https://files.test/plan.png "task-file")');
+  await enter(); expect(send).toHaveBeenCalledTimes(1);
+});
+
+test("comment uploads stay outside the editable body; attachment-only drafts send and removal restores the empty state", async () => {
+  const upload = mock<TaskFileUpload>(async file => ({ name: file.name, url: `https://files.test/${file.type === "image/png" ? "image.png" : "file.pdf"}` }));
+  const send = mock();
+  function Comment() {
+    const [value, setValue] = React.useState("");
+    return <TaskCommentEditor value={value} onChange={setValue} members={[]} pending={false} upload={upload} onSend={() => send(value)} />;
+  }
+  await act(async () => { view = TestRenderer.create(<Comment />); });
+  const editor = currentEditor();
+  for (const [name, type] of [["Plan [1](a).zip", "application/zip"], ["map.png", "image/png"]]) {
+    await openAttachment("comment"); await choose(new File(["data"], name, { type }));
+  }
+  const cards = () => byId("comment-attachments");
+  expect(cards().findAllByType("button")).toHaveLength(2);
+  expect(cards().findByProps({ title: "Plan [1](a).zip" }).children).toEqual(["Plan [1](a).zip"]);
+  expect(write()).toBe("");
+  await enter();
+  const refs = '[Plan &#91;1&#93;(a).zip](https://files.test/file.pdf "task-file:4")\n[map.png](https://files.test/image.png "task-file:4")';
+  expect(send).toHaveBeenLastCalledWith(refs);
+  await update(() => $getRoot().selectEnd().insertText("review"));
+  await enter(); expect(send).toHaveBeenLastCalledWith(`review\n${refs}`);
+  await update(() => $getRoot().getAllTextNodes()[0].select(0, 6).removeText());
+  await act(async () => cards().findAllByType("button")[0].props.onClick());
+  expect(cards().findAllByType("button")).toHaveLength(1);
+  await act(async () => cards().findByType("button").props.onClick());
+  expect(currentEditor()).toBe(editor);
+  expect(view.root.findAllByProps({ "data-testid": "comment-attachments" })).toHaveLength(0);
+  expect(byId("task-comment-editor").findByProps({ type: "submit" }).props.disabled).toBe(true);
+});
+
+for (const change of ["cancel", "task", "selection", "external", "readOnly"] as const) {
+  test(`late attachment completion cannot write after ${change}`, async () => {
+    let resolve!: (file: { url: string; name: string }) => void;
+    const upload = mock<TaskFileUpload>(() => new Promise(done => { resolve = done; }));
+    const onChange = mock();
+    const component = (key: string, value: string, readOnly = false) => <TaskDescriptionEditor key={key} value={value} upload={upload} onChange={onChange} readOnly={readOnly} />;
+    await act(async () => { view = TestRenderer.create(component("a", "original")); });
+    await update(() => $getRoot().selectEnd());
+    await openAttachment();
+    await choose(new File(["pdf"], "file.pdf", { type: "application/pdf" }));
+    expect(view.root.findByProps({ type: "file" }).props.disabled).toBe(true);
+    if (change === "cancel") await act(async () => view.root.findByProps({ role: "group" }).findByType("button").props.onClick());
+    if (change === "task") await act(async () => view.update(component("b", "other task")));
+    if (change === "external") await act(async () => view.update(component("a", "other draft")));
+    if (change === "selection") await update(() => $getRoot().selectStart());
+    if (change === "readOnly") await act(async () => view.update(component("a", "original", true)));
+    expect(upload.mock.calls[0][2].aborted).toBe(true);
+    await act(async () => resolve({ name: "file.pdf", url: "https://files.test/file.pdf" }));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+}
 
 for (const trigger of ["typed", "toolbar"]) {
   test(`${trigger} mention searches the current directory and replaces only the query`, async () => {

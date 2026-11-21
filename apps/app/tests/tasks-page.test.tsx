@@ -26,6 +26,8 @@ Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value:
 
 const toastErrors: unknown[] = [];
 const toastWarnings: unknown[] = [];
+const uploadBusinessFile = mock<typeof import("../src/app/lib/business-file-upload").uploadBusinessFile>(async ({ file }) => ({ name: file.name, url: "https://files.test/map.png" }));
+mock.module("../src/app/lib/business-file-upload", () => ({ uploadBusinessFile }));
 mock.module("../src/components/ui/sonner", () => ({
   toast: {
     error: (message: unknown) => { toastErrors.push(message); },
@@ -971,7 +973,7 @@ test("Assigned to me shows only List and Board tabs and the two creation options
     const descriptionEditor = fullCreateDialog.findByType(TaskDescriptionEditor);
     expect(descriptionEditor.props.value).toBe("");
     expect(descriptionEditor.findByProps({ "data-testid": "task-create-description-editor" })).toBeDefined();
-    expect(descriptionEditor.findByProps({ "data-testid": "task-create-description-toolbar" }).findAllByType("button")).toHaveLength(11);
+    expect(descriptionEditor.findByProps({ "data-testid": "task-description-attachment" }).props.disabled).toBe(false);
     expect(renderer!.root.findByProps({ "data-testid": "task-create-followers-trigger" })).toBeDefined();
     expect(renderer!.root.findByProps({ "data-testid": "task-create-footer" }).props.className).toContain("sm:justify-between");
     expect(fullCreateDialog.findAllByType("button").find((button) => button.props.type === "submit")?.props.children).toBe("Create");
@@ -993,6 +995,43 @@ test("Assigned to me shows only List and Board tabs and the two creation options
   } finally {
     await act(async () => { renderer!.unmount(); });
   }
+});
+
+test("task file consumers bind uploads to the current org/task, and creation waits for the uploaded Markdown", async () => {
+  const receipt = deferred<{ url: string; name: string }>();
+  const create = mock(async () => result(task(1)));
+  const client = connectedClient({ createProductTask: create });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, "task_one")); });
+  await settle();
+  try {
+    const root = renderer.root;
+    const file = new File(["data"], "map.png", { type: "image/png" });
+    const signal = new AbortController().signal;
+    const detail = root.findByType(TaskDescriptionEditor);
+    const comment = root.findByType(TaskCommentEditor);
+    await detail.props.upload(file, "task_attachment", signal);
+    expect(uploadBusinessFile).toHaveBeenLastCalledWith({ client, organizationId: "org_one", taskId: "task_one", purpose: "task_attachment", file, signal });
+    await comment.props.upload(file, "task_image", signal);
+    expect(uploadBusinessFile).toHaveBeenLastCalledWith({ client, organizationId: "org_one", taskId: "task_one", purpose: "task_image", file, signal });
+    await act(async () => root.findByProps({ "data-testid": "task-detail-backdrop" }).props.onClick());
+    const sidebar = root.findByProps({ "data-testid": "tasks-sidebar" });
+    await act(async () => sidebar.findAllByType("button").find(button => Array.isArray(button.props.children) && button.props.children.includes("Assigned to me"))!.props.onClick());
+    await settle();
+    await act(async () => root.findByProps({ "data-testid": "task-create-menu" }).findAllByType("button")[0].props.onClick());
+    const dialog = root.findByProps({ "data-testid": "task-create-dialog" });
+    await act(async () => dialog.findByProps({ autoFocus: true, placeholder: "Enter a title and press Enter" }).props.onChange({ target: { value: "Draft" } }));
+    await act(async () => dialog.findByProps({ "data-testid": "task-description-attachment" }).props.onClick());
+    uploadBusinessFile.mockReturnValueOnce(receipt.promise);
+    await act(async () => dialog.findByProps({ type: "file" }).props.onChange({ currentTarget: { files: [file] } }));
+    expect(uploadBusinessFile).toHaveBeenLastCalledWith({ client, organizationId: "org_one", taskId: undefined, purpose: "task_attachment", file, signal: expect.any(AbortSignal) });
+    expect(dialog.findByType("form").findByProps({ type: "submit" }).props.disabled).toBe(true);
+    await act(async () => dialog.findByType("form").props.onSubmit({ preventDefault() {} }));
+    expect(create).not.toHaveBeenCalled();
+    await act(async () => receipt.resolve({ url: "https://files.test/map.png", name: file.name }));
+    await act(async () => dialog.findByType("form").props.onSubmit({ preventDefault() {} }));
+    expect(create).toHaveBeenCalledWith("org_one", expect.objectContaining({ title: "Draft", description: '[map.png](https://files.test/map.png "task-file:4")' }));
+  } finally { await act(async () => renderer.unmount()); }
 });
 
 test("toolbar new task list uses the sidebar inline private mutation and exposes failures", async () => {
@@ -2316,6 +2355,29 @@ test("task detail follows, manages followers, and submits formatted comments", a
   }
 });
 
+test("posted attachments are downloadable only under their own comment and inline images stay in the body", async () => {
+  const entry = (id: string, body: string) => ({ id, body, authorMemberId: "member_self", createdAt: "2026-11-01", updatedAt: "2026-11-01" });
+  const client = connectedClient({ getProductTaskActivity: async () => ({ events: [], comments: [
+    entry("first", 'Review **this** ![diagram](https://files.test/img.png "task-file")\n[spec.pdf](https://files.test/spec.pdf "task-file")'),
+    entry("second", '[only.pdf](https://files.test/only.pdf "task-file:7")'),
+  ] }) });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, "task_one")); });
+  await settle();
+  try {
+    const [first, second] = renderer!.root.findAllByProps({ "data-testid": "comment-attachments" });
+    expect(first.findAllByType("button")).toHaveLength(1);
+    expect(first.findByType("button").props["aria-label"]).toBe("Download file: spec.pdf");
+    expect(first.findByProps({ children: "Size unavailable" })).toBeTruthy();
+    const body = renderer!.root.find(node => node.type === "div" && node.props.className === "mt-1 text-sm text-dls-text" && node.findAllByType("strong").length === 1);
+    expect(body.findByProps({ "data-testid": "comment-attachments" })).toBe(first);
+    expect(body.findByType("img").props.src).toBe("https://files.test/img.png");
+    expect(body.findByType("strong").children).toEqual(["this"]);
+    expect(second.findByType("button").props["aria-label"]).toBe("Download file: only.pdf");
+    expect(second.findByProps({ children: "7 B" })).toBeTruthy();
+  } finally { await act(async () => renderer!.unmount()); }
+});
+
 test("a failed comment keeps its draft for retry and clears it after success", async () => {
   const attempts: string[] = [];
   const client = connectedClient({
@@ -2329,18 +2391,20 @@ test("a failed comment keeps its draft for retry and clears it after success", a
   await settle();
   try {
     const editor = renderer!.root.findByType(TaskCommentEditor);
-    const draft = "Please **review**";
+    const draft = 'Please **review**\n[spec.pdf](https://files.test/spec.pdf "task-file:100")';
     await act(async () => { editor.props.onChange(draft); });
     await act(async () => { editor.props.onSend(); });
     await settle();
     expect(attempts).toEqual([draft]);
     expect(editor.props.value).toBe(draft);
+    expect(editor.findByProps({ title: "spec.pdf" }).children).toEqual(["spec.pdf"]);
     expect(editor.props.pending).toBe(false);
 
     await act(async () => { editor.props.onSend(); });
     await settle();
     expect(attempts).toEqual([draft, draft]);
     expect(editor.props.value).toBe("");
+    expect(editor.findAllByProps({ title: "spec.pdf" })).toHaveLength(0);
   } finally {
     await act(async () => { renderer!.unmount(); });
   }

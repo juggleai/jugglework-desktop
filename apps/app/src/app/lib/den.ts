@@ -4006,6 +4006,23 @@ export type DenDocsLaunch = {
   presentation: { instanceId: string; mode: 'product' | 'manage' };
 };
 
+export type BusinessFilePurpose = "avatar" | "task_image" | "task_attachment";
+type FileUploadRequest = {
+  purpose: BusinessFilePurpose;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  taskId?: string;
+};
+type FileUploadCredentials = {
+  provider: "qiniu";
+  uploadUrl: string;
+  token: string;
+  key: string;
+  fileUrl: string;
+  expiresAt: string;
+};
+
 export function createDenClient(options: { baseUrl: string; token?: string | null }) {
   const baseUrls = resolveDenBaseUrls({
     baseUrl: options.baseUrl,
@@ -4088,18 +4105,30 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return user;
     },
 
-    async updateProfile(input: { name: string; avatarDataUrl?: string }): Promise<{ user: DenUser; im: DenIMLoginBootstrap | null }> {
+    createFileUploadCredentials(organizationId: string, body: FileUploadRequest, options: { signal?: AbortSignal } = {}) {
+      return requestJson<FileUploadCredentials>(baseUrls, `/v1/organizations/${encodeURIComponent(organizationId)}/file-upload-credentials`, {
+        method: "POST", token, organizationId, body, signal: options.signal,
+      });
+    },
+
+    async updateProfile(input: { name: string; avatarDataUrl?: string; avatarUrl?: string }, options: { signal?: AbortSignal; organizationId?: string } = {}): Promise<{ user: DenUser; im: DenIMLoginBootstrap | null }> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/me/profile", {
         method: "PATCH",
         token,
+        signal: options.signal,
+        organizationId: options.organizationId,
         body: {
           name: input.name.trim(),
+          ...(input.avatarUrl ? { avatarUrl: input.avatarUrl } : {}),
           ...(input.avatarDataUrl ? { avatarDataUrl: input.avatarDataUrl } : {}),
         },
       });
       const user = getUser(payload);
       if (!user) {
         throw new DenApiError(500, "invalid_profile_payload", "Profile response did not include a user.");
+      }
+      if (input.avatarUrl && user.avatar !== input.avatarUrl) {
+        throw new DenApiError(502, "profile_avatar_not_saved", "服务器未确认保存新头像，请检查服务端是否支持头像 URL。");
       }
       return { user, im: getIMLoginBootstrap(payload) };
     },

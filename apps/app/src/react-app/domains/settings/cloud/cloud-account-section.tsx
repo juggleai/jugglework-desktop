@@ -2,7 +2,8 @@
 import * as React from "react";
 import { Building2, Check, Loader2, Pencil } from "lucide-react";
 
-import { readDenSettings, writeDenIMLoginBootstrap, type DenOrgSummary } from "../../../../app/lib/den";
+import { readDenSettings, readDenUserId, writeDenIMLoginBootstrap, type DenOrgSummary } from "../../../../app/lib/den";
+import { businessImageAccept, uploadBusinessFile } from "../../../../app/lib/business-file-upload";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { SettingsNotice } from "../settings-section";
@@ -10,10 +11,8 @@ import { t } from "@/i18n";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { useCloudSession } from "./cloud-session-provider";
 import {
-  accountProfileStorageKey,
   readStoredAccountProfile,
   writeStoredAccountProfile,
-  type StoredAccountProfile,
 } from "./local-account-profile";
 
 export type AccountUsageSession = {
@@ -37,7 +36,7 @@ export function CloudAccountSection({
   orgsError,
   sessions,
 }: CloudAccountSectionProps) {
-  const { user: cloudUser, setUser, client } = useCloudSession();
+  const { user: cloudUser, setUser, client, baseUrl, authToken } = useCloudSession();
   const { user: authoritativeUser, activeOrganization, refresh } = useDenAuth();
   const user = authoritativeUser ?? cloudUser;
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -48,43 +47,82 @@ export function CloudAccountSection({
   const [profileError, setProfileError] = React.useState<string | null>(null);
   const [profileSaving, setProfileSaving] = React.useState(false);
   const statistics = React.useMemo(() => accountStatistics(sessions), [sessions]);
-  const profileKey = user?.id ? accountProfileStorageKey(user.id) : "";
+  const organizationId = activeOrganization?.id;
+  const pending = React.useRef<AbortController | null>(null);
+
+  React.useLayoutEffect(() => {
+    setProfileSaving(false);
+    setProfileError(null);
+    setEditingName(false);
+    return () => {
+      pending.current?.abort();
+      pending.current = null;
+    };
+  }, [client, user?.id, organizationId]);
 
   React.useEffect(() => {
-    if (!user || !profileKey) return;
+    if (!user) {
+      setName("");
+      setNameDraft("");
+      setAvatar(null);
+      return;
+    }
     const stored = readStoredAccountProfile(user.id);
     const nextName = user.name || stored.name || user.account || user.email;
     const nextAvatar = user.avatar || stored.avatar || null;
     setName(nextName);
     setNameDraft(nextName);
     setAvatar(nextAvatar);
-  }, [profileKey, user]);
+  }, [user]);
 
-  const saveProfile = React.useCallback(async (next: StoredAccountProfile, avatarDataUrl?: string) => {
-    if (!profileKey || !user || profileSaving) return null;
+  const saveProfile = async (nextName: string, file?: File) => {
+    if (!user || pending.current) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    pending.current = controller;
+    const isCurrent = () => {
+      const live = readDenSettings();
+      const liveUserId = readDenUserId();
+      return !signal.aborted && (!liveUserId || liveUserId === user.id) && live.authToken === authToken && live.baseUrl === baseUrl &&
+        (live.activeOrgId ?? undefined) === organizationId;
+    };
     setProfileSaving(true);
+    setProfileError(null);
     try {
-      const result = await client.updateProfile({ name: next.name, avatarDataUrl });
-      writeStoredAccountProfile(result.user.id, {
-        name: result.user.name || next.name,
-        avatar: result.user.avatar || next.avatar,
-      });
-      if (result.im) {
-        writeDenIMLoginBootstrap(result.im, activeOrganization?.id ?? readDenSettings().activeOrgId ?? null);
+      if (!isCurrent()) {
+        setProfileError("账户或组织已切换，请稍后重试。");
+        return;
       }
+      const uploaded = file ? await uploadBusinessFile({ client, organizationId: organizationId ?? "", file, purpose: "avatar", signal }) : null;
+      if (!isCurrent()) return;
+      const result = await client.updateProfile({ name: nextName, ...(uploaded && { avatarUrl: uploaded.url }) }, { signal, organizationId });
+      if (!isCurrent()) return;
+      if (result.user.id !== user.id) throw new Error("服务器返回的用户与当前账户不一致。");
+      const savedName = result.user.name || nextName;
+      const savedAvatar = result.user.avatar || avatar;
+      writeStoredAccountProfile(user.id, { name: savedName, avatar: savedAvatar });
+      if (result.im) {
+        writeDenIMLoginBootstrap(result.im, organizationId ?? null);
+      }
+      setName(savedName);
+      setNameDraft(savedName);
+      setAvatar(savedAvatar);
       setUser(result.user);
       await refresh();
-      setProfileError(null);
-      return result.user;
     } catch (error) {
-      setProfileError(error instanceof Error ? error.message : "无法保存个人资料，请稍后重试。");
-      return null;
+      if (isCurrent()) {
+        setNameDraft(name);
+        setProfileError(error instanceof Error ? error.message : "无法保存个人资料，请稍后重试。");
+      }
     } finally {
-      setProfileSaving(false);
+      if (pending.current === controller) {
+        pending.current = null;
+        setProfileSaving(false);
+      }
     }
-  }, [activeOrganization?.id, client, profileKey, profileSaving, refresh, setUser, user]);
+  };
 
-  const commitName = React.useCallback(async () => {
+  const commitName = async () => {
     const nextName = nameDraft.trim();
     setEditingName(false);
     if (!nextName) {
@@ -92,39 +130,15 @@ export function CloudAccountSection({
       return;
     }
     if (nextName === name) return;
-    const updated = await saveProfile({ name: nextName, avatar });
-    if (!updated) {
-      setNameDraft(name);
-      return;
-    }
-    const savedName = updated.name || nextName;
-    setName(savedName);
-    setNameDraft(savedName);
-    setAvatar(updated.avatar || avatar);
-  }, [avatar, name, nameDraft, saveProfile]);
+    await saveProfile(nextName);
+  };
 
-  const selectAvatar = React.useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const selectAvatar = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
     const file = input.files?.[0];
     input.value = "";
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      setProfileError("请选择图片文件。");
-      return;
-    }
-    if (file.size > 2 * 1024 * 1024) {
-      setProfileError("头像图片不能超过 2 MB。");
-      return;
-    }
-    try {
-      const nextAvatar = await readFileAsDataUrl(file);
-      const updated = await saveProfile({ name, avatar: nextAvatar }, nextAvatar);
-      if (!updated) return;
-      setAvatar(updated.avatar || nextAvatar);
-    } catch {
-      setProfileError("无法读取所选图片，请重新选择。");
-    }
-  }, [name, saveProfile]);
+    if (file) await saveProfile(name, file);
+  };
 
   const identity = name || user?.name || user?.account || user?.email || "?";
   const handle = user?.account || user?.email.split("@")[0] || "";
@@ -154,7 +168,7 @@ export function CloudAccountSection({
           ref={fileInputRef}
           className="hidden"
           type="file"
-          accept="image/*"
+          accept={businessImageAccept}
           aria-label="选择头像图片"
           onChange={(event) => void selectAvatar(event)}
         />
@@ -183,6 +197,7 @@ export function CloudAccountSection({
               type="button"
               className="group/name inline-flex max-w-80 items-center gap-2 rounded-lg px-2 py-1 text-2xl font-semibold text-dls-text hover:bg-dls-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title="点击编辑昵称"
+              disabled={profileSaving}
               onClick={() => setEditingName(true)}
             >
               <span className="truncate">{identity}</span>
@@ -219,15 +234,6 @@ export function CloudAccountSection({
       {orgsError ? <SettingsNotice tone="error">{orgsError}</SettingsNotice> : null}
     </section>
   );
-}
-
-function readFileAsDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("invalid image"));
-    reader.onerror = () => reject(reader.error ?? new Error("image read failed"));
-    reader.readAsDataURL(file);
-  });
 }
 
 function initials(value: string) {

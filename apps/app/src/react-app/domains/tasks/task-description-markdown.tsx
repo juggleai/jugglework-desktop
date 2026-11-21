@@ -59,6 +59,75 @@ export class TaskImageNode extends DecoratorNode<null> {
 }
 const imageClass = "inline-block max-h-24 max-w-full align-middle";
 
+// A standard Markdown link title distinguishes uploads from ordinary (inert)
+// task links without depending on an object-store host or changing signed URLs.
+const uploadImage = createState("image", { parse: value => value === true });
+const uploadSize = createState("bytes", { parse: value => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null });
+export class TaskFileNode extends DecoratorNode<null> {
+  $config() { return this.config("task-description-file", { extends: DecoratorNode, stateConfigs: [imageAlt, imageUrl, uploadImage, uploadSize] }); }
+  getTextContent() { return $getState(this, imageAlt); }
+  getURL() { return $getState(this, imageUrl); }
+  isImage() { return $getState(this, uploadImage); }
+  createDOM() {
+    const span = document.createElement("span");
+    if (this.isImage()) {
+      const img = document.createElement("img");
+      img.src = this.getURL(); img.alt = this.getTextContent(); img.referrerPolicy = "no-referrer"; img.className = imageClass;
+      span.append(img);
+    }
+    span.append(this.getTextContent());
+    return span;
+  }
+  updateDOM(prev: TaskFileNode) { return prev.getURL() !== this.getURL() || prev.getTextContent() !== this.getTextContent() || prev.isImage() !== this.isImage(); }
+  decorate() { return null; }
+}
+
+export function $createTaskFile(name: string, url: string, image: boolean, size: number | null = null) {
+  const node = $applyNodeReplacement(new TaskFileNode());
+  $setState(node, imageAlt, name); $setState(node, imageUrl, url); $setState(node, uploadImage, image);
+  $setState(node, uploadSize, size);
+  return node;
+}
+
+// Encode Markdown/HTML delimiters (including literal entity prefixes) once.
+// A filename remains a single text label even in other Markdown renderers.
+const fileLabel = (name: string) => name.replace(/[\x00-\x1f&<>[\]\\*_`~!|]/g, c => `&#${c.charCodeAt(0)};`);
+export type AttachmentRef = { name: string; url: string; size: number | null };
+const decodeLabel = (s: string) => s.replace(/&#(\d+);/g, (raw, n) => +n <= 0x10ffff ? String.fromCodePoint(+n) : raw);
+// Only explicit, non-image upload references belong to the attachment section.
+// Keep code samples and ordinary links byte-for-byte intact.
+export function splitTaskAttachments(source: string) {
+  const files: AttachmentRef[] = [];
+  if (!source.includes('"task-file')) return { body: source, files };
+  // Skip fenced/indented code before looking at inline code or file links. Consume
+  // just the separator inserted by join, not whitespace the author is still editing.
+  const tokens = /^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1[`~]*[ \t]*(?=\n|$)|(?![\s\S]))|^(?: {4}|\t)[^\n]*|(`+)(?!`)[\s\S]*?(?<!`)\2(?!`)|(\n?)(!?)\[([^\[\]\n]*)\]\(([^()\s]+) "task-file(?::(\d+))?"\)/gm;
+  const body = source.replace(tokens, (raw, _fence, _code, separator, image, name, address, bytes, offset) => {
+    if (address === undefined || image || source[offset - 1] === "\\") return raw;
+    const url = descriptionAddress(address, true);
+    if (!url) return raw;
+    files.push({ name: decodeLabel(name), url, size: bytes && Number.isSafeInteger(+bytes) ? +bytes : null });
+    const after = source[offset + raw.length];
+    return after && after !== "\n" ? separator : "";
+  });
+  return { body, files };
+}
+export function joinTaskAttachments(body: string, files: readonly AttachmentRef[]) {
+  return [body, ...files.map(f => `[${fileLabel(f.name)}](${f.url} "task-file${f.size === null ? "" : `:${f.size}`}")`)].filter(Boolean).join("\n");
+}
+const fileResource: TextMatchTransformer = {
+  type: "text-match", dependencies: [TaskFileNode], trigger: ")",
+  importRegExp: /(!?)\[([^\[\]\n]*)\]\(([^()\s]+) "task-file(?::(\d+))?"\)/,
+  regExp: /(!?)\[([^\[\]\n]*)\]\(([^()\s]+) "task-file(?::(\d+))?"\)$/,
+  replace(node, [, image, label, address, bytes]) {
+    const url = descriptionAddress(address, true);
+    if (url) node.replace($createTaskFile(decodeLabel(label), url, !!image, bytes && Number.isSafeInteger(+bytes) ? +bytes : null));
+  },
+  export(node) {
+    return node instanceof TaskFileNode ? (node.isImage() ? "!" : "") + joinTaskAttachments("", [{ name: node.getTextContent(), url: node.getURL(), size: $getState(node, uploadSize) }]) : null;
+  },
+};
+
 export function $createTaskImage(alt: string, url: string) {
   const node = $applyNodeReplacement(new TaskImageNode());
   $setState(node, imageAlt, alt);
@@ -107,8 +176,8 @@ const resource: TextMatchTransformer = {
   },
 };
 
-export const descriptionNodes = [HeadingNode, QuoteNode, ListItemNode, ListNode, LinkNode, TaskImageNode, TaskMentionNode];
-export const descriptionTransformers = [HEADING, QUOTE, ORDERED_LIST, UNORDERED_LIST, ...TEXT_FORMAT_TRANSFORMERS, underline, resource];
+export const descriptionNodes = [HeadingNode, QuoteNode, ListItemNode, ListNode, LinkNode, TaskImageNode, TaskMentionNode, TaskFileNode];
+export const descriptionTransformers = [HEADING, QUOTE, ORDERED_LIST, UNORDERED_LIST, ...TEXT_FORMAT_TRANSFORMERS, fileResource, underline, resource];
 
 export function $readDescription(markdown: string) {
   // Lexical 0.35 decodes numeric entities with String.fromCodePoint; out-of-range
@@ -121,10 +190,12 @@ export function $writeDescription() {
   return $convertToMarkdownString(descriptionTransformers, undefined, true);
 }
 
-// Render the same parsed nodes without an editable root, focusable links or
-// injected HTML. This also leaves read-only descriptions in the accessibility tree.
+// Only explicitly marked HTTP(S) uploads become interactive in a preview.
 function $previewNode(node: LexicalNode): React.ReactNode {
   const key = node.getKey();
+  if (node instanceof TaskFileNode) return <a key={key} href={node.getURL()} download={node.getTextContent()} target="_blank" rel="noopener noreferrer" className="text-blue-10 underline" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+    {node.isImage() && <img src={node.getURL()} alt="" className={imageClass} loading="lazy" referrerPolicy="no-referrer" />} {node.getTextContent()}
+  </a>;
   if (node instanceof TaskMentionNode) return <span key={key} className="text-blue-10">{node.getTextContent()}</span>;
   if ($isLineBreakNode(node)) return <br key={key} />;
   if ($isTextNode(node)) {
