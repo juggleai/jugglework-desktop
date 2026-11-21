@@ -2,7 +2,7 @@
 import * as React from "react";
 import { Temporal } from "@js-temporal/polyfill";
 
-import type { DenCalendar, DenCalendarEvent } from "@/app/lib/den";
+import type { DenCalendarEvent } from "@/app/lib/den";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import { layoutCalendarTimeView, type CalendarTimedSegment } from "./calendar-time-layout";
@@ -38,8 +38,7 @@ export function CalendarTimeView(props: {
   view: Exclude<CalendarViewMode, "month">;
   days: readonly Temporal.PlainDate[];
   events: readonly DenCalendarEvent[];
-  visibleCalendarIds: readonly string[];
-  calendarsById: ReadonlyMap<string, DenCalendar>;
+  eventColor: (event: DenCalendarEvent) => string;
   displayTimeZone: string;
   locale: string;
   today: Temporal.PlainDate;
@@ -54,9 +53,8 @@ export function CalendarTimeView(props: {
   const layout = React.useMemo(() => layoutCalendarTimeView({
     events: props.events,
     days: props.days,
-    visibleCalendarIds: props.visibleCalendarIds,
     displayTimeZone: props.displayTimeZone,
-  }), [props.days, props.displayTimeZone, props.events, props.visibleCalendarIds]);
+  }), [props.days, props.displayTimeZone, props.events]);
   const [now, setNow] = React.useState(() => props.now());
   React.useEffect(() => {
     const timer = setInterval(() => setNow(props.now()), 60_000);
@@ -123,7 +121,6 @@ export function CalendarTimeView(props: {
               return <div key={day.toString()} className={cn("border-r border-dls-border", weekView && isToday && "bg-[rgba(var(--dls-accent-rgb),0.045)] dark:bg-[color:color-mix(in_oklab,color-mix(in_oklab,var(--dls-accent)_65%,white)_12%,transparent)]")} style={{ gridColumn: index + 2, gridRow: `1 / span ${allDayRows}` }} data-today={isToday ? "true" : undefined} data-testid={`calendar-all-day-column-${day.toString()}`} />;
             })}
             {layout.allDaySpans.map((span) => {
-              const calendar = props.calendarsById.get(span.event.calendarId);
               const responseStatus = currentAttendeeResponse(span.event, props.currentMemberId);
               const declined = responseStatus === "declined";
               const tentative = responseStatus === "tentative";
@@ -132,7 +129,7 @@ export function CalendarTimeView(props: {
                   key={span.event.id}
                   type="button"
                   className={cn("z-[1] m-0.5 truncate rounded px-2 py-1 text-left text-xs font-medium text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/50", declined && "bg-[#e5e6e8] text-[#8f959e] line-through dark:bg-white/[0.07] dark:text-white/25", tentative && "opacity-80")}
-                  style={{ gridColumn: `${span.startIndex + 2} / ${span.endIndexExclusive + 2}`, gridRow: span.row + 1, backgroundColor: declined ? undefined : calendar?.color ?? "var(--dls-accent)" }}
+                  style={{ gridColumn: `${span.startIndex + 2} / ${span.endIndexExclusive + 2}`, gridRow: span.row + 1, backgroundColor: declined ? undefined : props.eventColor(span.event) }}
                   onClick={(click) => props.onOpenEvent(span.event.id, props.days[span.startIndex]!, click)}
                   data-testid={`calendar-all-day-event-${span.event.id}`}
                 >
@@ -212,11 +209,10 @@ export function CalendarTimeView(props: {
                   />;
                 }) : null}
                 {segments.map((segment) => {
-                  const calendar = props.calendarsById.get(segment.event.calendarId);
                   const laneOffsetRatio = segment.lane / segment.laneCount;
                   const laneWidthRatio = segment.laneSpan / segment.laneCount;
                   const reservedWidth = props.onCreateAt ? CREATE_SLOT_WIDTH : 0;
-                  const color = calendar?.color ?? "var(--dls-accent)";
+                  const color = props.eventColor(segment.event);
                   const responseStatus = currentAttendeeResponse(segment.event, props.currentMemberId);
                   const declined = responseStatus === "declined";
                   const tentative = responseStatus === "tentative";

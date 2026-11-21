@@ -97,12 +97,18 @@ Scheduling 服务失败 MUST NOT 阻止成功的普通 Calendar bootstrap 持久
 
 ### Requirement: RSVP and invitation delivery are not implied
 
-本 capability MUST NOT 把参与人选择表述为已完成的 RSVP、邀请投递、更新通知、取消通知或参与人自助响应。相关状态与多端生命周期只有在 `calendar-attendance` 完整实现后才可暴露。
+Desktop MUST NOT 把参与人选择表述为已完成的 RSVP、邀请投递、更新通知或取消通知。受邀人可从服务端授权的日程范围查询查看邀请并自行回应；这不代表另有通知送达。
 
 #### Scenario: Scheduling event is created with attendees
 
 - **WHEN** Server 接受带组织 member IDs 的 scheduling event
 - **THEN** Desktop 只确认事件保存和参与人集合，不宣称邀请已送达或参与人已接受
+
+#### Scenario: An invitee views the calendar before responding
+
+- **WHEN** 当前成员在线，且服务端范围查询返回其他组织者邀请该成员参加的日程实例
+- **THEN** 日、周、月视图在默认可见的「受邀日程」图层显示该实例，成员可以打开详情和回应，但不能编辑、删除或发起该日程的会议
+- **AND** Desktop 不把受邀实例写入个人离线缓存；刷新后不再返回的邀请不继续显示
 
 ### Requirement: Video meeting intent is durable and explicit
 

@@ -1,3 +1,4 @@
+import type { DenCalendarSchedulingListOptions } from "@/app/lib/den";
 import { calendarScopeKey, type CalendarScope } from "./calendar-scope";
 
 function calendarFilterKey(calendarIds: readonly string[] | undefined): readonly string[] {
@@ -14,8 +15,10 @@ export const calendarQueryKeys = {
   collaboration: (scope: CalendarScope) => [...calendarQueryKeys.scope(scope), "collaboration"] as const,
   organizationMembers: (scope: CalendarScope) => [...calendarQueryKeys.scope(scope), "organization-members"] as const,
   scheduling: (scope: CalendarScope) => [...calendarQueryKeys.scope(scope), "scheduling"] as const,
-  schedulingEvents: (scope: CalendarScope, range: { startInstant: string; endInstantExclusive: string; timeZone: string }) =>
-    [...calendarQueryKeys.scheduling(scope), "events", range.startInstant, range.endInstantExclusive, range.timeZone] as const,
+  schedulingEventRanges: (scope: CalendarScope, includeInvited = false) =>
+    [...calendarQueryKeys.scheduling(scope), includeInvited ? "events-with-invited" : "events"] as const,
+  schedulingEvents: (scope: CalendarScope, range: DenCalendarSchedulingListOptions) =>
+    [...calendarQueryKeys.schedulingEventRanges(scope, range.includeInvited), range.startInstant, range.endInstantExclusive, range.timeZone] as const,
   availability: (scope: CalendarScope, input: { memberIds: readonly string[]; startInstant: string; endInstantExclusive: string; timeZone: string }) =>
     [...calendarQueryKeys.scheduling(scope), "availability", [...new Set(input.memberIds)].sort(), input.startInstant, input.endInstantExclusive, input.timeZone] as const,
   memberships: (scope: CalendarScope, calendarId: string) => [...calendarQueryKeys.collaboration(scope), "memberships", calendarId] as const,

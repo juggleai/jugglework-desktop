@@ -3,7 +3,7 @@ import * as React from "react";
 import { Temporal } from "@js-temporal/polyfill";
 import { X } from "lucide-react";
 
-import type { DenCalendar, DenCalendarEvent } from "@/app/lib/den";
+import type { DenCalendarEvent } from "@/app/lib/den";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
@@ -16,7 +16,7 @@ import { formatCalendarEntryStart, splitCalendarDayOverflow, type CalendarDayEnt
 export function CalendarDayEvents(props: {
   date: string;
   entries: readonly CalendarDayEntry[];
-  calendarsById: ReadonlyMap<string, DenCalendar>;
+  eventColor: (event: DenCalendarEvent) => string;
   locale: string;
   currentMemberId: string;
   onOpenEvent?: (eventId: string, click: React.MouseEvent<HTMLButtonElement>) => void;
@@ -46,7 +46,7 @@ export function CalendarDayEvents(props: {
         </div>
       </li> : null}
       {shown.map((entry) => {
-        const calendar = props.calendarsById.get(entry.event.calendarId);
+        const color = props.eventColor(entry.event);
         const start = formatCalendarEntryStart(entry, props.locale);
         const allDay = entry.interval.kind === "allDay";
         const responseStatus = currentAttendeeResponse(entry.event, props.currentMemberId);
@@ -67,14 +67,14 @@ export function CalendarDayEvents(props: {
                 allDay && !entry.continuesToNext && "rounded-r",
                 !allDay && "rounded",
               )}
-              style={allDay && !declined ? { backgroundColor: calendar?.color ?? "var(--dls-accent)" } : undefined}
+              style={allDay && !declined ? { backgroundColor: color } : undefined}
               aria-label={start ? `${start} ${entry.event.title}` : entry.event.title}
               data-testid={`calendar-day-event-${props.date}-${entry.event.id}`}
               data-continues-from-previous={entry.continuesFromPrevious ? "true" : undefined}
               data-continues-to-next={entry.continuesToNext ? "true" : undefined}
             >
               {!allDay || declined ? (
-                <span className={cn("size-1.5 shrink-0", declined ? "rounded-[2px] border-2 border-[#b8bdc5] bg-transparent dark:border-white/30" : "rounded-full", tentative && "ring-1 ring-offset-1 ring-offset-dls-surface")} style={declined ? undefined : { backgroundColor: calendar?.color ?? "var(--dls-accent)" }} aria-hidden="true" data-testid={declined ? `calendar-day-declined-marker-${props.date}-${entry.event.id}` : undefined} />
+                <span className={cn("size-1.5 shrink-0", declined ? "rounded-[2px] border-2 border-[#b8bdc5] bg-transparent dark:border-white/30" : "rounded-full", tentative && "ring-1 ring-offset-1 ring-offset-dls-surface")} style={declined ? undefined : { backgroundColor: color }} aria-hidden="true" data-testid={declined ? `calendar-day-declined-marker-${props.date}-${entry.event.id}` : undefined} />
               ) : null}
               {start ? <span className="shrink-0 text-dls-secondary">{start}</span> : null}
               <span className="min-w-0 truncate">{entry.event.title}</span>
@@ -121,7 +121,6 @@ export function CalendarDayEvents(props: {
                 </div>
                 <ol className="subtle-scrollbar min-h-0 overflow-y-auto px-3 pb-4" data-testid={`calendar-day-overflow-list-${props.date}`}>
                   {props.entries.map((entry) => {
-                    const calendar = props.calendarsById.get(entry.event.calendarId);
                     const allDay = entry.interval.kind === "allDay";
                     const responseStatus = currentAttendeeResponse(entry.event, props.currentMemberId);
                     const declined = responseStatus === "declined";
@@ -139,7 +138,7 @@ export function CalendarDayEvents(props: {
                           )}
                           data-testid={`calendar-day-overflow-event-${props.date}-${entry.event.id}`}
                         >
-                          <span className={cn("size-2 rounded-[3px]", declined ? "border-2 border-[#b8bdc5] bg-transparent dark:border-white/30" : allDay && "ring-1 ring-white/25")} style={declined ? undefined : { backgroundColor: calendar?.color ?? "var(--dls-accent)" }} aria-hidden="true" />
+                          <span className={cn("size-2 rounded-[3px]", declined ? "border-2 border-[#b8bdc5] bg-transparent dark:border-white/30" : allDay && "ring-1 ring-white/25")} style={declined ? undefined : { backgroundColor: props.eventColor(entry.event) }} aria-hidden="true" />
                           <span className="truncate tabular-nums text-dls-secondary">{start}</span>
                           <span className="truncate font-medium">{entry.event.title}</span>
                         </button>

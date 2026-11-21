@@ -1341,6 +1341,7 @@ export default {
   "calendar.draft_unsynced": "Not synced",
   "calendar.draft_untitled": "Untitled draft",
   "calendar.sidebar": "Calendars and mini month",
+  "calendar.invited_events": "Invited events",
   "calendar.day_panel": "Selected day",
   "calendar.filter_title": "Calendars",
   "calendar.add_calendar": "Add calendar",

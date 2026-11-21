@@ -1365,6 +1365,7 @@ export default {
   "calendar.draft_unsynced": "ยังไม่ซิงค์",
   "calendar.draft_untitled": "ฉบับร่างไม่มีชื่อ",
   "calendar.sidebar": "ปฏิทินและปฏิทินขนาดเล็ก",
+  "calendar.invited_events": "กิจกรรมที่ได้รับเชิญ",
   "calendar.day_panel": "วันที่เลือก",
   "calendar.filter_title": "ปฏิทิน",
   "calendar.add_calendar": "เพิ่มปฏิทิน",

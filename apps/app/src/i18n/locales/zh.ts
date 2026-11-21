@@ -1344,6 +1344,7 @@ export default {
   "calendar.draft_unsynced": "未同步",
   "calendar.draft_untitled": "未命名草稿",
   "calendar.sidebar": "日历列表与迷你月历",
+  "calendar.invited_events": "受邀日程",
   "calendar.day_panel": "选中日",
   "calendar.filter_title": "日历",
   "calendar.add_calendar": "添加日历",

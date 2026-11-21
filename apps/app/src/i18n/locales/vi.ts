@@ -1365,6 +1365,7 @@ export default {
   "calendar.draft_unsynced": "Chưa đồng bộ",
   "calendar.draft_untitled": "Bản nháp chưa có tiêu đề",
   "calendar.sidebar": "Lịch và lịch thu nhỏ",
+  "calendar.invited_events": "Sự kiện được mời",
   "calendar.day_panel": "Ngày đã chọn",
   "calendar.filter_title": "Lịch",
   "calendar.add_calendar": "Thêm lịch",

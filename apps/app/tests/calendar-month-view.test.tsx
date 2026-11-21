@@ -5,7 +5,8 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
-import type { DenCalendar, DenCalendarEvent, DenCalendarEventTime, DenCalendarSchedulingEvent, DenOrganizationMember } from "../src/app/lib/den";
+import { createDenClient, type DenCalendar, type DenCalendarEvent, type DenCalendarEventTime, type DenCalendarSchedulingEvent, type DenCalendarSchedulingListOptions, type DenCalendarSchedulingOccurrence, type DenOrganizationMember } from "../src/app/lib/den";
+import { calendarQueryKeys } from "../src/react-app/domains/calendar/calendar-query-keys";
 import { calendarViewStorageKey } from "../src/react-app/domains/calendar/calendar-view-model";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -64,7 +65,7 @@ let calendars: DenCalendar[] = [];
 let organizationMembers: DenOrganizationMember[] = [];
 let events: DenCalendarEvent[] = [];
 const bootstrapRanges: string[] = [];
-const schedulingRanges: Array<{ startInstant: string; endInstantExclusive: string; timeZone: string }> = [];
+const schedulingRanges: DenCalendarSchedulingListOptions[] = [];
 const writes: string[] = [];
 const schedulingWrites: Array<{ op: string; eventId: string; input: Record<string, unknown> }> = [];
 let schedulingItems: Array<{ event: DenCalendarSchedulingEvent; occurrenceIndex: number; time: DenCalendarEventTime }> = [];
@@ -76,7 +77,7 @@ const client = {
     bootstrapRanges.push(`${range.startDate}/${range.endDateExclusive}`);
     return { calendars, events, coverage: { ...range, calendarIds: [] }, cursor: "c1" };
   },
-  listCalendarSchedulingEvents: async (_org: string, range: { startInstant: string; endInstantExclusive: string; timeZone: string }) => {
+  listCalendarSchedulingEvents: async (_org: string, range: DenCalendarSchedulingListOptions) => {
     schedulingRanges.push({ ...range });
     if (schedulingGate) await schedulingGate;
     if (schedulingFailure) throw schedulingFailure;
@@ -101,8 +102,9 @@ const client = {
     return { event: updated, replayed: false };
   },
 };
+let activeOrgId = "org-a";
 mock.module("../src/react-app/domains/settings/cloud/cloud-session-provider", () => ({
-  useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", user: { id: "user-a", name: "Ada", account: "ada", email: "ada@example.com" }, activeOrganization: { id: "org-a", kind: "personal", orgMemberId: "member-a" }, client }),
+  useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", user: { id: "user-a", name: "Ada", account: "ada", email: "ada@example.com" }, activeOrganization: { id: activeOrgId, kind: "personal", orgMemberId: "member-a" }, client }),
 }));
 mock.module("../src/react-app/domains/meeting/meeting-page", () => ({ MeetingPrejoin: () => null }));
 
@@ -117,6 +119,7 @@ beforeEach(() => {
   values.clear(); writes.length = 0; schedulingWrites.length = 0; bootstrapRanges.length = 0; schedulingRanges.length = 0; schedulingItems = []; schedulingFailure = null; schedulingGate = null; events = [];
   values.set(calendarViewStorageKey(calendarScope), "month");
   calendars = [calendar("cal-1", "Personal"), calendar("cal-2", "Side project")]; organizationMembers = [];
+  activeOrgId = "org-a";
 });
 
 async function render(prepare?: (queryClient: QueryClient) => void) {
@@ -132,7 +135,7 @@ async function render(prepare?: (queryClient: QueryClient) => void) {
     </QueryClientProvider>
   );
   await act(async () => { renderer = TestRenderer.create(tree()); });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await settle();
   return { renderer, queryClient, rerender: async () => { await act(async () => { renderer.update(tree()); }); } };
 }
 
@@ -140,6 +143,10 @@ const byId = (renderer: TestRenderer.ReactTestRenderer, id: string) => renderer.
 const has = (renderer: TestRenderer.ReactTestRenderer, id: string) => renderer.root.findAll((node) => node.props["data-testid"] === id).length > 0;
 const text = (node: TestRenderer.ReactTestInstance): string => node.children.map((child) => typeof child === "string" ? child : text(child)).join("");
 const click = async (renderer: TestRenderer.ReactTestRenderer, id: string) => { await act(async () => { byId(renderer, id).props.onClick(); }); };
+const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+const toggle = async (renderer: TestRenderer.ReactTestRenderer, id: string, checked: boolean) => {
+  await act(async () => { byId(renderer, id).props.onChange({ target: { checked } }); });
+};
 
 test("opens on today's month with a six-week grid spanning the month boundary", async () => {
   const { renderer } = await render();
@@ -336,7 +343,7 @@ test("requests exactly the visible six-week range and refetches on month change"
   const { renderer } = await render();
   try {
     expect(bootstrapRanges).toEqual(["2026-11-01/2026-12-13"]);
-    expect(schedulingRanges).toEqual([{ startInstant: "2026-10-31T16:00:00Z", endInstantExclusive: "2026-12-12T16:00:00Z", timeZone: "Asia/Shanghai" }]);
+    expect(schedulingRanges).toEqual([{ startInstant: "2026-10-31T16:00:00Z", endInstantExclusive: "2026-12-12T16:00:00Z", timeZone: "Asia/Shanghai", includeInvited: true }]);
     expect(Temporal.Instant.from(schedulingRanges[0]!.endInstantExclusive).since(Temporal.Instant.from(schedulingRanges[0]!.startInstant)).total("days")).toBe(42);
     await click(renderer, "calendar-next-month");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
@@ -355,7 +362,6 @@ test("merges scheduling occurrences into the default 42-day month without showin
   schedulingItems = [{ event: series, occurrenceIndex: 3, time: { kind: "allDay", startDate: "2026-11-23", endDateExclusive: "2026-11-24" } }];
   const { renderer } = await render();
   try {
-    expect(schedulingRanges[0]).toEqual({ startInstant: "2026-10-31T16:00:00Z", endInstantExclusive: "2026-12-12T16:00:00Z", timeZone: "Asia/Shanghai" });
     expect(has(renderer, "calendar-day-event-2026-11-02-series")).toBe(false);
     expect(has(renderer, "calendar-day-event-2026-11-23-scheduling:series:3")).toBe(true);
     await click(renderer, "calendar-day-event-2026-11-23-scheduling:series:3");
@@ -364,28 +370,213 @@ test("merges scheduling occurrences into the default 42-day month without showin
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
-test("recurring attendee detail sends canonical identity for scoped RSVP without parsing the synthetic ID", async () => {
+test("the invitation layer toggles separately in month, week, and day and stays scoped across navigation", async () => {
+  const day = "2026-11-09";
+  const allDay = { kind: "allDay", startDate: day, endDateExclusive: "2026-11-10" } as const;
+  // Sunday in the organizer's zone, Monday in the viewer's zone.
+  const timed = { kind: "timed", startInstant: "2026-11-08T19:30:00Z", endInstantExclusive: "2026-11-08T20:00:00Z", timeZone: "America/Los_Angeles" } as const;
+  const invite: DenCalendarSchedulingEvent = {
+    ...calendarEvent("invited", allDay, "organizer-calendar"), ownerMemberId: "member-b", status: "active", recurrence: null,
+    attendees: [{ memberId: "member-a", responseStatus: "declined" }],
+  };
+  const owner: DenCalendarSchedulingEvent = { ...invite, ...calendarEvent("owned", allDay) };
+  const unrelated = { ...invite, id: "unrelated", calendarId: "cal-1", attendees: [{ memberId: "member-b", responseStatus: "accepted" as const }] };
+  const otherOrg = { ...invite, id: "other-org", organizationId: "org-b", calendarId: "cal-1" };
+  schedulingItems = [invite, { ...invite, id: "invited-timed", time: timed }, owner, unrelated, otherOrg].map((event) => ({ event, occurrenceIndex: 1, time: event.time }));
+  const { renderer, rerender } = await render();
+  const filter = "calendar-filter-invited";
+  try {
+    await click(renderer, "calendar-filter-toggle");
+    expect(byId(renderer, filter).props.checked).toBe(true);
+    expect(has(renderer, "calendar-filter-organizer-calendar")).toBe(false);
+    expect(byId(renderer, "calendar-ready").props["data-visible-calendar-ids"]).toBe("cal-1,cal-2");
+    await click(renderer, "calendar-create-event");
+    await click(renderer, "calendar-form-calendar");
+    expect(byId(renderer, "calendar-form-calendar-menu").findAll((node) => node.type === "button" && node.props.role === "option").map((node) => node.props["data-testid"])).toEqual([
+      "calendar-form-calendar-option-cal-1", "calendar-form-calendar-option-cal-2",
+    ]);
+    await click(renderer, "calendar-form-cancel");
+    expect(has(renderer, `calendar-day-event-${day}-unrelated`)).toBe(false);
+    expect(has(renderer, `calendar-day-event-${day}-other-org`)).toBe(false);
+    for (const view of ["month", "week", "day"]) {
+      await click(renderer, `calendar-view-${view}`);
+      await settle();
+      const allDayPrefix = view === "month" ? `calendar-day-event-${day}-` : "calendar-all-day-event-";
+      const timedPrefix = view === "month" ? allDayPrefix : `calendar-time-event-${day}-`;
+      expect(has(renderer, `${allDayPrefix}invited`)).toBe(true);
+      expect(has(renderer, `${timedPrefix}invited-timed`)).toBe(true);
+      await toggle(renderer, "calendar-filter-cal-1", false);
+      expect(has(renderer, `${allDayPrefix}owned`)).toBe(false);
+      expect(has(renderer, `${allDayPrefix}invited`)).toBe(true);
+      await toggle(renderer, "calendar-filter-cal-1", true);
+      await click(renderer, `${allDayPrefix}invited`);
+      expect(has(renderer, "calendar-event-detail-rsvp")).toBe(true);
+      await toggle(renderer, filter, false);
+      expect(has(renderer, `${allDayPrefix}invited`)).toBe(false);
+      expect(has(renderer, `${timedPrefix}invited-timed`)).toBe(false);
+      expect(has(renderer, `${allDayPrefix}owned`)).toBe(true);
+      await toggle(renderer, filter, true);
+      expect(has(renderer, "calendar-event-detail")).toBe(false);
+    }
+    await click(renderer, "calendar-all-day-event-invited");
+    await click(renderer, "calendar-next-day");
+    await settle();
+    expect(has(renderer, "calendar-all-day-event-invited")).toBe(false);
+    await click(renderer, "calendar-today");
+    expect(has(renderer, "calendar-all-day-event-invited")).toBe(true);
+    expect(has(renderer, "calendar-event-detail")).toBe(false);
+    await click(renderer, "calendar-all-day-event-invited");
+    // Even the same occurrence ID in the new organization cannot retain the old selection.
+    activeOrgId = "org-b";
+    schedulingItems = [{ event: { ...invite, organizationId: "org-b" }, occurrenceIndex: 1, time: allDay }];
+    await rerender();
+    await settle();
+    expect(has(renderer, "calendar-all-day-event-invited")).toBe(true);
+    expect(has(renderer, "calendar-event-detail")).toBe(false);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("RSVP for an occurrence in another member's calendar uses the real Den client and leaves owner caches alone", async () => {
   const series: DenCalendarSchedulingEvent = {
-    ...calendarEvent("series/with:syntax", { kind: "allDay", startDate: "2026-11-02", endDateExclusive: "2026-11-03" }),
+    ...calendarEvent("series/with:syntax", { kind: "allDay", startDate: "2026-11-02", endDateExclusive: "2026-11-03" }, "organizer/calendar"),
     ownerMemberId: "member-b",
+    version: 7,
+    videoConferenceEnabled: true,
     status: "active",
     attendees: [{ memberId: "member-a", responseStatus: "needs-action" }],
     recurrence: { frequency: "weekly", interval: 1, end: { kind: "never" } },
   };
   const occurrenceTime = { kind: "allDay" as const, startDate: "2026-11-23", endDateExclusive: "2026-11-24" };
-  schedulingItems = [{ event: series, occurrenceIndex: 3, time: occurrenceTime }];
-  const { renderer } = await render();
+  let occurrence: DenCalendarSchedulingOccurrence = { event: series, occurrenceIndex: 3, time: occurrenceTime };
+  const range = { startInstant: "2026-10-31T16:00:00Z", endInstantExclusive: "2026-12-12T16:00:00Z", timeZone: "Asia/Shanghai" };
+  const ownerKey = calendarQueryKeys.schedulingEvents(calendarScope, range);
+  const writes: { path: string; input: Record<string, unknown> }[] = [];
+  let keepInvitation = true;
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = new URL(String(input));
+    if (init?.method === "GET" && url.pathname.endsWith("/calendar-scheduling/events")) {
+      expect(Object.fromEntries(url.searchParams)).toEqual({ ...range, includeInvited: "true" });
+      return Response.json({ items: keepInvitation ? [occurrence] : [] });
+    }
+    if (init?.method === "PUT" && url.pathname.endsWith("/rsvp")) {
+      expect(new Headers(init.headers).get("x-jugglework-legacy-org-id")).toBe("org-a");
+      const body = JSON.parse(String(init.body));
+      writes.push({ path: url.pathname, input: body });
+      const event = { ...series, version: occurrence.event.version + 1 };
+      occurrence = { ...occurrence, event: { ...event, attendees: [{ memberId: "member-a", responseStatus: body.responseStatus }] } };
+      // Per-occurrence RSVP returns the series aggregate, not the effective occurrence response.
+      return Response.json({ event, tombstone: null, replayed: false });
+    }
+    throw new Error(`Unexpected request: ${init?.method} ${url.pathname}`);
+  });
+  const den = createDenClient({ baseUrl: "https://den.example", token: "test-token" });
+  const list = spyOn(client, "listCalendarSchedulingEvents").mockImplementation(den.listCalendarSchedulingEvents);
+  const rsvp = spyOn(client, "rsvpCalendarSchedulingEvent").mockImplementation(den.rsvpCalendarSchedulingEvent);
+  let renderer: TestRenderer.ReactTestRenderer | undefined;
   try {
+    const rendered = await render((queryClient) => queryClient.setQueryData(ownerKey, { items: [] }));
+    renderer = rendered.renderer;
+    const { queryClient } = rendered;
+    const inviteKey = calendarQueryKeys.schedulingEvents(calendarScope, { ...range, includeInvited: true });
+    const detailKey = calendarQueryKeys.event(calendarScope, series.id);
+    expect(queryClient.getQueryData(inviteKey)).toEqual({ items: [occurrence] });
+    expect(queryClient.getQueryData(ownerKey)).toEqual({ items: [] });
+    expect(queryClient.getQueryData(detailKey)).toBeUndefined();
     await click(renderer, "calendar-day-event-2026-11-23-scheduling:series%2Fwith%3Asyntax:3");
+    expect(text(byId(renderer, "calendar-event-detail-calendar"))).toBe("calendar.invited_events");
     const responses = byId(renderer, "calendar-event-detail-rsvp").findAll((node) => node.type === "button");
     expect(responses.map((button) => text(button))).toEqual(["calendar.rsvp_accept", "calendar.rsvp_decline", "calendar.rsvp_tentative"]);
     await act(async () => { responses[0]!.props.onClick(); });
     expect(has(renderer, "calendar-event-rsvp-scope")).toBe(true);
     await click(renderer, "calendar-event-rsvp-scope-this");
     await click(renderer, "calendar-event-rsvp-scope-confirm");
-    expect(schedulingWrites[0]).toMatchObject({ op: "rsvp", eventId: "series/with:syntax", input: { scope: "this", occurrence: { occurrenceIndex: 3, startDate: "2026-11-23" }, responseStatus: "accepted" } });
-    expect(has(renderer, "calendar-event-detail-delete")).toBe(false);
-  } finally { await act(async () => { renderer.unmount(); }); }
+    await settle();
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.path).toBe("/jwork/api/v1/calendar-scheduling/events/series%2Fwith%3Asyntax/rsvp");
+    const { idempotencyKey, ...body } = writes[0]!.input;
+    expect(idempotencyKey).toMatch(/^calendar\.scheduling-rsvp\./);
+    expect(body).toEqual({ expectedVersion: 7, scope: "this", occurrence: { occurrenceIndex: 3, startDate: "2026-11-23" }, responseStatus: "accepted" });
+    expect(byId(renderer, "calendar-event-detail-rsvp").props["data-response-status"]).toBe("accepted");
+    for (const action of ["detail-edit", "detail-delete", "start-meeting"]) expect(has(renderer, `calendar-event-${action}`)).toBe(false);
+    expect(queryClient.getQueryData(ownerKey)).toEqual({ items: [] });
+    expect(queryClient.getQueryState(ownerKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryData(detailKey)).toBeUndefined();
+
+    // Removal during the post-RSVP refresh also wins over the successful write response.
+    await act(async () => { byId(renderer!, "calendar-event-detail-rsvp").findAll((node) => node.type === "button")[1]!.props.onClick(); });
+    keepInvitation = false;
+    await click(renderer, "calendar-event-rsvp-scope-confirm");
+    await settle();
+    expect(writes[1]).toMatchObject({ input: { expectedVersion: 8, responseStatus: "declined" } });
+    expect(has(renderer, "calendar-event-detail")).toBe(false);
+    expect(has(renderer, "calendar-day-event-2026-11-23-scheduling:series%2Fwith%3Asyntax:3")).toBe(false);
+    expect(queryClient.getQueryData(inviteKey)).toEqual({ items: [] });
+  } finally {
+    await act(async () => { renderer?.unmount(); });
+    list.mockRestore(); rsvp.mockRestore(); fetch.mockRestore();
+  }
+});
+
+test("foreground focus and minute polling reconcile invitations without polling while unfocused", async () => {
+  const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
+  let focused = true;
+  const host = Object.assign(new EventTarget(), { innerWidth: 1024, innerHeight: 768 });
+  const doc = Object.assign(new EventTarget(), { visibilityState: "visible", hasFocus: () => focused });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: host });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: doc });
+  const realSetInterval = globalThis.setInterval;
+  let tick: (() => void) | undefined;
+  const timer = spyOn(globalThis, "setInterval").mockImplementation((callback, ms, ...args) => {
+    if (ms === 60_000) tick = callback as () => void;
+    return realSetInterval(callback, ms, ...args);
+  });
+  const event: DenCalendarSchedulingEvent = {
+    ...calendarEvent("invite", { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" }, "organizer-calendar"),
+    ownerMemberId: "member-b", status: "active", recurrence: null, attendees: [{ memberId: "member-a", responseStatus: "needs-action" }],
+  };
+  const item = { event, occurrenceIndex: 1, time: event.time };
+  const chip = "calendar-day-event-2026-11-09-invite";
+  let renderer: TestRenderer.ReactTestRenderer | undefined;
+  try {
+    ({ renderer } = await render());
+    expect(has(renderer, chip)).toBe(false);
+    const reads = schedulingRanges.length;
+    schedulingItems = [item];
+    focused = false;
+    await act(async () => { tick!(); });
+    expect(schedulingRanges).toHaveLength(reads);
+    focused = true;
+    await act(async () => { host.dispatchEvent(new Event("focus")); });
+    await settle();
+    expect(has(renderer, chip)).toBe(true);
+    await click(renderer, chip);
+    expect(has(renderer, "calendar-event-detail")).toBe(true);
+
+    schedulingItems = [];
+    await act(async () => { tick!(); });
+    await settle();
+    expect(has(renderer, chip)).toBe(false);
+    expect(has(renderer, "calendar-event-detail")).toBe(false);
+    schedulingItems = [item];
+    await act(async () => { tick!(); });
+    await settle();
+    expect(has(renderer, chip)).toBe(true);
+    expect(has(renderer, "calendar-event-detail")).toBe(false);
+    await click(renderer, chip);
+    schedulingFailure = new Error("Calendar authorization unavailable");
+    await act(async () => { tick!(); });
+    await settle();
+    expect(has(renderer, chip)).toBe(false);
+    expect(has(renderer, "calendar-event-detail")).toBe(false);
+  } finally {
+    await act(async () => { renderer?.unmount(); });
+    timer.mockRestore();
+    if (documentDescriptor) Object.defineProperty(globalThis, "document", documentDescriptor);
+    else Reflect.deleteProperty(globalThis, "document");
+    if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
 });
 
 test("RSVP buttons show completed labels, disable only the active response, and allow switching", async () => {

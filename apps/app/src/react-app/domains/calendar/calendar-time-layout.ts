@@ -114,11 +114,11 @@ function placeAllDaySpans(events: readonly DenCalendarEvent[], days: readonly Te
 export function layoutCalendarTimeView(input: {
   events: readonly DenCalendarEvent[];
   days: readonly Temporal.PlainDate[];
-  visibleCalendarIds: readonly string[];
+  visibleCalendarIds?: readonly string[];
   displayTimeZone: string;
 }): CalendarTimeLayout {
-  const visibleIds = new Set(input.visibleCalendarIds);
-  const visibleEvents = input.events.filter((event) => visibleIds.has(event.calendarId));
+  const visibleIds = input.visibleCalendarIds && new Set(input.visibleCalendarIds);
+  const visibleEvents = visibleIds ? input.events.filter((event) => visibleIds.has(event.calendarId)) : input.events;
   const timedByDate = new Map<string, CalendarTimedSegment[]>();
   for (const day of input.days) timedByDate.set(day.toString(), []);
 

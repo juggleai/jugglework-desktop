@@ -412,6 +412,7 @@ export type DenCalendarSchedulingRsvpInput = DenCalendarSchedulingRsvpBase & (
   | { scope: "all"; occurrence?: never }
 );
 export type DenCalendarSchedulingRange = { startInstant: string; endInstantExclusive: string; timeZone: string };
+export type DenCalendarSchedulingListOptions = DenCalendarSchedulingRange & { includeInvited?: boolean };
 export type DenCalendarAvailabilityInput = DenCalendarSchedulingRange & { memberIds: string[] };
 export type DenCalendarBusyInterval = { startInstant: string; endInstantExclusive: string };
 export type DenCalendarAvailabilityMember = { memberId: string; busy: DenCalendarBusyInterval[] } | { memberId: string; unknown: true };
@@ -4640,8 +4641,8 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return normalizeCalendarChangePage(await requestJson<unknown>(baseUrls, `/v1/calendar/changes${query}`, { method: "GET", token, organizationId: orgId, signal: options.signal }));
     },
 
-    async listCalendarSchedulingEvents(orgId: string, options: DenCalendarSchedulingRange, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarSchedulingOccurrenceList> {
-      const query = calendarQuery({ startInstant: options.startInstant, endInstantExclusive: options.endInstantExclusive, timeZone: options.timeZone });
+    async listCalendarSchedulingEvents(orgId: string, options: DenCalendarSchedulingListOptions, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarSchedulingOccurrenceList> {
+      const query = calendarQuery({ startInstant: options.startInstant, endInstantExclusive: options.endInstantExclusive, timeZone: options.timeZone, includeInvited: options.includeInvited ? true : undefined });
       return normalizeCalendarSchedulingOccurrenceList(await requestJson<unknown>(baseUrls, `/v1/calendar-scheduling/events${query}`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal }));
     },
 

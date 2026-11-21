@@ -1478,6 +1478,7 @@ export default {
   "calendar.draft_unsynced": "Не синхронизировано",
   "calendar.draft_untitled": "Черновик без названия",
   "calendar.sidebar": "Календари и мини-календарь",
+  "calendar.invited_events": "Приглашения на события",
   "calendar.day_panel": "Выбранный день",
   "calendar.filter_title": "Календари",
   "calendar.add_calendar": "Добавить календарь",

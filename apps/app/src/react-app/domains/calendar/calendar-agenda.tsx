@@ -95,6 +95,7 @@ export function CalendarEventDetail(props: {
   event: DenCalendarEvent;
   scope?: CalendarScope;
   calendar: DenCalendar | undefined;
+  invitationColor?: string;
   locale: string;
   onClose: () => void;
   onEdit?: () => void;
@@ -132,9 +133,9 @@ export function CalendarEventDetail(props: {
   const currentMemberCanRespond = attendeeResponse !== undefined;
   const accepted = scheduling?.attendees.filter((item) => item.responseStatus === "accepted").length ?? 0;
   const pending = scheduling?.attendees.filter((item) => item.responseStatus === "needs-action").length ?? 0;
-  const eventColor = props.calendar?.color ?? "#3370ff";
+  const eventColor = props.invitationColor ?? props.calendar?.color ?? "#3370ff";
   const calendarOwner = props.calendar ? props.membersById?.get(props.calendar.ownerMemberId) : undefined;
-  const calendarLabel = props.calendar?.isDefault
+  const calendarLabel = props.invitationColor ? t("calendar.invited_events") : props.calendar?.isDefault
     ? calendarOwner?.user.name?.trim() || calendarOwner?.user.account?.trim() || calendarOwner?.user.email?.trim() || (props.calendar.ownerMemberId === props.currentMemberId ? props.currentUserLabel?.trim() : "") || props.calendar.name
     : props.calendar?.name;
   const [scopeAction, setScopeAction] = React.useState<{ kind: "delete" } | { kind: "rsvp"; responseStatus: "accepted" | "declined" | "tentative" } | null>(null);
@@ -236,14 +237,14 @@ export function CalendarEventDetail(props: {
             </DetailRow>
           ) : null}
           {props.event.description ? <DetailRow icon={<FileText className="size-4" />} align="start"><p className="whitespace-pre-wrap break-words leading-[18px] text-dls-text" data-testid="calendar-event-detail-description">{props.event.description}</p></DetailRow> : null}
-          {reminders.length > 0 ? <DetailRow icon={<Bell className="size-4" />}>
+          {!props.invitationColor && reminders.length > 0 ? <DetailRow icon={<Bell className="size-4" />}>
             <ul className="leading-[18px] text-dls-text" data-testid="calendar-event-detail-reminder">{reminders.map((minutes) => <li key={minutes}>{reminderLabel(minutes)}</li>)}</ul>
           </DetailRow> : null}
           <DetailRow icon={<CalendarDays className="size-4" data-testid="calendar-event-detail-calendar-icon" />}>
             <p className="leading-[18px] text-dls-text" data-testid="calendar-event-detail-calendar">{calendarLabel ?? "—"}</p>
           </DetailRow>
         </div>
-        {props.recurringOccurrence ? <p className="mt-3 rounded-lg bg-dls-hover px-3 py-2 text-xs text-dls-secondary" role="note" data-testid="calendar-occurrence-read-only">{t("calendar.occurrence_read_only")}</p> : null}
+        {props.recurringOccurrence && !props.invitationColor ? <p className="mt-3 rounded-lg bg-dls-hover px-3 py-2 text-xs text-dls-secondary" role="note" data-testid="calendar-occurrence-read-only">{t("calendar.occurrence_read_only")}</p> : null}
         {props.schedulingEditUnavailable ? <p className="mt-3 rounded-lg bg-dls-hover px-3 py-2 text-xs text-dls-secondary" role="note" data-testid={`calendar-scheduling-edit-${props.schedulingEditUnavailable}`}>{t(props.schedulingEditUnavailable === "loading" ? "calendar.scheduling_edit_loading" : props.schedulingEditUnavailable === "offline" ? "calendar.scheduling_edit_offline" : "calendar.scheduling_edit_unavailable")}</p> : null}
         {props.actionError ? <p className="mt-3 text-xs text-red-600" role="alert" data-testid="calendar-event-action-error">{props.actionError}</p> : null}
       </div>

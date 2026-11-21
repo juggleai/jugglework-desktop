@@ -1364,6 +1364,7 @@ export default {
   "calendar.draft_unsynced": "未同期",
   "calendar.draft_untitled": "無題の下書き",
   "calendar.sidebar": "カレンダーとミニカレンダー",
+  "calendar.invited_events": "招待された予定",
   "calendar.day_panel": "選択した日",
   "calendar.filter_title": "カレンダー",
   "calendar.add_calendar": "カレンダーを追加",

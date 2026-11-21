@@ -6,7 +6,7 @@ import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
-import { DenApiError, type DenCalendar, type DenCalendarEvent, type DenCalendarSchedulingEvent, type DenOrganizationMember } from "../src/app/lib/den";
+import { DenApiError, type DenCalendar, type DenCalendarEvent, type DenCalendarSchedulingEvent, type DenCalendarSchedulingListOptions, type DenCalendarSchedulingOccurrence, type DenOrganizationMember } from "../src/app/lib/den";
 import { calendarQueryKeys } from "../src/react-app/domains/calendar/calendar-query-keys";
 import { calendarEventToForm } from "../src/react-app/domains/calendar/calendar-event-form-model";
 import { createCalendarScope } from "../src/react-app/domains/calendar/calendar-scope";
@@ -60,6 +60,7 @@ const calendar = (id: string, name: string): DenCalendar => ({
 
 let calendars: DenCalendar[] = [];
 let events: DenCalendarEvent[] = [];
+let invitations: DenCalendarSchedulingOccurrence[] = [];
 type Call = { op: string; input: Record<string, unknown> };
 const calls: Call[] = [];
 /** Per-test server behaviour; returning undefined falls through to the default success path. */
@@ -72,7 +73,12 @@ let schedulingFailure: Error | null = null;
 const client = {
   listCalendars: async () => calendars,
   getCalendarBootstrap: async (_org: string, range: { startDate: string; endDateExclusive: string }) => { bootstrapCalls += 1; return { calendars, events, coverage: { ...range, calendarIds: calendars.map((c) => c.id) }, cursor: "c1" }; },
-  listCalendarSchedulingEvents: async () => { if (schedulingGate) await schedulingGate; if (schedulingFailure) throw schedulingFailure; return { items: events.filter((event) => "attendees" in event).map((event) => ({ event, occurrenceIndex: 1, time: event.time })) }; },
+  listCalendarSchedulingEvents: async (_org: string, range: DenCalendarSchedulingListOptions) => {
+    if (schedulingGate) await schedulingGate;
+    if (schedulingFailure) throw schedulingFailure;
+    const owned = events.filter((event): event is DenCalendarSchedulingEvent => "attendees" in event).map((event) => ({ event, occurrenceIndex: 1, time: event.time }));
+    return { items: range.includeInvited ? [...owned, ...invitations] : owned };
+  },
   getCalendarSchedulingAvailability: async (_org: string, input: { memberIds: string[] }) => { availabilityCalls += 1; return { members: input.memberIds.map((memberId) => ({ memberId, busy: [] })) }; },
   listOrganizationMembers: async () => ({ members: organizationMembers, total: organizationMembers.length, limit: 200, offset: 0 }),
   createCalendar: async () => { throw new Error("unexpected calendar write"); },
@@ -153,7 +159,7 @@ const setOnline = async (value: boolean) => {
 let bootstrapCalls = 0;
 
 beforeEach(() => {
-  values.clear(); calls.length = 0; events = []; failNext = null; version = 1;
+  values.clear(); calls.length = 0; events = []; invitations = []; failNext = null; version = 1;
   values.set(calendarViewStorageKey(calendarScope), "month");
   isOnline = true; onlineListeners.clear(); bootstrapCalls = 0; availabilityCalls = 0; organizationMembers = []; schedulingGate = null; schedulingFailure = null;
   cache = new CalendarIndexedDbAdapter({ indexedDB: new IDBFactory(), IDBKeyRange });
@@ -216,6 +222,33 @@ test("offline with a cached month shows saved events read-only with a stale-data
     expect(has(renderer, "calendar-day-event-2026-11-09-e1")).toBe(true);
     await click(renderer, "calendar-day-event-2026-11-09-e1");
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Title e1");
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("invited occurrences leave no IndexedDB records and do not prevent an owner baseline", async () => {
+  const owned: DenCalendarSchedulingEvent = {
+    ...baseEvent("owned"), status: "active", recurrence: null, attendees: [{ memberId: "member-a", responseStatus: "accepted" }],
+  };
+  const invited: DenCalendarSchedulingEvent = { ...owned, id: "invited", ownerMemberId: "member-b", calendarId: "organizer-calendar" };
+  events = [owned];
+  invitations = [{ event: invited, occurrenceIndex: 1, time: invited.time }];
+  const { renderer } = await render();
+  try {
+    await waitFor(() => has(renderer, "calendar-day-event-2026-11-09-invited"));
+    await click(renderer, "calendar-day-event-2026-11-09-invited");
+    expect(has(renderer, "calendar-event-detail-rsvp")).toBe(true);
+    const readStoredIds = () => cache.transaction(calendarScope, ["entities"], "readonly", async (transaction) => ({
+      events: (await transaction.listEntities("event")).map(({ entity }) => entity.id),
+      calendars: (await transaction.listEntities("calendar")).map(({ entity }) => entity.id).sort(),
+    }));
+    await wait();
+    expect(await readStoredIds()).toEqual({ events: ["owned"], calendars: ["cal-1", "cal-2"] });
+    await setOnline(false);
+    await waitFor(() => byId(renderer, "calendar-offline-banner").props["data-offline-state"] === "offline-covered");
+    expect(has(renderer, "calendar-day-event-2026-11-09-invited")).toBe(false);
+    expect(has(renderer, "calendar-event-detail")).toBe(false);
+    expect(has(renderer, "calendar-filter-invited")).toBe(false);
+    expect(has(renderer, "calendar-day-event-2026-11-09-owned")).toBe(true);
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 

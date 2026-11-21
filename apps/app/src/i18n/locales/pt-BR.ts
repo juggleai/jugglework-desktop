@@ -1372,6 +1372,7 @@ export default {
   "calendar.draft_unsynced": "Não sincronizado",
   "calendar.draft_untitled": "Rascunho sem título",
   "calendar.sidebar": "Calendários e minicalendário",
+  "calendar.invited_events": "Convites para eventos",
   "calendar.day_panel": "Dia selecionado",
   "calendar.filter_title": "Calendários",
   "calendar.add_calendar": "Adicionar calendário",

@@ -1381,6 +1381,7 @@ export default {
   "calendar.draft_unsynced": "Sense sincronitzar",
   "calendar.draft_untitled": "Esborrany sense títol",
   "calendar.sidebar": "Calendaris i minicalendari",
+  "calendar.invited_events": "Esdeveniments als quals t'han convidat",
   "calendar.day_panel": "Dia seleccionat",
   "calendar.filter_title": "Calendaris",
   "calendar.add_calendar": "Afegeix un calendari",

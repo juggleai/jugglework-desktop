@@ -289,6 +289,26 @@ describe("calendar query hooks", () => {
     expect(query.getQueryData(calendarQueryKeys.event(scopeA, scheduled.id))).toEqual(scheduled);
   });
 
+  test("default scheduling readers do not see the opt-in range for the same dates", async () => {
+    const query = queryClient();
+    const range = { startInstant: "2026-11-01T00:00:00Z", endInstantExclusive: "2026-12-01T00:00:00Z", timeZone: "UTC" };
+    const invited = { ...event(3, { ownerMemberId: "member-b", calendarId: "organizer-calendar" }), status: "active", attendees: [{ memberId: scopeA.memberId, responseStatus: "needs-action" }], recurrence: null } satisfies DenCalendarSchedulingEvent;
+    const items = [{ event: invited, occurrenceIndex: 1, time: invited.time }];
+    const client = {
+      listCalendarSchedulingEvents: async (_org: string, options: typeof range & { includeInvited?: boolean }) => ({ items: options.includeInvited ? items : [] }),
+      getCalendarSchedulingAvailability: async () => ({ members: [] }),
+    };
+    const optIn = await renderHook(query, () => useCalendarSchedulingEventsQuery({ client, scope: scopeA, range: { ...range, includeInvited: true } }));
+    await flushQueries(query);
+    const owner = await renderHook(query, () => useCalendarSchedulingEventsQuery({ client, scope: scopeA, range }));
+    expect(owner.current.data?.items ?? []).toEqual([]);
+    await flushQueries(query);
+    await owner.rerender();
+    expect(owner.current.data).toEqual({ items: [] });
+    await optIn.rerender();
+    expect(optIn.current.data).toEqual({ items });
+  });
+
   test("availability rejects a response whose member set differs from the request", async () => {
     const query = queryClient();
     const request = { memberIds: ["member-a", "member-b"], startInstant: "2026-11-01T00:00:00Z", endInstantExclusive: "2026-11-02T00:00:00Z", timeZone: "UTC" };

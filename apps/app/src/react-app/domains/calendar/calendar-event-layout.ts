@@ -35,9 +35,10 @@ export function compareCalendarEntries(left: Placed, right: Placed): number {
   return left.event.id < right.event.id ? -1 : left.event.id > right.event.id ? 1 : 0;
 }
 
-function place(event: DenCalendarEvent): Placed | null {
+function place(event: DenCalendarEvent, displayTimeZone?: string): Placed | null {
   try {
-    const interval = parseCalendarEventTime(event.time);
+    const time = parseCalendarEventTime(event.time);
+    const interval = time.kind === "timed" && displayTimeZone ? { ...time, timeZone: displayTimeZone } : time;
     const { startDate, endDateExclusive } = calendarCoverageDates(interval);
     if (Temporal.PlainDate.compare(startDate, endDateExclusive) >= 0) return null;
     return { event, interval, startDate, endDateExclusive };
@@ -49,15 +50,16 @@ function place(event: DenCalendarEvent): Placed | null {
 
 /**
  * Bucket events into the dates of `days`. Each event occupies [startDate, endDateExclusive)
- * computed from its own semantics: all-day dates as-is, timed events in their stored IANA zone,
+ * computed from its own semantics: all-day dates as-is, timed events in their stored IANA zone unless overridden,
  * with the exclusive end never occupying an extra date (a midnight end stops the day before).
  */
 export function layoutCalendarEvents(input: {
   events: readonly DenCalendarEvent[];
   days: readonly Temporal.PlainDate[];
-  visibleCalendarIds: readonly string[];
+  visibleCalendarIds?: readonly string[];
+  displayTimeZoneForEvent?: (event: DenCalendarEvent) => string | undefined;
 }): Map<string, CalendarDayEntry[]> {
-  const visible = new Set(input.visibleCalendarIds);
+  const visible = input.visibleCalendarIds && new Set(input.visibleCalendarIds);
   const result = new Map<string, CalendarDayEntry[]>();
   for (const day of input.days) result.set(day.toString(), []);
   if (input.days.length === 0) return result;
@@ -67,9 +69,9 @@ export function layoutCalendarEvents(input: {
   const seen = new Set<string>();
   const placed: Placed[] = [];
   for (const event of input.events) {
-    if (!visible.has(event.calendarId) || seen.has(event.id)) continue;
+    if ((visible && !visible.has(event.calendarId)) || seen.has(event.id)) continue;
     seen.add(event.id);
-    const item = place(event);
+    const item = place(event, input.displayTimeZoneForEvent?.(event));
     if (item) placed.push(item);
   }
   placed.sort(compareCalendarEntries);

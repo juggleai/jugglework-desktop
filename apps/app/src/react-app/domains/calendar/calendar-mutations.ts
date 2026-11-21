@@ -346,9 +346,11 @@ export function useTeamCalendarEventMutations(client: TeamCalendarEventMutationC
 export function useCalendarSchedulingEventMutations(client: CalendarSchedulingMutationClient, scope: CalendarScope | null, options: CalendarMutationOptions = {}) {
   const queryClient = useQueryClient();
   const refresh = async (capturedScope: CalendarScope) => invalidate(queryClient, [calendarQueryKeys.scheduling(capturedScope), calendarQueryKeys.bootstraps(capturedScope), calendarQueryKeys.ranges(capturedScope), calendarQueryKeys.searches(capturedScope), calendarQueryKeys.changesRoot(capturedScope)]);
+  const refreshInvited = (capturedScope: CalendarScope) => invalidate(queryClient, [calendarQueryKeys.schedulingEventRanges(capturedScope, true)]);
+  const loadedSchedulingRanges = (capturedScope: CalendarScope) => [false, true].flatMap((includeInvited) =>
+    queryClient.getQueriesData<DenCalendarSchedulingOccurrenceList>({ queryKey: calendarQueryKeys.schedulingEventRanges(capturedScope, includeInvited) }));
   const updateLoadedSchedulingRanges = (capturedScope: CalendarScope, event: DenCalendarSchedulingEventResult["event"]): void => {
-    const schedulingEventQueries = [...calendarQueryKeys.scheduling(capturedScope), "events"] as const;
-    for (const [queryKey, cached] of queryClient.getQueriesData<DenCalendarSchedulingOccurrenceList>({ queryKey: schedulingEventQueries })) {
+    for (const [queryKey, cached] of loadedSchedulingRanges(capturedScope)) {
       if (!cached) continue;
       const withoutEvent = cached.items.filter((occurrence) => occurrence.event.id !== event.id);
       const startInstant = queryKey.at(-3);
@@ -383,8 +385,7 @@ export function useCalendarSchedulingEventMutations(client: CalendarSchedulingMu
       : occurrence.time.kind === "timed" && occurrence.time.startInstant === identity.occurrence.startInstant;
   };
   const updateSchedulingOccurrences = (capturedScope: CalendarScope, updateCache: (occurrence: DenCalendarSchedulingOccurrenceList["items"][number]) => DenCalendarSchedulingOccurrenceList["items"][number] | null): void => {
-    const schedulingEventQueries = [...calendarQueryKeys.scheduling(capturedScope), "events"] as const;
-    for (const [queryKey, cached] of queryClient.getQueriesData<DenCalendarSchedulingOccurrenceList>({ queryKey: schedulingEventQueries })) {
+    for (const [queryKey, cached] of loadedSchedulingRanges(capturedScope)) {
       if (!cached) continue;
       queryClient.setQueryData<DenCalendarSchedulingOccurrenceList>(queryKey, {
         ...cached,
@@ -487,6 +488,7 @@ export function useCalendarSchedulingEventMutations(client: CalendarSchedulingMu
     expectedVersion: number;
     scope: "this" | "all";
     responseStatus: DenCalendarSchedulingRsvpInput["responseStatus"];
+    invited?: boolean;
   };
   const rsvp = usePreparedMutation<DenCalendarSchedulingEventResult, RsvpVariables, PreparedBase<RsvpVariables> & { eventId: string; input: DenCalendarSchedulingRsvpInput }>({
     retryDelay: options.retryDelay ?? 1_000,
@@ -495,7 +497,8 @@ export function useCalendarSchedulingEventMutations(client: CalendarSchedulingMu
       try {
         const capturedScope = frozenScope(scope);
         const key = idempotencyKey("scheduling-rsvp", options);
-        const expectedVersion = validateEventVersion(queryClient, capturedScope, variables.eventId, variables.expectedVersion);
+        // Invitations carry their revision in the occurrence; Den checks it on write.
+        const expectedVersion = variables.invited ? variables.expectedVersion : validateEventVersion(queryClient, capturedScope, variables.eventId, variables.expectedVersion);
         const input: DenCalendarSchedulingRsvpInput = variables.scope === "all"
           ? { idempotencyKey: key, expectedVersion, scope: "all", responseStatus: variables.responseStatus }
           : { idempotencyKey: key, expectedVersion, scope: "this", responseStatus: variables.responseStatus, occurrence: publicInput.occurrence };
@@ -504,6 +507,7 @@ export function useCalendarSchedulingEventMutations(client: CalendarSchedulingMu
     },
     mutationFn: (prepared) => client.rsvpCalendarSchedulingEvent(prepared.scope.organizationId, prepared.eventId, prepared.input),
     onError: async (error, prepared) => {
+      if (prepared.publicInput.invited) return refreshInvited(prepared.scope);
       const current = normalizeDenCalendarSchedulingEvent(calendarMutationConflict(error));
       if (current && current.id === prepared.eventId && current.organizationId === prepared.scope.organizationId) {
         setCanonicalCalendarEvent(queryClient, prepared.scope, current);
@@ -511,6 +515,7 @@ export function useCalendarSchedulingEventMutations(client: CalendarSchedulingMu
       await refresh(prepared.scope);
     },
     onSuccess: async (result, prepared) => {
+      if (prepared.publicInput.invited) return refreshInvited(prepared.scope);
       const applyResult = () => {
         setCanonicalCalendarEvent(queryClient, prepared.scope, result.event);
         updateSchedulingOccurrences(prepared.scope, (occurrence) => {

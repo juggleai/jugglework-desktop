@@ -1,5 +1,5 @@
 import { useQueries, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
 import type {
   DenCalendar,
@@ -14,7 +14,7 @@ import type {
   DenCalendarAvailability,
   DenCalendarAvailabilityInput,
   DenCalendarSchedulingOccurrenceList,
-  DenCalendarSchedulingRange,
+  DenCalendarSchedulingListOptions,
   DenOrganizationMember,
   DenTeamCalendarSnapshot,
   DenClient,
@@ -165,22 +165,52 @@ export function useCalendarOrganizationMembersQuery(input: { client: CalendarCol
   });
 }
 
-export function useCalendarSchedulingEventsQuery(input: { client: CalendarSchedulingQueryClient; scope: CalendarScope | null; range: DenCalendarSchedulingRange; active?: boolean } & CalendarGenerationInput & CalendarRefreshInput) {
+const INVITED_CALENDAR_REFRESH_MS = 60_000;
+
+export function useCalendarSchedulingEventsQuery(input: { client: CalendarSchedulingQueryClient; scope: CalendarScope | null; range: DenCalendarSchedulingListOptions; active?: boolean } & CalendarGenerationInput & CalendarRefreshInput) {
   const queryClient = useQueryClient();
   const scope = useCapturedScope(input.scope);
-  const range = useMemo(() => Object.freeze({ ...input.range }), [input.range.startInstant, input.range.endInstantExclusive, input.range.timeZone]);
-  return useQuery<DenCalendarSchedulingOccurrenceList>({
+  const { startInstant, endInstantExclusive, timeZone, includeInvited } = input.range;
+  const range = useMemo(() => Object.freeze({ startInstant, endInstantExclusive, timeZone, ...(includeInvited ? { includeInvited: true } : {}) }), [startInstant, endInstantExclusive, timeZone, includeInvited]);
+  const enabled = (input.active ?? true) && scope !== null;
+  const query = useQuery<DenCalendarSchedulingOccurrenceList>({
     ...refreshOptions(input),
+    ...(includeInvited ? { refetchOnWindowFocus: false } : {}),
     queryKey: scope ? calendarQueryKeys.schedulingEvents(scope, range) : unavailableKey("scheduling-events", scope),
-    enabled: (input.active ?? true) && scope !== null,
+    enabled,
     retry: false,
     queryFn: async ({ signal }) => {
       const result = await input.client.listCalendarSchedulingEvents(scope!.organizationId, range, { signal: calendarRequestSignal(signal, input.generation) });
       throwIfCalendarScopeStale(input.generation, signal);
-      result.items.forEach((occurrence) => setCanonicalCalendarEvent(queryClient, scope!, occurrence.event));
-      return result;
+      const items = result.items.filter(({ event }) => event.organizationId === scope!.organizationId && (
+        event.ownerMemberId === scope!.memberId || (includeInvited && event.attendees.some(({ memberId }) => memberId === scope!.memberId))
+      ));
+      // Non-owner details belong only to the opted-in range, never to the shared event cache.
+      items.forEach(({ event }) => {
+        if (event.ownerMemberId === scope!.memberId) setCanonicalCalendarEvent(queryClient, scope!, event);
+      });
+      return { items };
     },
   });
+  const { refetch } = query;
+  useEffect(() => {
+    if (!includeInvited || !enabled || typeof window === "undefined" || typeof document === "undefined") return;
+    const host = window;
+    const doc = document;
+    const refresh = () => {
+      if (doc.visibilityState !== "hidden" && doc.hasFocus()) void refetch({ cancelRefetch: false });
+    };
+    // Electron can regain focus without a visibility change.
+    host.addEventListener("focus", refresh);
+    doc.addEventListener("visibilitychange", refresh);
+    const timer = setInterval(refresh, INVITED_CALENDAR_REFRESH_MS);
+    return () => {
+      host.removeEventListener("focus", refresh);
+      doc.removeEventListener("visibilitychange", refresh);
+      clearInterval(timer);
+    };
+  }, [enabled, includeInvited, refetch]);
+  return query;
 }
 
 export function useCalendarAvailabilityQuery(input: { client: CalendarSchedulingQueryClient; scope: CalendarScope | null; request: DenCalendarAvailabilityInput | null; active?: boolean } & CalendarGenerationInput) {
