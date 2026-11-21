@@ -61,7 +61,10 @@ export type ProviderAuthJuggleWorkServer = {
   };
 };
 import {
+  currentDenSessionClearGeneration,
+  denSessionClearingEvent,
   denSessionUpdatedEvent,
+  type DenSessionClearingDetail,
   type DenSessionUpdatedDetail,
 } from "../../../../app/lib/den-session-events";
 import { cleanupJuggleWorkCloudMcpAfterSignOut } from "../cloud-mcp-reconciler";
@@ -94,8 +97,11 @@ import {
   writeGatewayMirror,
 } from "./gateway-mirror";
 import {
+  CloudCleanupError,
   cleanupCloudProviderIndependently,
+  describeCloudCleanupFailure,
   registerOrganizationCloudCleanup,
+  type CloudCleanupFailure,
 } from "./cloud-provider-cleanup";
 import {
   buildCustomProviderConfig,
@@ -139,6 +145,7 @@ const cloudProviderConnectionSingleflight =
 const gatewayCredentialRepairSingleflight =
   createKeyedSingleflight<string, boolean>();
 const cloudProviderWorkspaceMutationQueue = createKeyedSerialQueue<string>();
+const signedOutCleanupInFlight = createKeyedSingleflight<string, boolean>();
 
 /**
  * A 409 reload fence means an active session owns the engine. Falling back to
@@ -444,7 +451,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   let importedCloudProvidersWorkspaceKey = "";
 
   const currentWorkspaceKey = () =>
-    `${options.selectedWorkspaceRoot().trim()}::${options.runtimeWorkspaceId() ?? ""}`;
+    `${options.selectedWorkspaceRoot().trim()}::${options.runtimeWorkspaceId()?.trim() ?? ""}`;
 
   const emitChange = () => {
     for (const listener of listeners) listener();
@@ -1254,8 +1261,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     assertNoClientError(result);
   };
 
-  const removeProviderAuthCredentials = async (providerId: string) => {
-    const hostTarget = await resolveHostProviderAuthTarget();
+  const removeProviderAuthCredentials = async (providerId: string, pinnedHost?: { client: JuggleWorkServerClient; workspaceId: string }) => {
+    const hostTarget = pinnedHost ?? await resolveHostProviderAuthTarget();
     if (hostTarget) {
       await hostTarget.client.removeProviderAuth(hostTarget.workspaceId, providerId);
       return;
@@ -2182,6 +2189,23 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     );
   }
 
+  type CleanupTarget = {
+    client: JuggleWorkServerClient;
+    workspaceId: string;
+    root: string;
+    engine: Client | null;
+    baseUrl: string;
+    organizationId: string;
+    isCurrent: () => boolean;
+  };
+
+  const applySignedOutCleanupToCurrentStore = (target: CleanupTarget) => {
+    if (!target.isCurrent() || disposed || currentWorkspaceKey() !== `${target.root}::${target.workspaceId}` ||
+      options.juggleworkServer.getSnapshot().juggleworkServerClient !== target.client) return;
+    importedCloudProvidersWorkspaceKey = currentWorkspaceKey();
+    mutateState((current) => ({ ...current, importedCloudProviders: {}, cloudOrgProviders: [], cloudOrgProvidersError: null, providerAuthMethods: {} }));
+  };
+
   async function removeCloudProviderInternal(
     cloudProviderId: string,
     optionsArg?: { silent?: boolean },
@@ -2244,6 +2268,102 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
+  async function purgeSignedOutTarget(target: CleanupTarget): Promise<boolean> {
+    if (!target.isCurrent()) return false;
+    const { client, workspaceId } = target;
+    let config: Record<string, unknown> | null = null;
+    const failures: CloudCleanupFailure[] = [];
+    const attempt = async (stage: string, work: () => Promise<unknown>) => {
+      try { await work(); } catch (error) { failures.push(...describeCloudCleanupFailure(stage, error)); }
+    };
+    await attempt("provider_baseline_read", async () => { config = (await client.getConfig(workspaceId)).jugglework ?? {}; });
+    if (!target.isCurrent()) return false;
+    if (config) {
+      const imports = readWorkspaceCloudImports(config);
+      const remaining = { ...imports.providers };
+      for (const [cloudId, imported] of Object.entries(imports.providers)) {
+        if (!target.isCurrent()) return false;
+        await attempt("provider_cleanup", async () => {
+          await cleanupCloudProviderIndependently({
+            mirror: async () => {
+              if (!target.isCurrent()) return;
+              if (imported.gatewayMirror) await removeGatewayMirror(client, workspaceId, cloudId);
+              else if (imported.cloudProviderId === cloudId) {
+                try { await client.deleteUserEnv(legacyGatewayMirrorEnvName(cloudId)); }
+                catch (error) {
+                  if (!(error instanceof JuggleWorkServerError && error.status === 404 && error.code === "env_not_found")) throw error;
+                }
+              }
+            },
+            auth: async () => {
+              if (target.isCurrent()) await removeProviderAuthCredentials(imported.providerId, target);
+            },
+            runtime: async () => {
+              if (!target.isCurrent()) return;
+              await client.patchConfig(workspaceId, { opencode: { provider: { [imported.providerId]: null } } });
+              options.markOpencodeConfigReloadRequired({ workspaceId });
+              if (!target.isCurrent()) return;
+              // Only remove legacy blocks for exact tracked imports; this is best effort.
+              try {
+                const raw = (await client.readOpencodeConfigFile(workspaceId, "project"))?.content;
+                if (raw && target.isCurrent()) {
+                  const next = formatConfigWithoutCloudProviders(raw, [imported.providerId]);
+                  if (!configsAreSemanticallyEqual(raw, next)) await client.writeOpencodeConfigFile(workspaceId, "project", next);
+                }
+              } catch { /* The runtime entry is authoritative. */ }
+              if (target.isCurrent()) {
+                const providerIds = [imported.providerId, cloudId];
+                await removeManagedRuntimeDisabledProviders({ juggleworkClient: client, workspaceId, providerIds, isCurrent: target.isCurrent });
+                if (target.isCurrent() && !disposed && currentWorkspaceKey() === `${target.root}::${workspaceId}` && options.juggleworkServer.getSnapshot().juggleworkServerClient === client) {
+                  options.setDisabledProviders(withoutDisabledProviders(options.disabledProviders(), providerIds));
+                }
+              }
+            },
+          });
+          delete remaining[cloudId];
+        });
+      }
+      if (!target.isCurrent()) return false;
+      if (Object.keys(remaining).length !== Object.keys(imports.providers).length) {
+        await attempt("provider_baseline_write", async () => {
+          // Preserve unrelated config updates made while provider cleanup ran.
+          const latest = (await client.getConfig(workspaceId)).jugglework ?? {};
+          if (!target.isCurrent()) return;
+          const observed = isRecord(config?.cloudImports) ? config.cloudImports : {};
+          const observedProviders = isRecord(observed.providers) ? observed.providers : {};
+          const rawImports = isRecord(latest.cloudImports) ? latest.cloudImports : {};
+          const providers = isRecord(rawImports.providers) ? { ...rawImports.providers } : {};
+          let changed = false;
+          for (const [key, entry] of Object.entries(observedProviders)) {
+            const cloudId = isRecord(entry) && typeof entry.cloudProviderId === "string" ? entry.cloudProviderId.trim() : key.trim();
+            if (Object.hasOwn(imports.providers, cloudId) && !Object.hasOwn(remaining, cloudId) &&
+              Object.hasOwn(providers, key) && JSON.stringify(providers[key]) === JSON.stringify(entry)) {
+              delete providers[key];
+              changed = true;
+            }
+          }
+          if (changed) await client.patchConfig(workspaceId, { jugglework: { cloudImports: { ...rawImports, providers } } });
+        });
+      }
+    }
+    if (!target.isCurrent()) return false;
+    await attempt("mcp_cleanup", () => cleanupJuggleWorkCloudMcpAfterSignOut({
+      context: { denBaseUrl: target.baseUrl, serverBaseUrl: client.baseUrl, workspaceId, orgId: target.organizationId },
+      juggleworkClient: client,
+      opencodeClient: target.engine,
+      directory: target.root,
+      isCurrent: target.isCurrent,
+    }));
+    if (failures.length) throw new CloudCleanupError("workspace_cloud_cleanup_incomplete", failures);
+    if (!target.isCurrent()) return false;
+    try {
+      await options.onProviderAvailabilityChanged?.({ endpoint: client.baseUrl, workspaceId, workspaceRoot: target.root });
+    } catch (error) {
+      console.warn("[cloud-provider-cleanup] availability refresh failed", describeCloudCleanupFailure("availability_refresh", error));
+    }
+    return true;
+  }
+
   async function removeCloudProvider(cloudProviderId: string) {
     return await removeCloudProviderInternal(cloudProviderId);
   }
@@ -2291,12 +2411,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
    * blocks and their credentials, orphan blocks an earlier cleanup missed, and
    * the JuggleWork Cloud MCP with its account-scoped bearer token.
    *
-   * Sign-out and account-switch both land here. The MCP removal used to live
-   * on the settings route's `onBeforeSignedOut`, which meant sign-out paths
-   * that never opened Settings (forced sign-in, control-plane change) left the
-   * previous account's token registered in the workspace. This store is
-   * started by the session route as well, so putting it here covers every
-   * path.
+   * Signed-in ownership reconciliation uses this purge before applying the
+   * new owner's state. Sign-out instead runs against a captured target.
    */
   const purgeWorkspaceCloudState = async () => {
     // Capture the target before cleanup starts. Sign-out and organization
@@ -2860,14 +2976,69 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   let signedOutCleanupContext: {
     workspaceKey: string;
     client: JuggleWorkServerClient;
+    generation: number;
   } | null = null;
+  let capturedSignOutGeneration: number | null = null;
+  let unresolvedSignOutScope: { client: JuggleWorkServerClient; root: string; scope: DenSessionClearingDetail } | null = null;
+
+  const logSignedOutCleanupFailure = (error: unknown) => {
+    console.warn("[cloud-provider-cleanup] workspace_cloud_cleanup_incomplete", describeCloudCleanupFailure("workspace_cleanup", error));
+  };
+
+  const captureSignedOutCleanup = (event: Event) => {
+    const scope = (event as CustomEvent<DenSessionClearingDetail>).detail;
+    if (!scope || scope.generation !== currentDenSessionClearGeneration()) return;
+    const host = options.juggleworkServer.getSnapshot();
+    const client = host.juggleworkServerClient;
+    const workspaceId = options.runtimeWorkspaceId()?.trim();
+    if (!client || host.juggleworkServerStatus !== "connected" ||
+      host.juggleworkServerCapabilities?.config?.read === false || host.juggleworkServerCapabilities?.config?.write === false) return;
+    const root = options.selectedWorkspaceRoot().trim();
+    if (!workspaceId) {
+      if (root) unresolvedSignOutScope = { client, root, scope };
+      return;
+    }
+    const workspaceKey = `${root}::${workspaceId}`;
+    const context = { workspaceKey, client, generation: scope.generation };
+    capturedSignOutGeneration = scope.generation;
+    signedOutCleanupContext = context;
+    const isCurrent = () => currentDenSessionClearGeneration() === scope.generation && !readDenSettings().authToken?.trim();
+    const target = { client, workspaceId, root, engine: options.client(), baseUrl: scope.baseUrl, organizationId: scope.organizationId, isCurrent };
+    const dedupeKey = JSON.stringify([client.baseUrl.replace(/\/+$/, ""), workspaceId, scope.generation]);
+    // Queue immediately so older mutations finish first, but don't check the
+    // token until the queued callback runs, after clearDenSession has returned.
+    void signedOutCleanupInFlight.run(dedupeKey, async () => {
+      const run = () => cloudProviderWorkspaceMutationQueue.run(workspaceKey, () => purgeSignedOutTarget(target));
+      try {
+        return await run();
+      } catch (error) {
+        logSignedOutCleanupFailure(error);
+        if (!isCurrent()) return false;
+        await new Promise<void>((resolve) => setTimeout(resolve, 750));
+        try {
+          return await run();
+        } catch (retryError) {
+          logSignedOutCleanupFailure(retryError);
+          return false;
+        }
+      }
+    }).then((cleaned) => {
+      if (cleaned) applySignedOutCleanupToCurrentStore(target);
+    }).catch((error) => {
+      logSignedOutCleanupFailure(error);
+    });
+  };
 
   const scheduleSignedOutCleanup = () => {
     if (!started || disposed) return;
     if (readDenSettings().authToken?.trim()) {
       signedOutCleanupContext = null;
+      unresolvedSignOutScope = null;
       return;
     }
+    const generation = currentDenSessionClearGeneration();
+    // A captured sign-out must not be redirected when route options change.
+    if (capturedSignOutGeneration === generation) return;
     const host = options.juggleworkServer.getSnapshot();
     const client = host.juggleworkServerClient;
     const root = options.selectedWorkspaceRoot().trim();
@@ -2882,12 +3053,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return;
     }
     const workspaceKey = currentWorkspaceKey();
-    if (signedOutCleanupContext?.workspaceKey === workspaceKey && signedOutCleanupContext.client === client) return;
-    const context = { workspaceKey, client };
+    if (signedOutCleanupContext?.workspaceKey === workspaceKey && signedOutCleanupContext.client === client && signedOutCleanupContext.generation === generation) return;
+    const context = { workspaceKey, client, generation };
     signedOutCleanupContext = context;
+    const settings = readDenSettings();
+    const pending = unresolvedSignOutScope;
+    const scope = pending?.root === root && pending.client === client && pending.scope.generation === generation ? pending.scope : null;
     const isCurrent = () => {
       const currentHost = options.juggleworkServer.getSnapshot();
       return !disposed && started && signedOutCleanupContext === context &&
+        currentDenSessionClearGeneration() === generation &&
         !readDenSettings().authToken?.trim() &&
         currentWorkspaceKey() === context.workspaceKey &&
         currentHost.juggleworkServerStatus === "connected" &&
@@ -2921,15 +3096,20 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         return isCurrent();
       };
       if (!await refreshCleanupBaseline()) return;
-      return cloudProviderWorkspaceMutationQueue.run(context.workspaceKey, async () => {
-        if (!isCurrent()) return;
-        // Re-read the pinned target after earlier mutations; never purge using
-        // another workspace's or a pre-queue snapshot (including an empty one).
-        if (!await refreshCleanupBaseline()) return;
-        await purgeWorkspaceCloudState();
-        return true;
-      });
-    })().catch(() => false).then((cleaned) => {
+      const engine = options.client();
+      // The signed-out mutation re-reads the baseline under the queue and
+      // only acts on this pinned host and workspace ID.
+      const fixedTarget = {
+        client, workspaceId: cleanupWorkspaceId, root, engine,
+        baseUrl: scope?.baseUrl ?? settings.baseUrl, organizationId: scope?.organizationId ?? settings.activeOrgId ?? "", isCurrent,
+      };
+      const cleaned = await cloudProviderWorkspaceMutationQueue.run(context.workspaceKey, () => purgeSignedOutTarget(fixedTarget));
+      if (cleaned) applySignedOutCleanupToCurrentStore(fixedTarget);
+      return cleaned;
+    })().catch((error) => {
+      logSignedOutCleanupFailure(error);
+      return false;
+    }).then((cleaned) => {
       if (!cleaned && signedOutCleanupContext === context) signedOutCleanupContext = null;
     });
   };
@@ -3009,16 +3189,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           }));
           void runCloudProviderSync("sign_in");
         } else if (detail?.status === "signed_out") {
-          // A failed sign-in attempt does not invalidate the current session.
-          const workspaceKey = currentWorkspaceKey();
-          void cloudProviderWorkspaceMutationQueue.run(workspaceKey, purgeWorkspaceCloudState);
+          // A pre-clear capture, when available, already owns this target.
+          scheduleSignedOutCleanup();
         }
       };
+      window.addEventListener(denSessionClearingEvent, captureSignedOutCleanup);
       window.addEventListener(
         denSessionUpdatedEvent,
         handleDenSessionUpdate as EventListener,
       );
       denSessionCleanup = () => {
+        window.removeEventListener(denSessionClearingEvent, captureSignedOutCleanup);
         window.removeEventListener(
           denSessionUpdatedEvent,
           handleDenSessionUpdate as EventListener,

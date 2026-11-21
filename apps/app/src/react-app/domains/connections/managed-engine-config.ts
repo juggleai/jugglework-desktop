@@ -138,17 +138,19 @@ export async function removeManagedRuntimeDisabledProviders(options: {
   workspaceId: string | null | undefined;
   providerIds: readonly string[];
   markReloadRequired?: () => void;
+  isCurrent?: () => boolean;
 }): Promise<UpdateManagedDisabledProvidersResult> {
-  const runtimeDisabled = await readRuntimeDisabledProviders(
-    options.juggleworkClient,
-    options.workspaceId,
-  );
-  if (runtimeDisabled === null) {
+  const workspaceId = options.workspaceId?.trim();
+  const status = workspaceId && options.juggleworkClient
+    ? await options.juggleworkClient.getRuntimeConfigStatus(workspaceId)
+    : null;
+  if (!isRecord(status?.runtime)) {
     throw new Error("Could not read managed runtime disabled providers.");
   }
 
+  const runtimeDisabled = normalizeDisabledProviders(status.runtime.disabled_providers);
   const disabledProviders = withoutDisabledProviders(runtimeDisabled, options.providerIds);
-  if (sameStringList(runtimeDisabled, disabledProviders)) {
+  if (options.isCurrent?.() === false || sameStringList(runtimeDisabled, disabledProviders)) {
     return { managedRuntime: true, disabledProviders, changed: false };
   }
 

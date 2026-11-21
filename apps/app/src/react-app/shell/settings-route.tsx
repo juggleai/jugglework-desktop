@@ -62,7 +62,6 @@ import {
   workspaceLabel,
 } from "@/react-app/shell/route-workspaces";
 import { createConnectionsStore, useConnectionsStoreSnapshot } from "@/react-app/domains/connections/store";
-import { cleanupJuggleWorkCloudMcpAfterSignOut } from "@/react-app/domains/connections/cloud-mcp-reconciler";
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
 import { ConnectorAuthorizationDialog } from "@/react-app/domains/connections/connector-authorization-dialog";
 import { OrganizationConnectorAction, OrganizationConnectorCard } from "@/react-app/domains/settings/pages/organization-connector-card";
@@ -232,7 +231,6 @@ import { useReloadCoordinator } from "./reload-coordinator";
 import { CommandPalette } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
-import type { DenSettings } from "@/app/lib/den";
 import { readActiveWorkspaceId, readLastSessionFor, writeActiveWorkspaceId } from "./session-memory";
 import { settingsReturnRoute, workspaceAppsRoute, workspaceChatRoute, workspaceReviewsRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
@@ -505,7 +503,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const workspacesRef = useRef<RouteWorkspace[]>([]);
   const reconnectAttemptedWorkspaceIdRef = useRef("");
-  const refreshMcpServersRef = useRef<(() => void | Promise<void>) | null>(null);
   const notifyMcpReloadingRef = useRef<(() => void) | null>(null);
   const pollMcpServersAfterReloadRef = useRef<(() => void | Promise<void>) | null>(null);
   const remoteWorkspaceCheckRunRef = useRef<Record<string, string>>({});
@@ -749,7 +746,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       }),
     [juggleworkServerStore, reloadCoordinator.markReloadRequired],
   );
-  refreshMcpServersRef.current = connectionsStore.refreshMcpServers;
   notifyMcpReloadingRef.current = connectionsStore.notifyMcpReloading;
   pollMcpServersAfterReloadRef.current = connectionsStore.pollMcpServersAfterReload;
   const providerAuthStore = useMemo(
@@ -880,37 +876,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     void connectionsStore.refreshMcpServers();
   }, [connectionsStore, juggleworkServerStatusForMcp]);
 
-  const cleanupCloudMcpForSignOut = useCallback(async (settings: DenSettings) => {
-    const client = routeStateRef.current.selectedWorkspaceJuggleWorkClient;
-    const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() ?? "";
-    const orgId = settings.activeOrgId?.trim() ?? "";
-    if (!client || !workspaceId || !orgId) return;
-    // Settings only has a safe, exact OpenCode client/directory for the active
-    // workspace here, so sign-out cleanup is intentionally scoped to that
-    // workspace instead of guessing across every configured worker.
-    //
-    // This is no longer the only path: the provider-auth store purges the
-    // cloud MCP on every sign-out and account switch, and settles other
-    // workspaces from their owner stamp when they are next opened. This hook
-    // stays because it runs BEFORE the session is cleared, so it still has the
-    // org id needed to drop the scoped local markers as well as the token.
-    await cleanupJuggleWorkCloudMcpAfterSignOut({
-      context: {
-        denBaseUrl: settings.baseUrl,
-        serverBaseUrl: client.baseUrl,
-        workspaceId,
-        orgId,
-      },
-      juggleworkClient: client,
-      opencodeClient: routeStateRef.current.activeClient,
-      directory: routeStateRef.current.selectedWorkspaceRoot,
-    });
-    setCloudMcpHealth(null);
-    await refreshMcpServersRef.current?.();
-  }, []);
   const denSession = useDenSession({
     developerMode,
-    onBeforeSignedOut: cleanupCloudMcpForSignOut,
     openLink: (url) => platform.openLink(url),
   });
   const cloudSession = useCloudSession();

@@ -3,6 +3,24 @@ import type { DenSettings, DenUser } from "./den-types";
 export const denSessionUpdatedEvent = "jugglework-den-session-updated";
 export const denSettingsChangedEvent = "jugglework-den-settings-changed";
 export const denSessionRevokedEvent = "jugglework-den-session-revoked";
+export const denSessionClearingEvent = "jugglework-den-session-clearing";
+
+export type DenSessionClearingDetail = {
+  baseUrl: string;
+  organizationId: string;
+  generation: number;
+};
+
+let denSessionClearGeneration = 0;
+export const currentDenSessionClearGeneration = () => denSessionClearGeneration;
+
+/** Synchronous capture only. Listeners must not delay or prevent local sign-out. */
+export function dispatchDenSessionClearing(scope: Omit<DenSessionClearingDetail, "generation">) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent<DenSessionClearingDetail>(denSessionClearingEvent, {
+    detail: { ...scope, generation: ++denSessionClearGeneration },
+  }));
+}
 
 export type DenCredentialAuthorityChangeReason =
   | "session_established"

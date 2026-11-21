@@ -15,6 +15,8 @@ import {
   writeDenIMLoginBootstrap,
   writeDenLastOrganization,
 } from "../src/app/lib/den";
+import { denSessionClearingEvent, type DenSessionClearingDetail } from "../src/app/lib/den-session-events";
+import { saveControlPlaneUrl } from "../src/react-app/domains/settings/cloud/control-plane-url";
 
 const originalWindow = globalThis.window;
 
@@ -232,6 +234,21 @@ describe("desktop Den bootstrap settings", () => {
     expect(window.localStorage.getItem(CLOUD_MCP_SYNC_MARKER_STORAGE_KEY)).toBeNull();
   });
 
+  test("captures the old deployment and organization before applying a new server URL", async () => {
+    await initializeDenBootstrapConfig();
+    writeDenSettings({ baseUrl: "https://bootstrap.example.com", authToken: "fixture-session", activeOrgId: "org_old" });
+    const scopes: DenSessionClearingDetail[] = [];
+    window.dispatchEvent = (event) => {
+      if (event.type === denSessionClearingEvent) scopes.push((event as CustomEvent<DenSessionClearingDetail>).detail);
+      return true;
+    };
+
+    await saveControlPlaneUrl("https://next.example.com");
+
+    expect(scopes).toEqual([{ baseUrl: "https://bootstrap.example.com", organizationId: "org_old", generation: expect.any(Number) }]);
+    expect(readDenSettings()).toMatchObject({ baseUrl: "https://next.example.com", authToken: null, activeOrgId: null });
+  });
+
   test("keeps last organizations isolated by confirmed user", () => {
     writeDenLastOrganization("user-a", "org-team-a");
     writeDenLastOrganization("user-b", "org-team-b");
@@ -273,10 +290,16 @@ describe("desktop Den bootstrap settings", () => {
     const requests: Array<{ url: string; method: string }> = [];
     window.__JUGGLEWORK_ELECTRON__!.invokeDesktop = async (command: string, ...args: unknown[]) => {
       if (command === "getDesktopBootstrapConfig") return bootstrapConfig;
+      if (command === "juggleworkServerInfo") {
+        return { running: true, baseUrl: "http://127.0.0.1:12345", ownerToken: "fixture-client", hostToken: "fixture-host" };
+      }
       if (command === "__fetch") {
         const url = String(args[0]);
         const init = (args[1] ?? {}) as RequestInit;
         const method = init.method ?? "GET";
+        if (url === "http://127.0.0.1:12345/managed-provider-authority" && method === "DELETE") {
+          return { status: 200, statusText: "OK", headers: { "content-type": "application/json" }, body: '{"revision":null}' };
+        }
         requests.push({ url, method });
         if (url.endsWith("/v1/me/orgs")) {
           return { status: 200, statusText: "OK", headers: { "content-type": "application/json" }, body: JSON.stringify({

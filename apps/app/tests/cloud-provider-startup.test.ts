@@ -1,10 +1,21 @@
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 
 import type { DenOrgLlmProvider, DenSettings } from "../src/app/lib/den";
 import type { JuggleWorkServerClient } from "../src/app/lib/jugglework-server";
 import type { Client, WorkspaceDisplay } from "../src/app/types";
 import { readWorkspaceCloudImports, withWorkspaceCloudImports } from "../src/app/cloud/import-state";
-import { denSessionUpdatedEvent, type DenSessionUpdatedDetail } from "../src/app/lib/den-session-events";
+import {
+  denSessionClearingEvent,
+  denSessionUpdatedEvent,
+  denSettingsChangedEvent,
+  dispatchDenSessionUpdated,
+  type DenSessionUpdatedDetail,
+} from "../src/app/lib/den-session-events";
+import {
+  CLOUD_MCP_SERVER_NAME,
+  readCloudMcpUnhealthyRemintAttempt,
+  writeCloudMcpUnhealthyRemintAttempt,
+} from "../src/react-app/domains/connections/cloud-mcp-user-state";
 import { buildCloudImportedProvider } from "../src/react-app/domains/connections/provider-auth/cloud-provider-config";
 
 // Keep the real Den helpers, but never inherit a build-time development token
@@ -12,11 +23,13 @@ import { buildCloudImportedProvider } from "../src/react-app/domains/connections
 const actualDen = { ...await import("../src/app/lib/den") };
 const TOKEN_KEY = "jugglework.den.authToken";
 const ORG_KEY = "jugglework.den.activeOrgId";
+const DEN_BASE_URL = "https://cloud.startup.test";
 const ORG_ID = "org_startup_fixture";
+const TOKEN = "fixture-session-token";
 mock.module("../src/app/lib/den", () => ({
   ...actualDen,
   readDenSettings: (): DenSettings => ({
-    baseUrl: "https://cloud.startup.test",
+    baseUrl: window.localStorage.getItem(actualDen.STORAGE_BASE_URL) ?? actualDen.DEFAULT_DEN_BASE_URL,
     authToken: window.localStorage.getItem(TOKEN_KEY),
     activeOrgId: window.localStorage.getItem(ORG_KEY),
   }),
@@ -37,7 +50,7 @@ const provider: DenOrgLlmProvider = {
   createdAt: null,
   updatedAt: "2026-11-01T00:00:00.000Z",
 };
-const imported = buildCloudImportedProvider(provider, 1, ORG_ID);
+const imported = { ...buildCloudImportedProvider(provider, 1, ORG_ID), authorityId: null };
 
 function memoryStorage(): Storage {
   const data = new Map<string, string>();
@@ -71,28 +84,34 @@ const nextTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 let hostWindow: EventTarget & { localStorage: Storage };
+const blockNetwork = () => spyOn(globalThis, "fetch").mockImplementation(async () => {
+  throw new Error("Startup tests must not make network requests");
+});
+let network: ReturnType<typeof blockNetwork>;
 let stores: Store[] = [];
 let gates: ReturnType<typeof deferred>[] = [];
-let syncs: Promise<unknown>[] = [];
 let fixtureNumber = 0;
 
 beforeEach(() => {
   hostWindow = Object.assign(new EventTarget(), { localStorage: memoryStorage() });
   Object.defineProperty(globalThis, "window", { configurable: true, value: hostWindow });
-  hostWindow.localStorage.setItem(TOKEN_KEY, "fixture-session-token");
+  network = blockNetwork();
+  hostWindow.localStorage.setItem(actualDen.STORAGE_BASE_URL, DEN_BASE_URL);
+  hostWindow.localStorage.setItem(TOKEN_KEY, TOKEN);
   hostWindow.localStorage.setItem(ORG_KEY, ORG_ID);
 });
 
 afterEach(async () => {
   for (const store of stores) store.dispose();
   for (const gate of gates) gate.resolve();
-  await Promise.allSettled(syncs);
   await nextTurn();
   stores = [];
   gates = [];
-  syncs = [];
+  const networkCalls = network.mock.calls.length;
+  network.mockRestore();
   if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
   else Reflect.deleteProperty(globalThis, "window");
+  expect(networkCalls).toBe(0);
 });
 
 afterAll(() => {
@@ -127,7 +146,7 @@ function fixture(importedProviders: Record<string, typeof imported> = { [provide
     jugglework?: typeof jugglework;
     opencode?: { provider?: Record<string, unknown> };
   }) => {
-    if (patch.jugglework) jugglework = structuredClone(patch.jugglework);
+    if (patch.jugglework) jugglework = { ...jugglework, ...structuredClone(patch.jugglework) };
     for (const [id, value] of Object.entries(patch.opencode?.provider ?? {})) {
       if (value === null) delete runtimeProviders[id];
       else runtimeProviders[id] = value;
@@ -139,19 +158,19 @@ function fixture(importedProviders: Record<string, typeof imported> = { [provide
     return { ok: true };
   });
   const deleteUserEnv = mock(async () => ({ ok: true }));
-  const removeMcp = mock(async () => ({ ok: true }));
+  const removeMcp = mock(async (_workspaceId: string, _name: string) => ({ ok: true }));
   const readOpencodeConfigFile = mock(async () => ({ content: "{}" }));
   const writeOpencodeConfigFile = mock(async () => ({ ok: true }));
   const hostClient = {
-    baseUrl: "https://host.startup.test",
+    baseUrl: `https://host-${fixtureNumber}.startup.test`,
     getConfig, patchConfig, removeProviderAuth, deleteUserEnv, removeMcp,
     readOpencodeConfigFile, writeOpencodeConfigFile,
     getRuntimeConfigStatus: async () => ({ runtime: { disabled_providers: [] } }),
   } as unknown as JuggleWorkServerClient;
-  const disconnect = mock(async () => ({}));
+  const disconnect = mock(async (_input: { directory: string; name: string }) => ({}));
   const directRemove = mock(async () => ({}));
   const client = { mcp: { disconnect }, auth: { remove: directRemove } } as unknown as Client;
-  const availabilityChanged = mock(async () => {});
+  const availabilityChanged = mock(async (_scope: { endpoint: string; workspaceId: string; workspaceRoot: string }) => {});
   const markReload = mock(() => {});
 
   function create(overrides: {
@@ -210,7 +229,7 @@ function fixture(importedProviders: Record<string, typeof imported> = { [provide
   }
 
   return {
-    create, hostClient, getConfig, patchConfig, removeProviderAuth, availabilityChanged,
+    create, workspaceId, root, hostClient, getConfig, patchConfig, removeProviderAuth, removeMcp, disconnect, availabilityChanged,
     runtimeProviders, credentials, expectPreserved,
     baseline: () => readWorkspaceCloudImports(jugglework).providers,
     holdNextBaseline: () => { firstReadGate = gate(); return firstReadGate; },
@@ -236,6 +255,17 @@ async function startWithBaseline(store: Store) {
 function sessionEvent(detail?: DenSessionUpdatedDetail) {
   // Use a real Event so Node/Bun's EventTarget enforces normal dispatch rules.
   hostWindow.dispatchEvent(Object.assign(new Event(denSessionUpdatedEvent), { detail }));
+}
+
+function signOut() {
+  actualDen.clearDenSession({ includeBaseUrls: true });
+  dispatchDenSessionUpdated({ status: "signed_out" });
+}
+
+function signInAgain() {
+  hostWindow.localStorage.setItem(TOKEN_KEY, "fixture-new-login-token");
+  hostWindow.localStorage.setItem(ORG_KEY, "org_new_login_fixture");
+  dispatchDenSessionUpdated({ status: "success" });
 }
 
 describe("cloud provider startup and session cleanup", () => {
@@ -318,8 +348,7 @@ describe("cloud provider startup and session cleanup", () => {
     const { store } = f.create(trigger === "signed_out" ? {} : { client: null });
     if (trigger === "signed_out") {
       await startWithBaseline(store);
-      // Keep the fixture token: the explicit event itself must authorize purge.
-      sessionEvent({ status: "signed_out" });
+      signOut();
     } else {
       hostWindow.localStorage.removeItem(TOKEN_KEY);
       store.start();
@@ -331,6 +360,181 @@ describe("cloud provider startup and session cleanup", () => {
     expect(f.removeProviderAuth.mock.calls[0]?.[1]).toBe(imported.providerId);
     expect(f.patchConfig.mock.calls.some(([, patch]) => patch.opencode?.provider?.[imported.providerId] === null)).toBe(true);
     expect(store.getSnapshot().importedCloudProviders).toEqual({});
+  });
+
+  test("clearDenSession announces the old session before storage is cleared and signed_out follows", async () => {
+    const f = fixture();
+    const { store } = f.create();
+    await startWithBaseline(store);
+    const oldScope = { denBaseUrl: DEN_BASE_URL, serverBaseUrl: f.hostClient.baseUrl, orgId: ORG_ID, workspaceId: f.workspaceId };
+    const otherScope = { ...oldScope, orgId: "org_other_fixture" };
+    writeCloudMcpUnhealthyRemintAttempt({ ...oldScope, attemptedAt: 1 });
+    writeCloudMcpUnhealthyRemintAttempt({ ...otherScope, attemptedAt: 2 });
+
+    const events = [denSessionClearingEvent, denSettingsChangedEvent, denSessionUpdatedEvent];
+    const seen: unknown[] = [];
+    for (const type of events) {
+      hostWindow.addEventListener(type, (event) => {
+        seen.push({
+          type,
+          token: hostWindow.localStorage.getItem(TOKEN_KEY),
+          org: hostWindow.localStorage.getItem(ORG_KEY),
+          baseUrl: hostWindow.localStorage.getItem(actualDen.STORAGE_BASE_URL),
+          detail: (event as CustomEvent<unknown>).detail,
+        });
+      }, { once: true });
+    }
+    signOut();
+    expect(seen).toEqual([
+      { type: denSessionClearingEvent, token: TOKEN, org: ORG_ID, baseUrl: DEN_BASE_URL,
+        detail: { baseUrl: DEN_BASE_URL, organizationId: ORG_ID, generation: expect.any(Number) } },
+      { type: denSettingsChangedEvent, token: null, org: null, baseUrl: null,
+        detail: { settings: expect.objectContaining({ authToken: null, activeOrgId: null }) } },
+      { type: denSessionUpdatedEvent, token: null, org: null, baseUrl: null,
+        detail: { status: "signed_out", reason: "signed_out", authEpoch: expect.any(Number) } },
+    ]);
+    await waitFor(() => f.availabilityChanged.mock.calls.length > 0, "captured scope cleanup");
+    expect(readCloudMcpUnhealthyRemintAttempt(oldScope)).toBeNull();
+    expect(readCloudMcpUnhealthyRemintAttempt(otherScope)).toEqual({ ...otherScope, attemptedAt: 2 });
+  });
+
+  test.each(["route change", "route change and dispose"] as const)("captured sign-out cleans only the old workspace and host after %s", async (change) => {
+    const f = fixture();
+    const other = fixture();
+    const { store, target } = f.create();
+    const newRoute = other.create().target;
+    await startWithBaseline(store);
+    signOut();
+    // Move before yielding so no queued cleanup can resolve its target first.
+    Object.assign(target, newRoute);
+    if (change === "route change and dispose") store.dispose();
+    else store.syncFromOptions();
+
+    await waitFor(() => f.availabilityChanged.mock.calls.length > 0, "cleanup on the captured host");
+    expect(f.baseline()).toEqual({});
+    expect(f.runtimeProviders[imported.providerId]).toBeUndefined();
+    expect(f.credentials.has(imported.providerId)).toBe(false);
+    expect(f.getConfig.mock.calls.every(([workspaceId]) => workspaceId === f.workspaceId)).toBe(true);
+    expect(f.removeProviderAuth.mock.calls).toEqual([[f.workspaceId, imported.providerId]]);
+    expect(f.patchConfig.mock.calls.every(([workspaceId]) => workspaceId === f.workspaceId)).toBe(true);
+    expect(f.removeMcp.mock.calls).toEqual([[f.workspaceId, CLOUD_MCP_SERVER_NAME]]);
+    expect(f.disconnect.mock.calls).toEqual([[{ directory: f.root, name: CLOUD_MCP_SERVER_NAME }]]);
+    expect(f.availabilityChanged.mock.calls).toEqual([[{
+      endpoint: f.hostClient.baseUrl, workspaceId: f.workspaceId, workspaceRoot: f.root,
+    }]]);
+    expect(other.getConfig).not.toHaveBeenCalled();
+    other.expectPreserved();
+  });
+
+  test("a new login while the captured sign-out baseline is blocked cancels cleanup", async () => {
+    const f = fixture();
+    const { store } = f.create({ client: null });
+    await startWithBaseline(store);
+    const pending = f.holdNextBaseline();
+    signOut();
+    await waitFor(() => f.getConfig.mock.calls.length === 2, "blocked sign-out baseline");
+    signInAgain();
+    pending.resolve();
+    await store.runCloudProviderSync("app_launch");
+    await nextTurn();
+    f.expectPreserved();
+    expect(store.getSnapshot().importedCloudProviders[provider.id]).toEqual(imported);
+  });
+
+  test("a newer sign-out cancels an older cleanup even though the latest session is tokenless", async () => {
+    const f = fixture();
+    const other = fixture();
+    const { store, target } = f.create({ client: null });
+    await startWithBaseline(store);
+    const pending = f.holdNextBaseline();
+    signOut();
+    await waitFor(() => f.getConfig.mock.calls.length === 2, "blocked original sign-out baseline");
+
+    Object.assign(target, other.create({ client: null }).target);
+    signInAgain();
+    signOut();
+    pending.resolve();
+
+    await waitFor(() => other.removeMcp.mock.calls.length === 1, "newer sign-out cleanup");
+    await nextTurn();
+    expect(f.baseline()[provider.id]).toEqual(imported);
+    expect(f.runtimeProviders[imported.providerId]).toBeDefined();
+    expect(f.credentials.has(imported.providerId)).toBe(true);
+    expect(f.patchConfig).not.toHaveBeenCalled();
+    expect(f.removeProviderAuth).not.toHaveBeenCalled();
+    expect(f.removeMcp).not.toHaveBeenCalled();
+    expect(f.availabilityChanged.mock.calls).toEqual([[{
+      endpoint: other.hostClient.baseUrl, workspaceId: other.workspaceId, workspaceRoot: other.root,
+    }]]);
+    expect(other.baseline()).toEqual({});
+  });
+
+  test.each(["transient error", "persistent error", "new login"] as const)("captured sign-out retry after %s", async (outcome) => {
+    const f = fixture();
+    const { store } = f.create({ client: null });
+    await startWithBaseline(store);
+    const error = new Error("Fixture auth removal failed");
+    if (outcome === "persistent error") f.removeProviderAuth.mockRejectedValue(error);
+    else f.removeProviderAuth.mockRejectedValueOnce(error);
+    signOut();
+    await waitFor(() => f.removeMcp.mock.calls.length > 0, "first failed cleanup attempt");
+    await nextTurn(); // Let the failed attempt finish and arm its 750 ms retry.
+    expect(f.removeProviderAuth).toHaveBeenCalledTimes(1);
+    expect(f.availabilityChanged).not.toHaveBeenCalled();
+    expect(f.baseline()[provider.id]).toEqual(imported);
+    expect(f.credentials.has(imported.providerId)).toBe(true);
+
+    if (outcome === "new login") {
+      signInAgain();
+      const reads = f.getConfig.mock.calls.length;
+      const writes = f.patchConfig.mock.calls.length;
+      await Bun.sleep(800);
+      expect(f.getConfig).toHaveBeenCalledTimes(reads);
+      expect(f.patchConfig).toHaveBeenCalledTimes(writes);
+      expect(f.removeProviderAuth).toHaveBeenCalledTimes(1);
+      expect(f.removeMcp).toHaveBeenCalledTimes(1);
+      expect(f.availabilityChanged).not.toHaveBeenCalled();
+      expect(f.baseline()[provider.id]).toEqual(imported);
+      expect(f.credentials.has(imported.providerId)).toBe(true);
+    } else {
+      await waitFor(() => f.removeMcp.mock.calls.length >= 2, "retried cleanup attempt");
+      if (outcome === "persistent error") {
+        // After a second failure, another full retry window must stay quiet.
+        await Bun.sleep(800);
+        expect(f.availabilityChanged).not.toHaveBeenCalled();
+        expect(f.baseline()[provider.id]).toEqual(imported);
+        expect(f.credentials.has(imported.providerId)).toBe(true);
+      } else {
+        await nextTurn();
+        expect(f.availabilityChanged).toHaveBeenCalledTimes(1);
+        expect(f.baseline()).toEqual({});
+        expect(f.credentials.has(imported.providerId)).toBe(false);
+        expect(store.getSnapshot().importedCloudProviders).toEqual({});
+      }
+      expect(f.removeProviderAuth).toHaveBeenCalledTimes(2);
+      expect(f.removeMcp).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  test("two stores reporting the same host and workspace share one captured sign-out cleanup", async () => {
+    const f = fixture();
+    const first = f.create({ client: null }).store;
+    const second = f.create({ client: null, hostClient: { ...f.hostClient } }).store;
+    await startWithBaseline(first);
+    await startWithBaseline(second);
+    const pending = f.holdNextBaseline();
+    signOut();
+    await waitFor(() => f.getConfig.mock.calls.length >= 3, "shared sign-out baseline");
+    pending.resolve();
+    await first.runCloudProviderSync("app_launch");
+    await nextTurn();
+    expect(f.baseline()).toEqual({});
+    expect(f.removeProviderAuth).toHaveBeenCalledTimes(1);
+    // An extra cleanup can see an empty provider baseline but still remove MCP again.
+    expect(f.removeMcp.mock.calls).toEqual([[f.workspaceId, CLOUD_MCP_SERVER_NAME]]);
+    expect(f.availabilityChanged).toHaveBeenCalledTimes(1);
+    expect(first.getSnapshot().importedCloudProviders).toEqual({});
+    expect(second.getSnapshot().importedCloudProviders).toEqual({});
   });
 
   test.each(["ensured workspace id", "late workspace target", "late host"] as const)("tokenless startup cleans up after %s becomes ready only once", async (readiness) => {
@@ -377,6 +581,7 @@ describe("cloud provider startup and session cleanup", () => {
     const other = fixture({});
     const { store, target } = f.create({ client: null });
     await startWithBaseline(store);
+    expect(f.getConfig.mock.calls).toEqual([[f.workspaceId]]);
     hostWindow.localStorage.removeItem(TOKEN_KEY);
     const pending = f.holdNextBaseline();
     store.syncFromOptions();
@@ -423,13 +628,18 @@ describe("cloud provider startup and session cleanup", () => {
 
   test.each(["login", "dispose", "workspace switch"] as const)("startup cleanup waits behind workspace mutations and cancels on queued %s", async (change) => {
     const f = fixture();
-    const pending = f.holdNextBaseline();
-    const blocker = f.create().store;
-    const blockingSync = blocker.runCloudProviderSync("app_launch");
-    syncs.push(blockingSync);
-    await waitFor(() => f.getConfig.mock.calls.length === 1, "sync holding the workspace mutation queue");
-
     hostWindow.localStorage.removeItem(TOKEN_KEY);
+    // A prior tokenless cleanup holds the same workspace queue, but reads and
+    // mutates a separate fake host so it cannot change the state under test.
+    const holder = fixture({});
+    const beforeQueue = holder.holdNextBaseline();
+    const { store: blocker } = holder.create({ client: null, root: f.root, workspaceId: f.workspaceId });
+    blocker.start();
+    await waitFor(() => holder.getConfig.mock.calls.length === 1, "queue holder's initial baseline");
+    const pending = holder.holdNextBaseline();
+    beforeQueue.resolve();
+    await waitFor(() => holder.getConfig.mock.calls.length === 2, "cleanup holding the workspace mutation queue");
+
     const { store, target } = f.create({ client: null });
     await startWithBaseline(store);
     const writesWhileBlocked = f.patchConfig.mock.calls.length;
@@ -443,8 +653,8 @@ describe("cloud provider startup and session cleanup", () => {
       target.workspaceId = "ws_switched_while_queued";
     }
     pending.resolve();
-    await blockingSync;
-    await store.runCloudProviderSync("app_launch");
+    // Keep the barrier on the original queue even if the tested route moved.
+    await blocker.runCloudProviderSync("app_launch");
     await nextTurn();
 
     expect(writesWhileBlocked).toBe(0);

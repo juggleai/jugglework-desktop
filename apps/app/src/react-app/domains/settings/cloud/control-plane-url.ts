@@ -41,7 +41,7 @@ export async function saveControlPlaneUrl(value: string) {
   const persisted = await setDenBootstrapConfig({
     baseUrl: resolved.baseUrl,
     requireSignin: bootstrap.requireSignin,
-  });
+  }, { clearSessionBeforeApply: true });
 
   writeDenSettings(
     {

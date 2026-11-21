@@ -503,7 +503,7 @@ describe("session MCP maintenance", () => {
     expect(minted).toBe(false);
   });
 
-  test("pre-signout cleanup removes runtime MCP and disconnects the exact active workspace before resolving", async () => {
+  test("cleanup removes runtime MCP and disconnects the exact captured workspace", async () => {
     const events: string[] = [];
     await cleanupJuggleWorkCloudMcpAfterSignOut({
       context: {
@@ -527,13 +527,25 @@ describe("session MCP maintenance", () => {
       },
       directory: "/workspace/exact",
     });
-    events.push("auth-cleared");
-
-    expect(events.slice(0, 2).sort()).toEqual([
+    expect(events.sort()).toEqual([
       "disconnect:/workspace/exact:jugglework-cloud",
       `remove:${WORKSPACE_ID}:jugglework-cloud`,
     ].sort());
-    expect(events[2]).toBe("auth-cleared");
+  });
+
+  test.each([404, 503])("SDK disconnect HTTP %d is handled without relying on a thrown error", async (status) => {
+    const removeMcp = async () => { removed += 1; };
+    let removed = 0;
+    const result = cleanupJuggleWorkCloudMcpAfterSignOut({
+      context: { denBaseUrl: SETTINGS.baseUrl, serverBaseUrl: "https://worker.jugglework.test", orgId: "", workspaceId: WORKSPACE_ID },
+      juggleworkClient: { baseUrl: "https://worker.jugglework.test", removeMcp },
+      opencodeClient: { mcp: { disconnect: async () => ({ error: { code: "private_error_payload" }, response: { ok: false, status } }) } },
+      directory: "/workspace/exact",
+    });
+    if (status === 404) await expect(result).resolves.toBeUndefined();
+    else await expect(result).rejects.toMatchObject({ failures: [{ stage: "mcp_disconnect", status: 503 }] });
+    // The old org may be unavailable; this must not block exact server cleanup.
+    expect(removed).toBe(1);
   });
 
   test("deduplicates the same target without blocking another workspace", async () => {

@@ -12,6 +12,7 @@ export { normalizeDesktopConfig };
 
 import { isDesktopDeployment } from "./jugglework-deployment";
 import {
+  dispatchDenSessionClearing,
   dispatchDenSessionRevoked,
   dispatchDenSettingsChanged,
 } from "./den-session-events";
@@ -2001,7 +2002,7 @@ export async function refreshDenBootstrapConfigFromShell(): Promise<DenBootstrap
 
 export async function setDenBootstrapConfig(
   next: ShellDesktopBootstrapConfig,
-  options?: { dispatchSettingsChanged?: boolean },
+  options?: { dispatchSettingsChanged?: boolean; clearSessionBeforeApply?: boolean },
 ): Promise<DenBootstrapConfig> {
   const normalized = resolveDenBootstrapConfig(next);
 
@@ -2016,8 +2017,10 @@ export async function setDenBootstrapConfig(
       ...(normalized.prepared ? { prepared: normalized.prepared } : {}),
     });
     
+    if (options?.clearSessionBeforeApply) clearDenSession({ dispatchSettingsChanged: false });
     applyDesktopBootstrapConfig(resolveDenBootstrapConfig({ ...persisted, source: "file" }));
   } else {
+    if (options?.clearSessionBeforeApply) clearDenSession({ dispatchSettingsChanged: false });
     applyDesktopBootstrapConfig(normalized);
   }
 
@@ -2302,6 +2305,10 @@ export function writeDenSettings(next: DenSettings, options?: { persistBootstrap
     return;
   }
 
+  if (!authToken && (previous.authToken || previous.activeOrgId)) {
+    dispatchDenSessionClearing({ baseUrl: previous.baseUrl, organizationId: previous.activeOrgId ?? "" });
+  }
+
   if (isDesktopRuntime()) {
     window.localStorage.removeItem(STORAGE_BASE_URL);
   } else {
@@ -2359,12 +2366,15 @@ export function writeDenSettings(next: DenSettings, options?: { persistBootstrap
   });
 }
 
-export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
+export function clearDenSession(options?: { includeBaseUrls?: boolean; dispatchSettingsChanged?: boolean }) {
   if (typeof window === "undefined") {
     return;
   }
 
   const previous = readDenSettings();
+  if (previous.authToken || previous.activeOrgId) {
+    dispatchDenSessionClearing({ baseUrl: previous.baseUrl, organizationId: previous.activeOrgId ?? "" });
+  }
   if (options?.includeBaseUrls) {
     window.localStorage.removeItem(STORAGE_BASE_URL);
     window.localStorage.removeItem(LEGACY_STORAGE_API_BASE_URL);
@@ -2396,9 +2406,9 @@ export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
   // case it exists for — sign out A, sign in B — look like a first sign-in.
   if (previous.authToken || previous.activeOrgId) managedProviderIdentityChanged();
 
-  dispatchDenSettingsChanged({
-    settings: readDenSettings(),
-  });
+  if (options?.dispatchSettingsChanged !== false) {
+    dispatchDenSettingsChanged({ settings: readDenSettings() });
+  }
 }
 
 export async function ensureDenActiveOrganization(options?: { forceServerSync?: boolean }) {

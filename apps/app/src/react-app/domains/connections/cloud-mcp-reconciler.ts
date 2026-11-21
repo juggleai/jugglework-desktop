@@ -31,6 +31,8 @@ import {
   type CloudMcpUserState,
 } from "./cloud-mcp-user-state";
 import { resolveWorkspaceMcpKey } from "./workspace-mcp-key";
+import { CloudCleanupError, describeCloudCleanupFailure } from "./provider-auth/cloud-provider-cleanup";
+import { createKeyedSerialQueue } from "./provider-auth/cloud-provider-sync-queue";
 
 export const JUGGLEWORK_CLOUD_EXPECTED_TOOLS = [
   "jugglework-cloud_search_capabilities",
@@ -125,7 +127,9 @@ type CleanupClient = {
 };
 
 const repairInFlight = new Map<string, Promise<CloudMcpOperationResult>>();
-const repairMutationTail = new Map<string, Promise<void>>();
+const mcpMutationQueue = createKeyedSerialQueue<string>();
+const mcpMutationKey = (serverBaseUrl: string, workspaceId: string) =>
+  JSON.stringify([serverBaseUrl.trim().replace(/\/+$/, ""), workspaceId.trim()]);
 
 const APP_VERSION = String(import.meta.env.VITE_JUGGLEWORK_APP_VERSION ?? "").trim();
 const APP_BUILD_SHA = String(import.meta.env.VITE_JUGGLEWORK_BUILD_SHA ?? import.meta.env.VITE_JUGGLEWORK_GIT_SHA ?? "").trim();
@@ -450,7 +454,7 @@ export async function runJuggleWorkCloudMcpReconciler(input: CloudMcpReconcilerI
   const scopeKey = getCloudMcpScopeKey(scope);
   if (!scopeKey) return { status: "skipped", health: null, skippedReason: "missing_workspace", attempts: 0, markerWritten: false, reminted: false };
   // 同一 workspace/server 的组织切换不能并发写入；组织仍由 isScopeCurrent 在写前确认。
-  const mutationKey = JSON.stringify([scope.denBaseUrl, scope.serverBaseUrl, scope.workspaceId]);
+  const mutationKey = mcpMutationKey(scope.serverBaseUrl, scope.workspaceId);
   const existing = repairInFlight.get(scopeKey);
   if (existing) return existing;
   // 工作区键在这里统一解析，所有调用点（会话维护、Settings › Connect 的测试与修复）
@@ -461,15 +465,10 @@ export async function runJuggleWorkCloudMcpReconciler(input: CloudMcpReconcilerI
         ...input,
         context: { ...input.context, workspaceKey: await resolveWorkspaceMcpKey(input.client, scope.workspaceId) },
       };
-  const previousMutation = repairMutationTail.get(mutationKey) ?? Promise.resolve();
-  const task = previousMutation.catch(() => undefined).then(() => repairCloudMcp(resolved, scope)).finally(() => {
+  const task = mcpMutationQueue.run(mutationKey, () => repairCloudMcp(resolved, scope)).finally(() => {
     repairInFlight.delete(scopeKey);
   });
-  const mutationTail = task.then(() => undefined, () => undefined).finally(() => {
-    if (repairMutationTail.get(mutationKey) === mutationTail) repairMutationTail.delete(mutationKey);
-  });
   repairInFlight.set(scopeKey, task);
-  repairMutationTail.set(mutationKey, mutationTail);
   return task;
 }
 
@@ -635,19 +634,33 @@ export async function cleanupJuggleWorkCloudMcpAfterSignOut(input: {
   juggleworkClient: CleanupClient | null;
   opencodeClient: OpenCodeDisconnectClient | null;
   directory: string;
+  isCurrent?: () => boolean;
 }): Promise<void> {
   const scope = normalizeCloudMcpScope(input.context);
-  if (scope) clearCloudMcpScopedMetadata(scope);
-
-  const results = await Promise.allSettled([
-    input.juggleworkClient && scope
-      ? input.juggleworkClient.removeMcp(scope.workspaceId, CLOUD_MCP_SERVER_NAME)
-      : Promise.resolve(null),
-    input.opencodeClient && input.directory.trim()
-      ? input.opencodeClient.mcp.disconnect({ directory: input.directory.trim(), name: CLOUD_MCP_SERVER_NAME })
-      : Promise.resolve(null),
-  ]);
-  if (results.some((result) => result.status === "rejected")) throw new Error("cloud_mcp_cleanup_incomplete");
+  const workspaceId = input.context.workspaceId.trim();
+  await mcpMutationQueue.run(mcpMutationKey(input.context.serverBaseUrl, workspaceId), async () => {
+    if (input.isCurrent && !input.isCurrent()) return;
+    if (scope) clearCloudMcpScopedMetadata(scope);
+    const results = await Promise.allSettled([
+      (async () => {
+        if (input.juggleworkClient && workspaceId) {
+          await input.juggleworkClient.removeMcp(workspaceId, CLOUD_MCP_SERVER_NAME);
+        }
+      })(),
+      (async () => {
+        if (!input.opencodeClient || !input.directory.trim()) return;
+        const result = await input.opencodeClient.mcp.disconnect({ directory: input.directory.trim(), name: CLOUD_MCP_SERVER_NAME });
+        const response = result as { error?: { code?: unknown }; response?: { ok?: boolean; status?: number }; data?: boolean } | undefined;
+        if (response?.response?.status === 404) return; // The engine entry is already absent.
+        if (response?.error != null || response?.response?.ok === false || response?.data === false) {
+          throw { status: response.response?.status, code: response.error?.code };
+        }
+      })(),
+    ]);
+    const failures = results.flatMap((result, index) => result.status === "rejected"
+      ? describeCloudCleanupFailure(index === 0 ? "mcp_remove" : "mcp_disconnect", result.reason) : []);
+    if (failures.length) throw new CloudCleanupError("cloud_mcp_cleanup_incomplete", failures);
+  });
 }
 
 export function recordCloudMcpDisabledIntent(scope: CloudMcpScope, state: CloudMcpUserState): void {

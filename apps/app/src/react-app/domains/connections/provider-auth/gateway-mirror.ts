@@ -3,6 +3,7 @@ import {
   type JuggleWorkServerClient,
 } from "../../../../app/lib/jugglework-server";
 import type { CloudGatewayMirrorReference } from "@jugglework/types/provider-credentials";
+import { CloudCleanupError, describeCloudCleanupFailure } from "./cloud-provider-cleanup";
 
 type GatewayMirrorClient = Pick<
   JuggleWorkServerClient,
@@ -24,7 +25,7 @@ export function isBenignGatewayMirrorError(
   operation: GatewayMirrorOperation,
 ): boolean {
   if (!(error instanceof JuggleWorkServerError)) return false;
-  if (operation === "delete" && error.status === 404) return true;
+  if (operation === "delete" && error.status === 404 && error.code === "env_not_found") return true;
   return MISSING_USER_ENV_CAPABILITY_ERRORS.has(
     `${error.status}:${error.code.trim().toLowerCase()}`,
   );
@@ -64,6 +65,6 @@ export async function removeGatewayMirror(
     await client.removeCloudProviderMirror(workspaceId, cloudProviderId);
   } catch (error) {
     if (isBenignGatewayMirrorError(error, "delete")) return;
-    throw mirrorFailure("delete");
+    throw new CloudCleanupError(mirrorFailure("delete").message, describeCloudCleanupFailure("provider_mirror", error));
   }
 }

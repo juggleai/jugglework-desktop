@@ -21,7 +21,6 @@ import {
   resolveDenBaseUrls,
   writeDenSettings,
   writeDenLastOrganization,
-  type DenSettings,
   type DenOrgSummary,
 } from "@/app/lib/den";
 import { clearDesktopBootstrapConfig } from "@/app/lib/desktop";
@@ -52,10 +51,8 @@ declare global {
 export type UseDenSessionProps = {
   developerMode: boolean;
   openLink: (url: string) => void;
-  onBeforeSignedOut?: (settings: DenSettings) => void | Promise<void>;
 };
 
-const SIGN_OUT_CLEANUP_TIMEOUT_MS = 5_000;
 export const DEN_ACCOUNT_RECOVERY_RETRY_INTERVAL_MS = 15_000;
 export const DEN_ACCOUNT_TRANSIENT_RETRY_DELAYS_MS = [1_000, 3_000, 6_000] as const;
 
@@ -91,26 +88,8 @@ export async function retryTransientCloudRequest<T>(
   }
 }
 
-async function runBeforeSignedOut(callback: UseDenSessionProps["onBeforeSignedOut"], settings: DenSettings): Promise<void> {
-  if (!callback) return;
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  try {
-    await Promise.race([
-      Promise.resolve(callback(settings)),
-      new Promise<void>((resolve) => {
-        timeout = setTimeout(resolve, SIGN_OUT_CLEANUP_TIMEOUT_MS);
-      }),
-    ]);
-  } catch {
-    // Best-effort cleanup must not trap the user in a signed-in state.
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-}
-
 export function useDenSession({
   developerMode,
-  onBeforeSignedOut,
   openLink,
 }: UseDenSessionProps) {
   const denAuth = useDenAuth();
@@ -209,12 +188,10 @@ export function useDenSession({
     (
       message?: string | null,
       eventDetail?: Pick<DenSessionUpdatedDetail, "baseUrl">,
-      options?: { includeBaseUrls?: boolean; dispatchEvent?: boolean },
+      options?: { includeBaseUrls?: boolean; dispatchEvent?: boolean; sessionAlreadyCleared?: boolean },
     ) => {
       const includeBaseUrls = options?.includeBaseUrls ?? !developerMode;
-      const previousSettings = readDenSettings();
-      return runBeforeSignedOut(onBeforeSignedOut, previousSettings).then(() => {
-        clearDenSession({ includeBaseUrls });
+      if (!options?.sessionAlreadyCleared) clearDenSession({ includeBaseUrls });
       if (includeBaseUrls) {
         setBaseUrl(DEFAULT_DEN_BASE_URL);
         setBaseUrlDraft(DEFAULT_DEN_BASE_URL);
@@ -249,9 +226,8 @@ export function useDenSession({
       if (options?.dispatchEvent !== false) {
         dispatchDenSessionUpdated({ status: "signed_out", ...eventDetail });
       }
-      });
     },
-    [clearSessionState, developerMode, onBeforeSignedOut, setAuthToken, setBaseUrl],
+    [clearSessionState, developerMode, setAuthToken, setBaseUrl, setStatusMessage],
   );
 
   React.useEffect(() => {
@@ -347,6 +323,7 @@ export function useDenSession({
       // Reset-to-default writes a default-pointing bootstrap file; clear removes
       // bootstrap files entirely so an MDM-dropped config can win on next launch.
       await clearDesktopBootstrapConfig();
+      clearDenSession();
       const bootstrap = await initializeDenBootstrapConfig();
       const resolved = resolveDenBaseUrls(bootstrap);
       writeDenSettings(
@@ -603,7 +580,9 @@ export function useDenSession({
       // revocation as best effort, so expired/unreachable sessions cannot trap
       // this settings surface in a busy authenticated state.
       await denAuth.signOut();
-      await clearSignedInState(t("den.status_signed_out"), undefined, { dispatchEvent: false });
+      if (!readDenSettings().authToken?.trim()) {
+        clearSignedInState(t("den.status_signed_out"), undefined, { dispatchEvent: false, sessionAlreadyCleared: true });
+      }
     } catch (error) {
       setAuthError(
         error instanceof DenApiError

@@ -31,6 +31,23 @@ Desktop SHALL NOT remove imported cloud providers or their credentials merely be
 - **THEN** Desktop fetches the current engine list rather than relying on the cached response
 - **AND** ordinary cached provider-list reads revalidate expired entries and await the fresh result
 
+### Requirement: Sign-out cleanup is bound to the departing session
+Desktop SHALL clear the local Cloud session without waiting for workspace cleanup. When the workspace host and ID are known at sign-out, Desktop SHALL capture that target and the departing deployment and organization before clearing the session, and SHALL use the captured target rather than the active route for cleanup. Desktop SHALL remove only providers recorded in that workspace's import baseline on sign-out and SHALL retain failed provider records for recovery. Shared credentials remain subject to server-side ownership checks.
+
+#### Scenario: The active route changes at sign-out
+- **WHEN** sign-out clears the active organization and the route switches workspace or unmounts before cleanup runs
+- **THEN** Desktop cleans the originally captured workspace and its scoped Cloud MCP metadata without redirecting that cleanup to the newly selected workspace
+- **AND** missing organization metadata does not prevent an exact workspace Cloud MCP removal
+
+#### Scenario: Cleanup partially fails
+- **WHEN** cleanup of an identified sign-out target fails while the same sign-out is still current
+- **THEN** Desktop handles the failure without an unhandled promise rejection and retries at most once for that captured target and sign-out
+- **AND** provider and Cloud MCP cleanup are attempted independently, with diagnostics limited to the failure stage, applicable HTTP status, and recognized non-sensitive error codes
+
+#### Scenario: A new session arrives before cleanup finishes
+- **WHEN** a new login or a newer sign-out supersedes pending captured cleanup
+- **THEN** Desktop skips pending retries and does not start subsequent cleanup mutations from the superseded sign-out
+
 ### Requirement: Cloud-managed models follow the verified workspace
 Desktop SHALL keep Cloud-managed model discovery and new requests scoped to the verified signed-in session and its active organization. A previous scope's cached catalog, runtime imports, or pending drafts SHALL NOT authorize new managed requests while a switch or reconciliation is pending. Explicitly configured local providers remain independent of Cloud scope.
 
