@@ -19,8 +19,15 @@ const messages: Record<string, string> = {
   internal_error: "会议服务暂时无法完成请求，请稍后重试。",
   meeting_cleanup_pending: "会议已结束，音视频服务正在清理，请稍后查看状态。",
   forbidden: "你没有此操作的权限。",
+  feature_unavailable_for_scope: "个人工作区不支持视频会议。",
   not_found: "会议不存在，或你没有访问权限。",
 };
+export class MeetingRequestError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "MeetingRequestError";
+  }
+}
 export function meetingScope() {
   const s = readDenSettings();
   return `${s.baseUrl ?? ""}|${s.activeOrgId ?? ""}|${s.authToken ?? ""}`;
@@ -40,19 +47,22 @@ export async function meetingRequest<T>(
   const route = path.split("?")[0];
   const res = await meetingDiagnosticStep("http.request", { route, method: init.method || "GET" }, () => fetch(
     meetingApiUrl(resolveDenBaseUrls(config).apiBaseUrl, path),
-    { ...init, headers, signal: init.signal ?? AbortSignal.timeout(12_000) },
+    { ...init, headers, signal: init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(12_000)]) : AbortSignal.timeout(12_000) },
   ));
   meetingDiagnostic("http.response", { route, status: res.status, serverDate: res.headers.get("Date") });
   if (scope !== meetingScope())
     throw new Error("组织或账号已切换，请重新打开会议。");
   if (res.status === 204) return undefined as T;
   const body = await res.json().catch(() => ({}));
+  if (scope !== meetingScope())
+    throw new Error("组织或账号已切换，请重新打开会议。");
   if (!res.ok) {
     const code =
       typeof body.error === "string"
         ? body.error
         : (body.error?.code ?? body.code);
-    throw new Error(
+    throw new MeetingRequestError(
+      res.status,
       messages[code] ||
         body.error?.message ||
         body.message ||
@@ -67,10 +77,11 @@ const post = (body: unknown): RequestInit => ({
   body: JSON.stringify(body),
 });
 export const meetingAPI = {
-  settings: () => meetingRequest<MeetingReadiness>("/settings"),
-  list: (from: Date, to: Date) =>
+  settings: (signal?: AbortSignal) => meetingRequest<MeetingReadiness>("/settings", { signal }),
+  list: (from: Date, to: Date, signal?: AbortSignal) =>
     meetingRequest<{ meetings: Meeting[] }>(
       `?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`,
+      { signal },
     ),
   get: (id: string) =>
     meetingRequest<{ meeting: Meeting }>(`/${encodeURIComponent(id)}`),

@@ -4,6 +4,17 @@ Desktop SHALL expose a meeting workspace with upcoming meetings, scheduling and 
 #### Scenario: No media configuration
 - **WHEN** ZEGO configuration is absent
 - **THEN** Desktop shows the missing-configuration state and does not simulate a successful call.
+
+#### Scenario: Personal workspace or unconfirmed organization
+- **WHEN** the active workspace is personal or Desktop cannot confirm a signed-in team organization matching the current request scope
+- **THEN** Desktop SHALL NOT request Meeting overview settings or lists, or poll for Meeting start reminders
+- **AND** switching scope discards in-flight overview and reminder results from the previous scope.
+
+#### Scenario: Overview is hidden or background reads are forbidden
+- **WHEN** the confirmed team organization is active but the Meeting workspace is not visible
+- **THEN** Desktop SHALL NOT refresh the Meeting overview; the independent start reminders still follow the user's preferences
+- **AND** an HTTP 403 in either workflow pauses that workflow's automatic reads until the scope changes or the user explicitly retries or re-enables the workflow.
+
 ### Requirement: Independent meeting transport
 Meeting SHALL use ZEGO for media and JuggleIM chatrooms for meeting chat, without using JuggleCall.
 #### Scenario: Private chat adds a third participant

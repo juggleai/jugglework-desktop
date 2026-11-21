@@ -27,3 +27,4 @@ Implementation boundaries and validation: `docs/meeting/04-implementation-status
 - [x] Align the meeting workspace with the shared resizable inset layout, show upcoming/history lists, and route scheduling through the shared Calendar event dialog
 - [x] 按 `meetingReminders` 实时启停 Meeting 开始提醒；覆盖在途返回、可见卡片和重新开启去重，保留日历及邀请的独立路径。
 - [x] 参会人进出会提示音接入常规设置及会议窗口，默认关闭。
+- [x] 会议概览和提醒只在已确认的团队组织作用域读取；隐藏概览不发请求，403 暂停自动读取，并覆盖作用域切换和手动恢复。

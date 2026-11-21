@@ -141,7 +141,9 @@ const createdMeeting: Meeting = {
   startAt: fixedNow.toString(), endAt: fixedNow.add({ minutes: 30 }).toString(), timezone: clock.timeZone(),
   locked: false, invites: {}, participants: {},
 };
+const meetingApiModule = await import("../src/react-app/domains/meeting/api");
 mock.module("../src/react-app/domains/meeting/api", () => ({
+  ...meetingApiModule,
   meetingAPI: {
     settings: async () => { meetingCalls.push({ op: "settings" }); return { ready: true, settings: { enabled: true } }; },
     create: async (input: unknown, key: string) => { meetingCalls.push({ op: "create", value: { input, key } }); return { meeting: createdMeeting }; },

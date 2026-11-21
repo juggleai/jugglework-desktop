@@ -1,7 +1,8 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "react-router-dom";
 import { useDenAuth } from "../cloud/den-auth-provider";
-import { meetingAPI } from "./api";
+import { meetingAPI, MeetingRequestError } from "./api";
+import { isMeetingRequestScopeCurrent, useMeetingRequestScope } from "./meeting-request-scope";
 import type { Meeting } from "./types";
 import { MeetingIcon } from "./meeting-icons";
 import { readMeetingPreferences, subscribeMeetingPreferences } from "./meeting-preferences";
@@ -12,27 +13,34 @@ const remindersEnabled = () => readMeetingPreferences().meetingReminders;
 // is requested, and dismissed reminders are scoped to this account/organization.
 export function MeetingReminderHost() {
   const { user, activeOrganization } = useDenAuth();
+  const scope = useMeetingRequestScope();
   const enabled = useSyncExternalStore(subscribeMeetingPreferences, remindersEnabled, remindersEnabled);
-  if (!enabled || !user?.id || !activeOrganization?.id) return null;
-  return <ScheduledMeetingReminder key={JSON.stringify([activeOrganization.id, user.id])} orgId={activeOrganization.id} userId={user.id} />;
+  if (!enabled || !scope || !user?.id || !activeOrganization?.id) return null;
+  return <ScheduledMeetingReminder key={scope} scope={scope} orgId={activeOrganization.id} userId={user.id} />;
 }
 
-function ScheduledMeetingReminder({ orgId, userId }: { orgId: string; userId: string }) {
+function ScheduledMeetingReminder({ scope, orgId, userId }: { scope: string; orgId: string; userId: string }) {
   const [reminder, setReminder] = useState<Meeting | null>(null);
   const navigate = useNavigate();
   useEffect(() => {
-    let alive = true;
+    const controller = new AbortController();
+    let inFlight = false;
+    let forbidden = false;
     const seen = new Set<string>();
+    const isCurrent = () => !controller.signal.aborted && remindersEnabled() && isMeetingRequestScopeCurrent(scope);
     const poll = async () => {
+      if (inFlight || forbidden || !isCurrent()) return;
+      inFlight = true;
       try {
         const now = Date.now();
         const { meetings } = await meetingAPI.list(
           new Date(now - 300000),
           new Date(now + 300000),
+          controller.signal,
         );
         // A preference write can precede React's unsubscribe/cleanup. Do not consume
         // a still-eligible reminder if the in-flight response lands in that gap.
-        if (!alive || !remindersEnabled()) return;
+        if (!isCurrent()) return;
         setReminder((current) => {
           if (!current) return null;
           const fresh = meetings.find((m) => m.id === current.id);
@@ -56,20 +64,26 @@ function ScheduledMeetingReminder({ orgId, userId }: { orgId: string; userId: st
           sessionStorage.setItem(key, "shown");
           setReminder(next);
         }
-      } catch {
-        /* A reminder failure must not disrupt unrelated work. */
+      } catch (error) {
+        if (isCurrent() && error instanceof MeetingRequestError && error.status === 403) {
+          forbidden = true;
+          clearInterval(timer);
+          setReminder(null);
+        }
+      } finally {
+        inFlight = false;
       }
     };
-    void poll();
     const changed = () => void poll();
     window.addEventListener("meeting:changed", changed);
     const timer = setInterval(changed, 30000);
+    void Promise.resolve().then(changed);
     return () => {
-      alive = false;
+      controller.abort();
       window.removeEventListener("meeting:changed", changed);
       clearInterval(timer);
     };
-  }, [userId, orgId]);
+  }, [scope, userId, orgId]);
   if (!reminder) return null;
   return (
     <aside className="meeting-ui meeting-reminder" role="status">

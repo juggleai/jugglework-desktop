@@ -28,6 +28,7 @@ import { resolveCalendarPageGate } from "../calendar/calendar-page-gate";
 import { useCalendarBootstrapQuery, useCalendarOrganizationMembersQuery, useCalendarSchedulingEventsQuery } from "../calendar/calendar-queries";
 import { meetingAPI } from "./api";
 import { calendarMeetingOccurrences, meetingOverviewLists, meetingOverviewWindow, type CalendarMeetingOccurrence, type MeetingHistoryEntry } from "./meeting-overview";
+import { isMeetingRequestScopeCurrent, useMeetingRequestScope } from "./meeting-request-scope";
 import { meetingReadinessReason } from "./readiness";
 import {
   meetingClosed,
@@ -41,6 +42,7 @@ import { MeetingMemberAvatar } from "./meeting-invite-picker";
 import { MeetingCode } from "./meeting-code";
 import { CalendarPrejoinDialog } from "./calendar-prejoin-dialog";
 import { useMeetingStore } from "./store";
+import { useMeetingOverview } from "./use-meeting-overview";
 import "./meeting.css";
 const stamp = (date: string) =>
   new Date(date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -120,6 +122,19 @@ export function MeetingDialog({
   );
 }
 export function MeetingPage({ active }: { active: boolean }) {
+  const scope = useMeetingRequestScope();
+  if (scope) return <ScopedMeetingPage key={scope} active={active} scope={scope} />;
+  if (!active) return null;
+  return (
+    <div className="meeting-ui meeting-page">
+      <AppInsetSurface className="meeting-inset-surface" testId="meeting-inset-surface">
+        <div className="notice" role="status">请切换到已登录的团队组织使用视频会议。</div>
+      </AppInsetSurface>
+    </div>
+  );
+}
+
+function ScopedMeetingPage({ active, scope }: { active: boolean; scope: string }) {
   const navigate = useNavigate();
   const { leftSidebarResizing, leftSidebarWidth, startLeftSidebarResize } = useWorkspaceShellLayout({
     expandedRightWidth: 520,
@@ -127,17 +142,14 @@ export function MeetingPage({ active }: { active: boolean }) {
   const pageStyle = {
     "--jugglework-left-sidebar-width": appInsetSidebarCssWidth(leftSidebarWidth),
   } as CSSProperties;
-  const { activeOrganization, user } = useDenAuth();
+  const { user } = useDenAuth();
   const cloud = useCloudSession();
   const contacts = useJuggleChatStore((s) => s.contacts);
   const imUser = useJuggleChatStore((s) => s.user);
   const displayName = imUser?.id === user?.id ? imUser?.name || user?.name : user?.name;
   const [cancelTarget, setCancelTarget] = useState<Meeting | null>(null);
   const [editing, setEditing] = useState(false);
-  const [items, setItems] = useState<Meeting[]>([]);
-  const [readiness, setReadiness] = useState<MeetingReadiness | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [actionError, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [calendarScheduleOpen, setCalendarScheduleOpen] = useState(false);
   const [dialog, setDialog] = useState<"schedule" | "join" | "settings" | null>(
@@ -158,13 +170,16 @@ export function MeetingPage({ active }: { active: boolean }) {
     title: string;
   } | null>(null);
   const requestKey = useRef(crypto.randomUUID());
-  const epoch = useRef(0);
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const todayKey = localDate(new Date());
   const overviewWindow = useMemo(
     () => meetingOverviewWindow(Temporal.Now.instant(), timeZone),
     [timeZone, todayKey],
   );
+  const { items, readiness, loading, error: overviewError, refresh } = useMeetingOverview({
+    active, scope, from: overviewWindow.from, to: overviewWindow.to,
+  });
+  const error = actionError || overviewError;
   const { activeOrganization: calendarOrganization, baseUrl, isSignedIn } = cloud;
   const calendarGate = useMemo(() => resolveCalendarPageGate({
     activeOrganization: calendarOrganization, baseUrl, isSignedIn,
@@ -191,50 +206,13 @@ export function MeetingPage({ active }: { active: boolean }) {
     () => new Map((calendarMembers.data ?? []).map((member) => [member.id, member])),
     [calendarMembers.data],
   );
-  const refresh = useCallback(async () => {
-    const run = ++epoch.current;
-    // Background refresh keeps the existing schedule mounted.
-
-    try {
-      const [settings, list] = await Promise.allSettled([
-        meetingAPI.settings(),
-        meetingAPI.list(overviewWindow.from, overviewWindow.to),
-      ]);
-      if (run !== epoch.current) return;
-      if (settings.status === "fulfilled") setReadiness(settings.value);
-      else setReadiness(null);
-      if (list.status === "fulfilled") setItems(list.value.meetings);
-      const failures = [settings, list].flatMap((result) =>
-        result.status === "rejected"
-          ? [result.reason instanceof Error ? result.reason.message : "加载失败"]
-          : [],
-      );
-      setError(failures.join("；"));
-    } catch (e) {
-      if (run === epoch.current)
-        setError(e instanceof Error ? e.message : "加载失败");
-    } finally {
-      if (run === epoch.current) setLoading(false);
-    }
-  }, [overviewWindow, activeOrganization?.id, user?.id]);
   useEffect(() => {
-    setLoading(true);
-    setError("");
-    setItems([]);
-    setReadiness(null);
-    void refresh();
-    return () => {
-      epoch.current++;
-    };
-  }, [refresh]);
-  useEffect(() => {
+    if (!active || !calendarScope) return;
     const update = () => {
-      void refresh();
-      if (active && calendarScope) {
-        void calendarBootstrap.refetch();
-        void calendarScheduling.refetch();
-        void calendarMembers.refetch();
-      }
+      if (!isMeetingRequestScopeCurrent(scope)) return;
+      void calendarBootstrap.refetch();
+      void calendarScheduling.refetch();
+      void calendarMembers.refetch();
     };
     window.addEventListener("meeting:changed", update);
     window.addEventListener("focus", update);
@@ -244,14 +222,16 @@ export function MeetingPage({ active }: { active: boolean }) {
       window.removeEventListener("focus", update);
       clearInterval(timer);
     };
-  }, [active, calendarBootstrap.refetch, calendarMembers.refetch, calendarScheduling.refetch, calendarScope, refresh]);
+  }, [active, calendarBootstrap.refetch, calendarMembers.refetch, calendarScheduling.refetch, calendarScope, scope]);
   useEffect(() => {
     const open = (event: Event) => {
+      // Chat and reminders dispatch this as they navigate to Meetings.
+      if (!isMeetingRequestScopeCurrent(scope)) return;
       const d = (event as CustomEvent).detail;
       if (d?.meetingId) {
         void meetingAPI
           .get(d.meetingId)
-          .then((v) => openPreview(v.meeting))
+          .then((v) => { if (isMeetingRequestScopeCurrent(scope)) openPreview(v.meeting); })
           .catch((e) => setError(e.message));
       } else if (d?.sourceId) {
         setSource(d);
@@ -261,9 +241,9 @@ export function MeetingPage({ active }: { active: boolean }) {
     };
     window.addEventListener("meeting:open", open);
     return () => window.removeEventListener("meeting:open", open);
-  }, []);
+  }, [scope]);
   async function run(fn: () => Promise<void>) {
-    if (busy) return;
+    if (busy || !isMeetingRequestScopeCurrent(scope)) return;
     setBusy(true);
     setError("");
     try {
@@ -295,7 +275,6 @@ export function MeetingPage({ active }: { active: boolean }) {
     requestKey.current = crypto.randomUUID();
     setDialog(null);
     setSource(null);
-    await refresh();
     if (input.immediate) openPreview(meeting);
     else setDetail(meeting);
     try {
@@ -449,7 +428,7 @@ export function MeetingPage({ active }: { active: boolean }) {
                 {error ? (
                   <div className="notice error" role="alert">
                     {error}
-                    <button className="ghost" onClick={() => void refresh()}>刷新</button>
+                     <button className="ghost" onClick={() => { setError(""); refresh(); }}>刷新</button>
                   </div>
                 ) : null}
                 {calendarError ? (
@@ -681,7 +660,6 @@ export function MeetingPage({ active }: { active: boolean }) {
                   });
                   setDetail(result.meeting);
                   setEditing(false);
-                  await refresh();
                   try {
                     await meetingAPI.notify(detail.id);
                   } catch {
@@ -753,7 +731,6 @@ export function MeetingPage({ active }: { active: boolean }) {
                             })
                           ).meeting,
                         );
-                        await refresh();
                       })
                     }
                   >
