@@ -45,11 +45,10 @@ const CODE_COPIED_ICON = `<svg data-jugglework-code-copy-check-icon="" xmlns="ht
 
 /**
  * CommonMark does not close `**` when punctuation precedes the delimiter and
- * a letter immediately follows it. That makes natural CJK output such as
- * `**重点。**下一句` leak the Markdown markers because CJK prose normally has
- * no space after `。`. Keep the compatibility rule deliberately narrow:
- * CJK-leading content, Unicode punctuation at the end, no nested asterisks or
- * line breaks, and another CJK character immediately after the closing run.
+ * a letter or number immediately follows it. CJK prose often omits that
+ * space, as in `**重点。**下一句` or `**验证：**21 项`.
+ * Accept CJK-leading content ending in punctuation and optional horizontal
+ * whitespace. Keep that whitespace after the bold span.
  */
 const cjkStrongBoundaryExtension = {
   extensions: [
@@ -57,17 +56,18 @@ const cjkStrongBoundaryExtension = {
       name: "cjkStrongBoundary",
       level: "inline",
       tokenizer(src) {
-        const match = /^\*\*(?!\*)([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}][^\n*]*?\p{P})\*\*(?=[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}])/u.exec(src);
+        const match = /^\*\*(?!\*)([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}][^\n*]*?\p{P})([\p{Zs}\t]*)\*\*(?=[\p{L}\p{N}])/u.exec(src);
         if (!match) return undefined;
         return {
           type: "cjkStrongBoundary",
           raw: match[0],
           text: match[1],
+          trailingWhitespace: match[2],
           tokens: this.lexer.inlineTokens(match[1]),
         };
       },
       renderer(token) {
-        return `<strong>${this.parser.parseInline(token.tokens ?? [])}</strong>`;
+        return `<strong>${this.parser.parseInline(token.tokens ?? [])}</strong>${token.trailingWhitespace}`;
       },
       childTokens: ["tokens"],
     },

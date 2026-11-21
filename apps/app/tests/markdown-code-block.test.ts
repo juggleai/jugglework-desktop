@@ -154,14 +154,21 @@ describe("CJK Markdown emphasis compatibility", () => {
     }
   });
 
+  test("renders CJK labels before adjacent digits or Latin text in both renderers", async () => {
+    const labels = "结果如下。**验证：**21 项通过，**检查： **3 项通过，**接口：**API 可用。";
+    const expected = "结果如下。<strong>验证：</strong>21 项通过，<strong>检查：</strong> 3 项通过，<strong>接口：</strong>API 可用。";
+    expect(renderPrimitiveMarkdownHtml(labels)).toContain(expected);
+    expect(await renderPrimitiveHighlightedMarkdownHtml(labels)).toContain(expected);
+  });
+
   test("does not reinterpret escaped, code, fenced, or non-CJK boundary markers", () => {
     const escaped = renderPrimitiveMarkdownHtml("\\**中文。**后续", "chat");
     expect(escaped).not.toContain("<strong>");
     expect(escaped).toContain("**中文。**后续");
 
-    const inlineCode = renderPrimitiveMarkdownHtml("`**中文。**后续`", "chat");
+    const inlineCode = renderPrimitiveMarkdownHtml("`**验证：**21`", "chat");
     expect(inlineCode).not.toContain("<strong>");
-    expect(inlineCode).toContain("**中文。**后续");
+    expect(inlineCode).toContain("**验证：**21");
 
     const fencedCode = renderPrimitiveMarkdownHtml("```text\n**中文。**后续\n```", "chat");
     expect(fencedCode).not.toContain("<strong>");
