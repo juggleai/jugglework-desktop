@@ -200,6 +200,7 @@ import { generationDraftAvailableInCache, mediaModelQueryScope } from "@/react-a
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
 import { sessionSettingsNavigation, mergeWorkspaceRouteSession, workspaceAppsRoute, workspaceChatRoute, workspaceReviewsRoute, workspaceSessionRoute } from "./workspace-routes";
 import { WorkspaceProvider } from "./workspace-provider";
+import { SessionSurfaceVisibilityProvider } from "@/react-app/domains/session/session-surface-visibility";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { SettingsSurface } from "./settings-route";
 import {
@@ -2546,6 +2547,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         }}
       />
     ) : null}
+    <SessionSurfaceVisibilityProvider surfaceVisible={props.surfaceVisible ?? true}>
     <SessionPage
       embedded={props.embedded}
       selectedSessionId={selectedSessionId}
@@ -2839,6 +2841,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       notFoundMessage={routeNotFoundMessage}
       onAccessibleTargetsChange={setPaletteAccessibleTargets}
     />
+    </SessionSurfaceVisibilityProvider>
     <CreateWorkspaceModal
       open={createWorkspaceOpen}
       initialScreen={createWorkspaceInitialScreen}

@@ -190,19 +190,27 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     if (![x, y, width, height].every(Number.isFinite)) return;
     // TIPS: React 隐藏页面会测得零尺寸；只隐藏原生视图，避免触发 AFFiNE 的窄屏自动收起。
     if (width === 0 || height === 0) {
-      item.view.setVisible(false);
+      if (item.view.getVisible()) item.view.setVisible(false);
       return;
     }
-    item.view.setBounds({ x, y, width, height });
+    const previous = item.lastBounds;
+    if (!previous || previous.x !== x || previous.y !== y || previous.width !== width || previous.height !== height) {
+      item.view.setBounds({ x, y, width, height });
+      item.lastBounds = { x, y, width, height };
+    }
     // TIPS: WebContentsView 独立于 DOM 裁切；与宿主共享圆角，并按窗口缩放换算。
     const borderRadius = Number(input.borderRadius ?? 0);
-    item.view.setBorderRadius(Number.isFinite(borderRadius)
+    const radius = Number.isFinite(borderRadius)
       ? Math.max(0, Math.min(Math.round(borderRadius * zoom), Math.floor(Math.min(width, height) / 2)))
-      : 0);
+      : 0;
+    if (item.lastBorderRadius !== radius) {
+      item.view.setBorderRadius(radius);
+      item.lastBorderRadius = radius;
+    }
     const visible = input.visible === true && item.ready && !item.denied && width > 0 && height > 0;
     if (visible && current !== item) {
       if (current) {
-        current.view.setVisible(false);
+        if (current.view.getVisible()) current.view.setVisible(false);
         if (!current.input.retain) {
           retained.set(current.input.instanceId, current);
           void prepareClose(current.input.instanceId).then(saved => { if (saved && currents.get(win.id) !== current) close(current.input.instanceId); });
@@ -211,7 +219,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       currents.set(win.id, item);
     }
     const wasVisible = item.view.getVisible();
-    item.view.setVisible(visible);
+    if (wasVisible !== visible) item.view.setVisible(visible);
     // TIPS: 隐藏授权或宿主菜单结束后恢复原生页面焦点，触发原生引擎的恢复并接收编辑输入。
     if (visible && !wasVisible) item.view.webContents.focus();
   }
@@ -386,6 +394,9 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
         current.input.presentation?.mode !== "product" ||
         input?.instanceId !== current.input.instanceId ||
         !["toggle-left", "toggle-right", "search", "request-state"].includes(input.action)) return;
+      // TIPS: 保留页的 ready／resize 回调不能抢走前台输入；明确的展示操作只交给当前且实际可见的实例。
+      if (input.action !== "request-state" &&
+        (currents.get(current.ownerWindow.id) !== current || !current.view.getVisible())) return;
       // TIPS: 顶部按钮位于宿主中；先恢复编辑器焦点，再执行原生展示操作。
       if (input.action !== "request-state") current.view.webContents.focus();
       current.view.webContents.send("jugglework:docs:layout-command", {

@@ -228,15 +228,11 @@ describe("navigation rail visual proportions", () => {
     expect(trigger).toContain('className="size-7 bg-background ring-1 ring-dls-border/70"');
   });
 
-  test("shows hover tooltips for every Rail destination", () => {
+  test("uses native titles for ordinary Rail hints while preserving preview suppression", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     expect(source).toContain('showTooltip?: boolean');
-    expect(source).toContain('data-app-rail-tooltip');
-    expect(source).toContain('sideOffset={6}');
-    expect(source).toContain('hideArrow');
-    expect(source).toContain('rounded-xl border border-dls-border bg-dls-active');
-    expect(source).toContain('px-2.5 py-1.5 text-xs font-normal text-dls-text');
-    expect(source).toContain('{tooltipLabel ?? label}');
+    expect(source).toContain('title={showTooltip ? tooltipLabel ?? label : undefined}');
+    expect(source).not.toContain('data-app-rail-tooltip');
     for (const testId of ["app-rail-home", "app-rail-pinned-reviews", "app-rail-automations", "app-rail-chat", "app-rail-contacts"]) {
       const button = source.slice(source.indexOf(`testId="${testId}"`) - 220, source.indexOf(`testId="${testId}"`) + 220);
       expect(button).not.toContain('showTooltip={false}');

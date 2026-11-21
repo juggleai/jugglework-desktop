@@ -1,6 +1,7 @@
 import * as React from "react";
 import type { FileWindowTab } from "@jugglework/types/file-window";
 import { useCloudDocsBounds } from "./use-cloud-docs-bounds";
+import { CloudDocsPlaceholder } from "./cloud-docs-placeholder";
 import { setActiveCloudDoc, setFileCloudView } from "@/app/lib/cloud-doc-turn";
 import { t, currentLocale } from "@/i18n";
 
@@ -83,22 +84,17 @@ export function FileCloudDocView({
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ["data-state", "data-open", "data-closed", "hidden"],
+      attributeFilter: ["data-state", "data-open", "data-closed", "hidden", "class", "style", "aria-modal", "data-session-list-preview"],
     });
     window.addEventListener("resize", sync);
+    document.addEventListener("visibilitychange", sync);
     sync();
     return () => {
       observer.disconnect();
       overlays.disconnect();
       window.removeEventListener("resize", sync);
-      window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.setBounds({
-        instanceId: doc.instanceId,
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-        visible: false,
-      });
+      document.removeEventListener("visibilitychange", sync);
+      bounds.sync(doc.instanceId, false, false);
     };
   }, [active, ready, doc.instanceId, bounds.sync]);
   React.useEffect(() => {
@@ -150,10 +146,13 @@ export function FileCloudDocView({
         <img
           src={bounds.snapshot}
           onLoad={bounds.loaded}
+          onError={bounds.failed}
           alt=""
-          className="absolute inset-0 size-full object-fill"
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 size-full object-fill"
         />
       )}
+      {bounds.fallback && <CloudDocsPlaceholder />}
     </div>
   );
 }

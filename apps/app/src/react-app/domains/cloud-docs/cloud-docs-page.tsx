@@ -4,6 +4,7 @@ import type { CloudDocsAiReference } from "@/app/lib/cloud-docs-types";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCloudDocsBounds } from "./use-cloud-docs-bounds";
+import { CloudDocsPlaceholder } from "./cloud-docs-placeholder";
 import { LoaderCircle, PanelRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { t, currentLocale, subscribeLocale } from "@/i18n";
@@ -191,7 +192,7 @@ export function CloudDocsPage(props: Props) {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["data-state", "data-open", "data-closed", "hidden"],
+      attributeFilter: ["data-state", "data-open", "data-closed", "hidden", "class", "style", "aria-modal", "data-session-list-preview"],
     });
     window.addEventListener("resize", updateBounds);
     document.addEventListener("visibilitychange", updateBounds);
@@ -299,7 +300,8 @@ export function CloudDocsPage(props: Props) {
           className="relative min-h-0 flex-1 overflow-hidden rounded-[inherit]"
           data-testid="cloud-docs-native-host"
         >
-          {nativeBounds.snapshot && <img src={nativeBounds.snapshot} onLoad={nativeBounds.loaded} alt="" aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full" />}
+          {nativeBounds.snapshot && <img src={nativeBounds.snapshot} onLoad={nativeBounds.loaded} onError={nativeBounds.failed} alt="" aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full" />}
+          {nativeBounds.fallback && <CloudDocsPlaceholder />}
           {state !== "ready" ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-8 text-center text-sm text-muted-foreground">
               {state === "loading" ? (

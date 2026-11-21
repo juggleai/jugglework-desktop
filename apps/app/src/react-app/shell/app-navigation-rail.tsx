@@ -33,7 +33,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 import { currentLocale, t } from "@/i18n";
@@ -272,7 +271,7 @@ function CloudDocsRailIcon({ active }: { active: boolean }) {
   );
 }
 
-function RailButton({
+export function RailButton({
   label,
   active = false,
   disabled = false,
@@ -293,10 +292,12 @@ function RailButton({
   onAppPreviewChange,
 }: RailButtonProps) {
   const resolvedBadgeLabel = badgeLabel ?? t("chat.unread_count", { count: badge });
-  const button = (
+  // TIPS: Rail 普通提示统一使用系统浮层，不遮挡 Electron 原生页面，也不触发展示切换；交互式 preview 保持原样。
+  return (
     <button
       type="button"
       aria-label={badge > 0 ? `${label}, ${resolvedBadgeLabel}` : label}
+      title={showTooltip ? tooltipLabel ?? label : undefined}
       disabled={disabled}
       onClick={onClick}
       onMouseEnter={() => {
@@ -358,21 +359,6 @@ function RailButton({
         </span>
       ) : null}
     </button>
-  );
-  if (!showTooltip) return button;
-  return (
-    <Tooltip>
-      <TooltipTrigger render={button} />
-      <TooltipContent
-        side="right"
-        sideOffset={6}
-        hideArrow
-        className="rounded-xl border border-dls-border bg-dls-active px-2.5 py-1.5 text-xs font-normal text-dls-text shadow-[0_6px_18px_rgba(0,0,0,0.24)]"
-        data-app-rail-tooltip
-      >
-        {tooltipLabel ?? label}
-      </TooltipContent>
-    </Tooltip>
   );
 }
 

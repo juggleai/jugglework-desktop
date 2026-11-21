@@ -28,6 +28,7 @@ import { useFilesPanelSession, useFilesPanelStore } from "./files-panel-store";
 import { useRefreshWorkspaceChanges, useWorkspaceChanges, type WorkspaceChange } from "./use-workspace-changes";
 import { createOfficeFile } from "./office-create";
 import { OfficeCreateItems } from "./office-create-items";
+import { useSessionSurfaceVisible } from "../session-surface-visibility";
 
 type FilesPanelProps = {
   sessionId: string;
@@ -67,6 +68,7 @@ export function FilesPanel({
   busy,
   isRemoteWorkspace = false,
 }: FilesPanelProps) {
+  const surfaceVisible = useSessionSurfaceVisible();
   const session = useFilesPanelSession(sessionId);
   const cloudDocs = React.useSyncExternalStore(subscribeCloudDocTabs, () => cloudDocTabsSnapshot(sessionId));
   const cloudDocActive = session.activeKey === "cloud" && cloudDocs.tabs.some(tab => cloudDocTabKey(tab) === cloudDocs.active);
@@ -270,7 +272,7 @@ export function FilesPanel({
       </div>
 
       <div className="relative flex min-h-0 flex-1">
-        <CloudDocPanel sessionId={sessionId} />
+        <CloudDocPanel sessionId={sessionId} surfaceVisible={surfaceVisible} />
         {/* TIPS: 本地原生编辑器只在本地标签激活时挂载；云文档保留实例但仅显示激活页。 */}
         {!cloudDocActive && <>
         {treeColumnVisible ? (

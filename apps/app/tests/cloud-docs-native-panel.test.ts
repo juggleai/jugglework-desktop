@@ -29,9 +29,9 @@ class NativeView {
   constructor() {
     views.push(this);
   }
-  setVisible(value: boolean) {
+  setVisible = mock((value: boolean) => {
     this.visible = value;
-  }
+  });
   getVisible() { return this.visible; }
   setBounds = mock((_bounds: { x: number; y: number; width: number; height: number }) => {});
   setBorderRadius = mock((_radius: number) => {});
@@ -58,6 +58,88 @@ mock.module("electron", () => ({
 const { createCloudDocsPanel } =
   await import("../../desktop/electron/cloud-docs-panel.mjs");
 afterAll(() => mock.restore());
+
+test("相同 bounds／visibility 去重按 view 保存，相同 geometry 切换仍 claim current，owner 相互独立", async () => {
+  const owner = (id: number) => ({ id, webContents: { mainFrame: {}, send: mock(() => {}), getZoomFactor: () => 1 }, isDestroyed: () => false, getContentBounds: () => ({ width: 1000, height: 800 }), contentView: { addChildView() {}, removeChildView() {} } });
+  const main = owner(1), file = owner(2);
+  const events = new Map<string, Function>();
+  const panel = createCloudDocsPanel({ getWindow: () => main, getWindows: () => [main, file] });
+  panel.registerIpc({ handle() {}, on: (name: string, fn: Function) => events.set(name, fn) });
+  const open = async (win: typeof main) => {
+    const input = { instanceId: randomUUID(), tenantId: "org", sourceUserId: "u", sourceServerOrigin: "https://work.test", docsOrigin: "https://docs.test", bootstrapUrl: "https://docs.test/api/jw/session/bootstrap", launchGrant: "fixture", retain: true };
+    await panel.open(input, win);
+    const view = views.at(-1)!;
+    events.get("jugglework:docs:message")!({ sender: view.webContents, senderFrame: view.webContents.mainFrame }, { contractVersion: 1, type: "docs.ready", instanceId: input.instanceId, tenantId: "org", workspaceId: "ws" });
+    return { input, view, win };
+  };
+  const a = await open(main), b = await open(main), c = await open(file);
+  const bounds = (target: typeof a, visible = true) => events.get("jugglework:docs:bounds")!(
+    { sender: target.win.webContents, senderFrame: target.win.webContents.mainFrame },
+    { instanceId: target.input.instanceId, x: 50, y: 40, width: 800, height: 600, borderRadius: 18, visible },
+  );
+  bounds(a); bounds(c);
+  const count = a.view.setBounds.mock.calls.length, visibilityCount = a.view.setVisible.mock.calls.length;
+  for (let i = 0; i < 20; i++) bounds(a);
+  expect(a.view.setBounds.mock.calls).toHaveLength(count);
+  expect(a.view.setVisible.mock.calls).toHaveLength(visibilityCount);
+  expect(a.view.setBorderRadius).toHaveBeenCalledTimes(1);
+  expect(a.view.webContents.focus).toHaveBeenCalledTimes(1);
+  bounds(b);
+  expect(a.view.visible).toBe(false);
+  expect(b.view.visible).toBe(true);
+  expect(c.view.visible).toBe(true);
+  bounds(a);
+  expect(a.view.visible).toBe(true);
+  expect(b.view.visible).toBe(false);
+  expect(a.view.setBounds.mock.calls).toHaveLength(count);
+  expect(a.view.webContents.focus).toHaveBeenCalledTimes(2);
+  // 外部隐藏（导航、失权或文件窗口 hide）后不能被去重缓存误认为仍显示。
+  panel.hide(a.input.instanceId);
+  bounds(a);
+  expect(a.view.visible).toBe(true);
+  expect(a.view.webContents.focus).toHaveBeenCalledTimes(3);
+  panel.close();
+});
+
+test("后台或隐藏原生页的 toggle／search 不发命令不抢焦点，当前可见页保留明确键盘操作", async () => {
+  const win = { id: 9, webContents: { mainFrame: {}, send: mock(() => {}), getZoomFactor: () => 1 }, isDestroyed: () => false, getContentBounds: () => ({ width: 1000, height: 800 }), contentView: { addChildView() {}, removeChildView() {} } };
+  const events = new Map<string, Function>();
+  const panel = createCloudDocsPanel({ getWindow: () => win });
+  panel.registerIpc({ handle() {}, on: (name: string, fn: Function) => events.set(name, fn) });
+  const open = async () => {
+    const input = { instanceId: randomUUID(), tenantId: "org", sourceUserId: "u", sourceServerOrigin: "https://work.test", docsOrigin: "https://docs.test", bootstrapUrl: "https://docs.test/api/jw/session/bootstrap", launchGrant: "fixture", retain: true, presentation: { mode: "product" } };
+    await panel.open(input, win);
+    const view = views.at(-1)!;
+    events.get("jugglework:docs:message")!({ sender: view.webContents, senderFrame: view.webContents.mainFrame }, { contractVersion: 1, type: "docs.ready", instanceId: input.instanceId, tenantId: "org", workspaceId: "ws" });
+    return { input, view };
+  };
+  const a = await open(), b = await open();
+  const event = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
+  const command = (target: typeof a, action: string) => events.get("jugglework:docs:layout-command")!(event, { instanceId: target.input.instanceId, action });
+  const show = (target: typeof a) => events.get("jugglework:docs:bounds")!(event, { instanceId: target.input.instanceId, x: 0, y: 0, width: 800, height: 600, visible: true });
+  show(a);
+  for (const action of ["toggle-left", "toggle-right", "search"]) command(b, action);
+  expect(b.view.webContents.focus).not.toHaveBeenCalled();
+  expect(b.view.webContents.send).not.toHaveBeenCalled();
+  panel.hide(a.input.instanceId);
+  const focuses = a.view.webContents.focus.mock.calls.length;
+  for (const action of ["toggle-left", "toggle-right", "search"]) command(a, action);
+  expect(a.view.webContents.focus).toHaveBeenCalledTimes(focuses);
+  expect(a.view.webContents.send).not.toHaveBeenCalled();
+  command(a, "request-state");
+  expect(a.view.webContents.focus).toHaveBeenCalledTimes(focuses);
+  show(a);
+  const visibleFocuses = a.view.webContents.focus.mock.calls.length;
+  for (const action of ["toggle-left", "toggle-right", "search"]) command(a, action);
+  expect(a.view.webContents.focus).toHaveBeenCalledTimes(visibleFocuses + 3);
+  expect(a.view.webContents.send).toHaveBeenLastCalledWith("jugglework:docs:layout-command", { instanceId: a.input.instanceId, action: "search" });
+  show(b);
+  const sent = a.view.webContents.send.mock.calls.length;
+  command(a, "toggle-left");
+  expect(a.view.webContents.send).toHaveBeenCalledTimes(sent);
+  expect(a.view.webContents.focus).toHaveBeenCalledTimes(visibleFocuses + 3);
+  panel.close();
+});
 
 test("原生视图在新文档授权前隐藏，401/403/404 隐藏并报告，旧实例不能覆盖新实例", async () => {
   let zoom = 1;

@@ -13,7 +13,12 @@ hostDocument.body = {};
 hostDocument.documentElement = { lang: "en" };
 (globalThis as any).window = hostWindow;
 (globalThis as any).document = hostDocument;
-(globalThis as any).ResizeObserver = class { observe() {} disconnect() {} };
+const resizes = new Set<() => void>();
+(globalThis as any).ResizeObserver = class {
+  constructor(private readonly callback: () => void) {}
+  observe() { resizes.add(this.callback); }
+  disconnect() { resizes.delete(this.callback); }
+};
 const observeLanguage = new Set<() => void>();
 (globalThis as any).MutationObserver = class {
   constructor(private readonly callback: () => void) {}
@@ -33,6 +38,9 @@ let closeAllowed = true;
 const visibility = new Map<string, boolean>();
 const locales = new Map<string, string>();
 const states = new Set<(value: unknown) => void>();
+const layouts = new Set<(value: unknown) => void>();
+const layoutCommand = mock((_input: { instanceId: string; action: string }) => {});
+const highlightBlocks = mock((_input: unknown) => {});
 mock.module("../src/app/lib/den", () => ({ ...actualDen,
   readDenSettings: () => ({ baseUrl: "https://source.test", activeOrgId: tenantId, authToken: "fixture" }),
   readDenUserId: () => "user",
@@ -52,11 +60,11 @@ hostWindow.__JUGGLEWORK_ELECTRON__ = { cloudDocs: {
     return { closed: closeAllowed };
   },
   onState: (fn: (value: unknown) => void) => { states.add(fn); return () => states.delete(fn); },
-  onLayout: () => () => {}, onAiReference: () => () => {},
+   onLayout: (fn: (value: unknown) => void) => { layouts.add(fn); return () => layouts.delete(fn); }, onAiReference: () => () => {},
   setAppearance(input: { instanceId: string; appearance: { locale: string } }) {
     locales.set(input.instanceId, input.appearance.locale);
   },
-  layoutCommand() {}, highlightBlocks() {},
+   layoutCommand, highlightBlocks,
 } };
 const { CloudDocPanel } = await import("../src/react-app/domains/cloud-docs/cloud-doc-panel");
 const { FileTabs } = await import("../src/react-app/domains/session/files/file-tabs");
@@ -129,4 +137,36 @@ test("本地与多篇云文档反复切换保留各自实例；关闭标签和�
   expect(captureCloudDocTurn(sessionId, "修改当前文档").activeDoc).toBeNull();
   await act(async () => renderer.unmount());
   store.clearSession(sessionId);
+});
+
+test("hidden surface 的 ready／resize／leftOpen 不请求展示或高亮，恢复使用原实例且保留 session context", async () => {
+  const sessionId = "hidden-cloud-surface";
+  const tab = { tenantId, workspaceId: "cloud-ws", docId: "hidden-doc", title: "Hidden" };
+  const launchCount = launches.length, openCount = opened.length, closeCount = closed.length;
+  openCloudDocTab(sessionId, tab, ["block"]);
+  layoutCommand.mockClear(); highlightBlocks.mockClear();
+  let renderer!: ReturnType<typeof create>;
+  await act(async () => { renderer = create(<CloudDocPanel sessionId={sessionId} surfaceVisible={false} />, { createNodeMock: () => ({ clientWidth: 600 }) }); });
+  const id = opened.at(-1)!.instanceId;
+  const layout = (leftOpen: boolean) => { for (const callback of layouts) callback({ instanceId: id, layout: { leftOpen, leftWidth: 248, rightOpen: false } }); };
+  await act(async () => {
+    for (const callback of states) callback({ instanceId: id, status: "ready" });
+    for (const callback of resizes) callback();
+    layout(true);
+  });
+  expect(visibility.get(id)).toBe(false);
+  expect(layoutCommand).not.toHaveBeenCalled();
+  expect(highlightBlocks).not.toHaveBeenCalled();
+  expect(captureCloudDocTurn(sessionId, "修改文档").activeDoc?.docId).toBe(tab.docId);
+  await act(async () => renderer.update(<CloudDocPanel sessionId={sessionId} surfaceVisible />));
+  expect(visibility.get(id)).toBe(true);
+  expect(layoutCommand).toHaveBeenCalledWith({ instanceId: id, action: "request-state" });
+  expect(highlightBlocks).toHaveBeenCalledWith({ instanceId: id, docId: tab.docId, blockIds: ["block"] });
+  await act(async () => layout(true));
+  expect(layoutCommand).toHaveBeenLastCalledWith({ instanceId: id, action: "toggle-left" });
+  expect(launches).toHaveLength(launchCount + 1);
+  expect(opened).toHaveLength(openCount + 1);
+  expect(closed).toHaveLength(closeCount);
+  await act(async () => renderer.unmount());
+  useFilesPanelStore.getState().clearSession(sessionId);
 });
