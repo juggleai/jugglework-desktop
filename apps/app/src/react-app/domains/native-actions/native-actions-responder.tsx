@@ -1,6 +1,8 @@
 import * as React from "react";
 import { createDenClient, readDenSettings, readDenUserId } from "@/app/lib/den";
-import { getMembers } from "../jugglechat/api";
+import { Temporal } from "@js-temporal/polyfill";
+import { getChatGroupsForContacts, getMembers } from "../jugglechat/api";
+import { prepareCalendarEvent, prepareIm, prepareMeeting, searchGroups, type CalendarPrepareParams, type MeetingPrepareParams } from "./native-writes";
 import {
   assertLiveScope,
   cursorBinding,
@@ -26,7 +28,7 @@ const localTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 
 /** Cursor issued per query; a continuation must come back with the same query and scope. */
 const issuedCursors = new Map<string, string>();
 
-const SUPPORTED_OPS = new Set<string>(["product_tasks.list", "contacts.search"]);
+const SUPPORTED_OPS = new Set<string>(["product_tasks.list", "contacts.search", "chats.search", "calendar.prepare", "meeting.prepare", "im.prepare"]);
 
 export async function runNativeActionRead(request: NativeActionRequest) {
   // TIPS: 先判断操作是否支持，否则未知操作会被误报成"身份已切换"。
@@ -57,6 +59,29 @@ export async function runNativeActionRead(request: NativeActionRequest) {
     const { members } = await getMembers();
     assertLiveScope(request.scope, liveNativeActionScope());
     return searchOrganizationContacts(members, query, request.scope, limit);
+  }
+  if (request.op === "chats.search") {
+    const groups = await getChatGroupsForContacts();
+    assertLiveScope(request.scope, liveNativeActionScope());
+    return searchGroups(groups, String(request.params.query ?? ""), request.scope);
+  }
+  // Prepare ops resolve targets and freeze the payload. They never write.
+  const now = Temporal.Now.instant();
+  if (request.op === "calendar.prepare") {
+    const client = createDenClient({ baseUrl: settings.baseUrl, token: settings.authToken });
+    const [calendars, { members }] = await Promise.all([client.listCalendars(request.scope.organizationId), getMembers()]);
+    assertLiveScope(request.scope, liveNativeActionScope());
+    const self = members.find((member) => member.userId === request.scope.userId || member.user?.id === request.scope.userId);
+    if (!self) throw new NativeActionError("membership_unavailable", "无法确认你在当前组织中的成员身份");
+    return prepareCalendarEvent(request.params as CalendarPrepareParams, { scope: request.scope, localTimeZone: localTimeZone(), calendars, selfMemberId: self.id, members, now });
+  }
+  if (request.op === "meeting.prepare" || request.op === "im.prepare") {
+    const [{ members }, groups] = await Promise.all([getMembers(), getChatGroupsForContacts()]);
+    assertLiveScope(request.scope, liveNativeActionScope());
+    const context = { scope: request.scope, members, groups, selfUserId: request.scope.userId };
+    return request.op === "meeting.prepare"
+      ? prepareMeeting(request.params as MeetingPrepareParams, { ...context, localTimeZone: localTimeZone(), now })
+      : prepareIm(request.params as { to: string; text: string }, context);
   }
   throw new NativeActionError("native_action_unsupported", "不支持的原生能力");
 }

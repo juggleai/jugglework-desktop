@@ -2272,6 +2272,17 @@ export type AutomationEntitySessionMapping = {
   lastUsedAt: number;
 };
 
+export type NativeActionProposalView = {
+  id: string;
+  turnId: string;
+  action: "calendar.create" | "meeting.create" | "im.send";
+  preview: Record<string, unknown>;
+  createdAt: string;
+  expiresAt: string;
+  state: "pending" | "running" | "succeeded" | "partial" | "failed" | "unknown" | "cancelled" | "expired";
+  steps: Array<{ name: string; status: "succeeded" | "failed" | "unknown" | "skipped"; error?: string; result?: Record<string, unknown> }>;
+};
+
 export function createJuggleWorkServerClient(options: { baseUrl: string; token?: string; hostToken?: string }) {
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
   const token = options.token;
@@ -3564,6 +3575,12 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     cloudDocsSessionChanges: (workspaceId: string, sessionId: string) => requestJson<{ turns: Array<{ messageId: string; documents: Array<{ tenantId: string; workspaceId: string; docId: string; title: string; replaced: number; inserted: number; deleted: number }>; undone: boolean }> }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-docs/session-changes?sessionId=${encodeURIComponent(sessionId)}`, { token, hostToken }),
     /** 云文档：按用户 messageId 查询所属轮次的变更汇总。 */
     cloudDocsChanges: (workspaceId: string, sessionId: string, messageId: string) => requestJson<{ documents: Array<{ tenantId: string; workspaceId: string; docId: string; title: string; replaced: number; inserted: number; deleted: number }>; changes: Array<{ workspaceId: string; docId: string; blockId: string; before?: string; after?: string; blocks: Array<{ blockId: string }> }>; undone: boolean }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-docs/changes?sessionId=${encodeURIComponent(sessionId)}&messageId=${encodeURIComponent(messageId)}`, { token, hostToken }),
+    /** 原生能力：会话内所有待确认/已执行的写操作提案。 */
+    nativeActionProposals: (workspaceId: string, sessionId: string) => requestJson<{ items: NativeActionProposalView[] }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/native-actions/proposals?sessionId=${encodeURIComponent(sessionId)}`, { token, hostToken }),
+    /** 原生能力：host 凭据领取一次性提案；返回冻结的执行参数。 */
+    nativeActionClaim: (workspaceId: string, sessionId: string, proposalId: string) => requestJson<{ proposal: NativeActionProposalView; scope: { baseUrl: string; userId: string; organizationId: string }; execution: Record<string, unknown> }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/native-actions/proposals/${encodeURIComponent(proposalId)}/claim`, { hostToken, method: "POST", body: { sessionId } }),
+    nativeActionCancel: (workspaceId: string, sessionId: string, proposalId: string) => requestJson<NativeActionProposalView>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/native-actions/proposals/${encodeURIComponent(proposalId)}/cancel`, { hostToken, method: "POST", body: { sessionId } }),
+    nativeActionComplete: (workspaceId: string, sessionId: string, proposalId: string, steps: NativeActionProposalView["steps"]) => requestJson<NativeActionProposalView>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/native-actions/proposals/${encodeURIComponent(proposalId)}/complete`, { hostToken, method: "POST", body: { sessionId, steps } }),
     /** 云文档：只撤销指定 messageId 的写入，已变化的块跳过。 */
     cloudDocsUndo: (workspaceId: string, sessionId: string, messageId: string) => requestJson<{ restored: number; conflicts: number }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-docs/undo`, { token, hostToken, method: "POST", body: { sessionId, messageId } }),
     /** 发送或入队前核对固定引用，不重读当前光标。 */

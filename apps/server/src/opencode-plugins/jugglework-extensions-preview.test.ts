@@ -227,7 +227,10 @@ function startFakeJuggleWorkServer(options: { createSkillAvailable?: boolean; re
         return Response.json({ ok: true, received: record.body });
       }
 
-      if (/^\/workspace\/ws_[12]\/native-actions\/(product-tasks|contacts)$/.test(url.pathname)) {
+      if (/^\/workspace\/ws_[12]\/native-actions\/(prepare\/(calendar|meeting|im)|status)$/.test(url.pathname)) {
+        return Response.json({ id: "nap_1", state: "pending", note: "Nothing has been written yet." });
+      }
+      if (/^\/workspace\/ws_[12]\/native-actions\/(product-tasks|contacts|chats)$/.test(url.pathname)) {
         return Response.json({ items: [], hasMore: false, nextCursor: null });
       }
 
@@ -403,6 +406,25 @@ describe("JuggleWorkExtensionsPreview session tools", () => {
     ]);
     // Without the calling turn there is no identity to run under.
     await expect(plugin.tool.jugglework_query.execute({ id: "product_tasks.list", args: {} }, { workspaceId: "ws_1" })).rejects.toThrow(/calling session/);
+  });
+
+  test("native writes only prepare a proposal and are declared as always needing confirmation", async () => {
+    const { requests } = startFakeJuggleWorkServer();
+    const plugin = await JuggleWorkExtensionsPreview();
+    const context = { sessionID: "ses_alpha", messageID: "msg_assistant", workspaceId: "ws_1" };
+    for (const [id, path, args] of [
+      ["calendar.create", "calendar", { title: "写周报", date: "2026-11-20", startTime: "09:00", endTime: "10:00" }],
+      ["meeting.create", "meeting", { title: "站会", immediate: true }],
+      ["im.send", "im", { to: "contact:abc:m1", text: "hi" }],
+    ] as const) {
+      const result = JSON.parse(await plugin.tool.jugglework_execute.execute({ id, args }, context));
+      expect(result).toMatchObject({ ok: true, id, result: { state: "pending" } });
+      expect(requests.at(-1)).toMatchObject({ pathname: `/workspace/ws_1/native-actions/prepare/${path}`, body: { sessionId: "ses_alpha", messageId: "msg_assistant", args } });
+    }
+    await plugin.tool.jugglework_query.execute({ id: "native_actions.status", args: { proposalId: "nap_1" } }, context);
+    expect(requests.at(-1)).toMatchObject({ pathname: "/workspace/ws_1/native-actions/status", body: { sessionId: "ses_alpha", proposalId: "nap_1" } });
+    // No tool path can reach confirm/claim.
+    expect(requests.some((entry) => /\/proposals\//.test(entry.pathname))).toBe(false);
   });
 
   test("searches past chat transcript text and prefers the user's matching message", async () => {

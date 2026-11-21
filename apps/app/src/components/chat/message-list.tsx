@@ -2,6 +2,7 @@ import { Cloud } from "lucide-react";
 import { UserMessageText } from "./user-message-text";
 import { Badge } from "@/components/ui/badge";
 import { CloudDocsTurnCard } from "@/react-app/domains/cloud-docs/cloud-docs-turn-card";
+import { NativeActionTurnCards } from "@/react-app/domains/native-actions/native-action-card";
 import { parseCloudDocToken, type CloudDocReference } from "@/app/lib/cloud-doc-reference";
 import { openCloudDocTab } from "@/app/lib/cloud-doc-tabs";
 import { toast } from "@/components/ui/sonner"
@@ -1314,6 +1315,7 @@ function MessageGroup({
         {summaryItems.map((item, groupIndex) => renderItem(item, processItems.length + groupIndex, "summary"))}
       </div>
       {turnId && <CloudDocsTurnCard client={client} workspaceId={workspaceId} sessionId={sessionId} messageId={turnId} busy={cloudDocsBusy || isStreaming} />}
+      {turnId && <NativeActionTurnCards client={client} workspaceId={workspaceId} sessionId={sessionId} turnId={turnId} />}
       {!isLiveGroup ? <ArtifactCards artifacts={cardArtifacts} turnId={turnId} onUndo={historyActionsEnabled && !isStreaming && turnId ? () => onRevertToUserMessage(turnId) : undefined} /> : null}
       {!isLiveGroup && delivery ? <ArtifactDeliveryStatus delivery={delivery} onRetry={() => deliveries!.retry(delivery.turnId)} /> : null}
       <GeneratedImageResultList messages={items.map((item) => item.message)} />

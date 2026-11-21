@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { ApiError } from "../errors.js";
 import type { NativeActionRequester } from "./bridge.js";
+import { NativeActionProposals, publicProposal, type ProposalStep } from "./proposals.js";
 import type { NativeActionTurns } from "./turns.js";
+import { calendarPrepareArgs, chatsSearchArgs, imPrepareArgs, meetingPrepareArgs, type NativeWriteAction } from "./write-schema.js";
 
 interface TurnKey {
   workspaceId: string;
@@ -37,6 +39,7 @@ export class NativeActionsService {
   constructor(
     private readonly turns: NativeActionTurns,
     private readonly request: NativeActionRequester,
+    readonly proposals = new NativeActionProposals(),
   ) {}
 
   private scope(key: TurnKey) {
@@ -53,5 +56,80 @@ export class NativeActionsService {
   async searchContacts(key: TurnKey, rawArgs: unknown) {
     const args = contactsArgs.parse(rawArgs ?? {});
     return this.request({ op: "contacts.search", scope: this.scope(key), params: args });
+  }
+
+  async searchChats(key: TurnKey, rawArgs: unknown) {
+    const args = chatsSearchArgs.parse(rawArgs ?? {});
+    return this.request({ op: "chats.search", scope: this.scope(key), params: args });
+  }
+
+  /**
+   * Prepares a write without performing it. The renderer resolves targets and
+   * returns what the card shows plus the exact payload; the user's click on the
+   * card is the only way it runs.
+   */
+  async prepare(key: TurnKey, action: NativeWriteAction, rawArgs: unknown) {
+    const schema = action === "calendar.create" ? calendarPrepareArgs : action === "meeting.create" ? meetingPrepareArgs : imPrepareArgs;
+    const args = schema.parse(rawArgs ?? {});
+    const scope = this.scope(key);
+    const op = action === "calendar.create" ? "calendar.prepare" : action === "meeting.create" ? "meeting.prepare" : "im.prepare";
+    const prepared = preparedSchema.parse(await this.request({ op, scope, params: args }));
+    let proposal;
+    try {
+      proposal = this.proposals.create({
+        workspaceId: key.workspaceId, sessionId: key.sessionId, turnId: key.messageId, scope, action,
+        preview: prepared.preview, execution: prepared.execution,
+      });
+    } catch (error) {
+      throw new ApiError(429, (error as { code?: string }).code ?? "native_action_too_many_proposals", (error as Error).message);
+    }
+    return {
+      ...publicProposal(proposal),
+      note: "Nothing has been written yet. The user must review and confirm this on the card under your reply. Do not say it was created or sent; ask the user to check the card. Check the outcome later with native_actions.status.",
+    };
+  }
+
+  status(key: Omit<TurnKey, "messageId">, proposalId: string) {
+    const item = this.proposals.get(key.workspaceId, key.sessionId, proposalId);
+    if (!item) throw new ApiError(404, "native_action_proposal_not_found", "待确认操作不存在");
+    return publicProposal(item);
+  }
+
+  list(workspaceId: string, sessionId: string) {
+    return { items: this.proposals.listForSession(workspaceId, sessionId).map(publicProposal) };
+  }
+
+  /** Host-only: hands the frozen payload to the renderer that will run it. */
+  claim(workspaceId: string, sessionId: string, proposalId: string) {
+    const item = proposalCall(() => this.proposals.claim(workspaceId, sessionId, proposalId));
+    return { proposal: publicProposal(item), scope: item.scope, execution: item.execution };
+  }
+
+  cancel(workspaceId: string, sessionId: string, proposalId: string) {
+    return publicProposal(proposalCall(() => this.proposals.cancel(workspaceId, sessionId, proposalId)));
+  }
+
+  complete(workspaceId: string, sessionId: string, proposalId: string, rawSteps: unknown) {
+    const steps = z.array(stepSchema).min(1).max(20).parse(rawSteps);
+    return publicProposal(proposalCall(() => this.proposals.complete(workspaceId, sessionId, proposalId, steps)));
+  }
+}
+
+const preparedSchema = z.object({
+  preview: z.record(z.string(), z.unknown()),
+  execution: z.record(z.string(), z.unknown()),
+}).strict();
+
+const stepSchema: z.ZodType<ProposalStep> = z.object({
+  name: z.string().min(1).max(64),
+  status: z.enum(["succeeded", "failed", "unknown", "skipped"]),
+  error: z.string().max(500).optional(),
+  result: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+
+function proposalCall<T>(run: () => T): T {
+  try { return run(); } catch (error) {
+    const value = error as { status?: number; code?: string; message?: string };
+    throw new ApiError(value.status ?? 409, value.code ?? "native_action_proposal_invalid", value.message ?? "操作状态无效");
   }
 }

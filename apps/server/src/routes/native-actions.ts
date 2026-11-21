@@ -50,4 +50,38 @@ export function registerNativeActionRoutes(options: NativeActionRouteOptions): v
     const body = await options.readJsonBody(ctx.request);
     return jsonResponse(await service.searchContacts(await toolTurn(workspace.id, body), body.args));
   });
+  addRoute(routes, "POST", "/workspace/:id/native-actions/chats", "client", async (ctx) => {
+    const workspace = await local(ctx.params.id);
+    const body = await options.readJsonBody(ctx.request);
+    return jsonResponse(await service.searchChats(await toolTurn(workspace.id, body), body.args));
+  });
+  for (const [path, action] of [["calendar", "calendar.create"], ["meeting", "meeting.create"], ["im", "im.send"]] as const) {
+    addRoute(routes, "POST", `/workspace/:id/native-actions/prepare/${path}`, "client", async (ctx) => {
+      const workspace = await local(ctx.params.id);
+      const body = await options.readJsonBody(ctx.request);
+      return jsonResponse(await service.prepare(await toolTurn(workspace.id, body), action, body.args));
+    });
+  }
+  addRoute(routes, "POST", "/workspace/:id/native-actions/status", "client", async (ctx) => {
+    const workspace = await local(ctx.params.id);
+    const body = await options.readJsonBody(ctx.request);
+    return jsonResponse(service.status({ workspaceId: workspace.id, sessionId: text(body.sessionId, "sessionId") }, text(body.proposalId, "proposalId")));
+  });
+  addRoute(routes, "GET", "/workspace/:id/native-actions/proposals", "client", async (ctx) => {
+    const workspace = await local(ctx.params.id);
+    return jsonResponse(service.list(workspace.id, text(ctx.url.searchParams.get("sessionId"), "sessionId")));
+  });
+  // TIPS: 确认、取消和回执只接受 host 凭据。对话工具只持有 client token，
+  // 因此模型无法替用户点确认；Full access 也不改变这一点。
+  for (const verb of ["claim", "cancel", "complete"] as const) {
+    addRoute(routes, "POST", `/workspace/:id/native-actions/proposals/:proposalId/${verb}`, "host", async (ctx) => {
+      const workspace = await local(ctx.params.id);
+      const body = await options.readJsonBody(ctx.request);
+      const sessionId = text(body.sessionId, "sessionId");
+      const proposalId = text(ctx.params.proposalId, "proposalId");
+      if (verb === "claim") return jsonResponse(service.claim(workspace.id, sessionId, proposalId));
+      if (verb === "cancel") return jsonResponse(service.cancel(workspace.id, sessionId, proposalId));
+      return jsonResponse(service.complete(workspace.id, sessionId, proposalId, body.steps));
+    });
+  }
 }

@@ -62,9 +62,9 @@ The assistant SHALL create a native event only on a writable calendar, using the
 ### Requirement: Create a meeting without implicit join or outreach
 Meeting actions SHALL distinguish immediate creation from scheduling. The result SHALL distinguish a created meeting, confirmed invitations and any unavailable operation; room creation alone SHALL NOT join the user, access camera or microphone, or notify others.
 
-#### Scenario: Create a meeting and return its entry link
+#### Scenario: Create a meeting and report its meeting code
 - **WHEN** the user approves creation without sending invitations
-- **THEN** the assistant returns the created meeting entry and does not join or notify anyone
+- **THEN** the confirmation card shows the meeting code from the creation receipt without joining or notifying anyone
 
 ### Requirement: Send approved text to the resolved IM conversation
 IM send SHALL use the exact approved direct or group conversation and text, not the currently open chat. It SHALL report success only when the sender service confirms it, and SHALL NOT automatically resend an uncertain transmission.
@@ -76,6 +76,6 @@ IM send SHALL use the exact approved direct or group conversation and text, not 
 ### Requirement: Keep independent receipts for combined actions
 The assistant SHALL report a separate outcome for each approved step, execute dependent steps only when prerequisites are confirmed, and preserve known successes when later steps fail.
 
-#### Scenario: Meeting succeeds but IM does not
-- **WHEN** the meeting is created and sending the approved message fails or has an unknown outcome
-- **THEN** the assistant reports both statuses separately and does not recreate the meeting or automatically resend the message
+#### Scenario: Meeting succeeds but sharing the native meeting card does not
+- **WHEN** the meeting is created but sending its native meeting card to an approved conversation fails or has an unknown outcome
+- **THEN** the confirmation card reports both outcomes separately and does not recreate the meeting or automatically resend the card

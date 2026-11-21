@@ -1,7 +1,7 @@
 /** Identity frozen on the user turn; the renderer only answers when it still matches. */
 export type NativeActionScope = { baseUrl: string; userId: string; organizationId: string };
 
-export type NativeReadOp = "product_tasks.list" | "contacts.search";
+export type NativeReadOp = "product_tasks.list" | "contacts.search" | "chats.search" | "calendar.prepare" | "meeting.prepare" | "im.prepare";
 
 export type NativeActionRequest = {
   requestId: string;

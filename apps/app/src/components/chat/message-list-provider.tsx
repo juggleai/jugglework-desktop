@@ -1,5 +1,6 @@
 import { useCloudDocsTenantId } from "@/app/lib/cloud-doc-turn";
 import { CloudDocChangesProvider } from "@/react-app/domains/cloud-docs/cloud-doc-changes-provider";
+import { NativeActionProposalsProvider } from "@/react-app/domains/native-actions/native-action-proposals-provider";
 "use memo";
 
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store"
@@ -136,7 +137,9 @@ export function MessageListProvider({
 
   return (
     <MessageListContext.Provider value={value}>
-      <CloudDocChangesProvider client={cloudDocsTenantId ? client : null} workspaceId={workspaceId} sessionId={sessionId} busy={cloudDocsBusy}>{children}</CloudDocChangesProvider>
+      <CloudDocChangesProvider client={cloudDocsTenantId ? client : null} workspaceId={workspaceId} sessionId={sessionId} busy={cloudDocsBusy}>
+        <NativeActionProposalsProvider client={client} workspaceId={workspaceId} sessionId={sessionId} busy={cloudDocsBusy}>{children}</NativeActionProposalsProvider>
+      </CloudDocChangesProvider>
     </MessageListContext.Provider>
   )
 }

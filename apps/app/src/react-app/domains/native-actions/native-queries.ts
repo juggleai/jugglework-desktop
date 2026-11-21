@@ -124,7 +124,7 @@ export function searchOrganizationContacts(members: OrganizationMember[], query:
   };
 }
 
-const scopeTag = (scope: NativeActionScope) => {
+export const scopeTag = (scope: NativeActionScope) => {
   // Not a secret: it only stops a reference from one account or organization
   // being accepted under another. Writes still re-check membership live.
   let hash = 0;

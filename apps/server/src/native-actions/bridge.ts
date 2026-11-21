@@ -3,7 +3,8 @@ import { ApiError } from "../errors.js";
 import { loopbackFetch } from "../server-fetch.js";
 import type { NativeActionScope } from "./schema.js";
 
-export type NativeReadOp = "product_tasks.list" | "contacts.search";
+/** Read and prepare ops only. Writes run in the renderer from the card's confirm click, never over this channel. */
+export type NativeReadOp = "product_tasks.list" | "contacts.search" | "chats.search" | "calendar.prepare" | "meeting.prepare" | "im.prepare";
 
 /**
  * Native requests go through the desktop main process to the renderer, which

@@ -382,8 +382,8 @@ const cloudDocsAffordances: JuggleWorkAffordanceDescriptor[] = [
 
 const nativeActionsProvider = { id: "jugglework-native", kind: "builtin" } as const;
 /**
- * Read-only native JuggleWork data, run as the signed-in user of the calling
- * turn. Writes (calendar, meetings, IM) are not offered here yet.
+ * Native JuggleWork data and actions, run as the signed-in user of the calling
+ * turn. Write actions only prepare a proposal; the user confirms on a card.
  */
 const nativeActionAffordances: JuggleWorkAffordanceDescriptor[] = [
   {
@@ -409,6 +409,66 @@ const nativeActionAffordances: JuggleWorkAffordanceDescriptor[] = [
       { name: "query", type: "string", required: true, description: "Name, account or email fragment." },
       { name: "limit", type: "number", required: false, description: "At most 10." },
     ],
+    effects: affordanceReadEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+  {
+    id: "chats.search", kind: "query", title: "Search my group chats",
+    description: "Find group chats the signed-in user belongs to by name. Returns at most 10 candidates with an opaque ref for im.send or meeting.create shareTo. For one-to-one chats use contacts.search refs. Ask the user to choose when several match.",
+    provider: nativeActionsProvider,
+    arguments: [{ name: "query", type: "string", required: true, description: "Group name fragment." }],
+    effects: affordanceReadEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+  {
+    id: "calendar.create", kind: "command", title: "Prepare a calendar event",
+    description: "Prepares (does not create) an event in the user's calendar and shows a confirmation card. Times are local wall-clock in timeZone (default: the user's zone). Attendees are contacts.search refs; with no attendees it is a personal event. Nothing is written until the user confirms on the card.",
+    provider: nativeActionsProvider,
+    arguments: [
+      { name: "title", type: "string", required: true, description: "Event title." },
+      { name: "description", type: "string", required: false, description: "Optional notes." },
+      { name: "date", type: "string", required: true, description: "Start date YYYY-MM-DD." },
+      { name: "endDate", type: "string", required: false, description: "End date YYYY-MM-DD; defaults to date. For all-day events this is the last day, inclusive." },
+      { name: "allDay", type: "boolean", required: false, description: "All-day event; then omit startTime/endTime." },
+      { name: "startTime", type: "string", required: false, description: "HH:MM, 24h. Required unless allDay." },
+      { name: "endTime", type: "string", required: false, description: "HH:MM, 24h. Required unless allDay." },
+      { name: "timeZone", type: "string", required: false, description: "IANA zone, e.g. Asia/Shanghai." },
+      { name: "attendees", type: "array", required: false, description: "contacts.search refs." },
+      { name: "calendarId", type: "string", required: false, description: "Target calendar; defaults to the user's default calendar." },
+    ],
+    effects: affordanceExternalWriteEffects, confirmation: "always", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+  {
+    id: "meeting.create", kind: "command", title: "Prepare a video meeting",
+    description: "Prepares (does not create) an instant or scheduled JuggleWork meeting and shows a confirmation card. Invitees are contacts.search refs. notifyInvitees (default false) additionally sends each invitee a meeting card; set it only when the user asked to notify them. shareTo sends the meeting card to the given chats after the meeting is created. The user is never joined automatically and camera/microphone stay off.",
+    provider: nativeActionsProvider,
+    arguments: [
+      { name: "title", type: "string", required: true, description: "Meeting title, at most 120 characters." },
+      { name: "description", type: "string", required: false, description: "Optional agenda." },
+      { name: "immediate", type: "boolean", required: true, description: "true = start now; false = scheduled." },
+      { name: "date", type: "string", required: false, description: "Scheduled start date YYYY-MM-DD." },
+      { name: "startTime", type: "string", required: false, description: "Scheduled start HH:MM, 24h." },
+      { name: "durationMinutes", type: "number", required: false, description: "Default 30, at most 1440." },
+      { name: "timeZone", type: "string", required: false, description: "IANA zone." },
+      { name: "invitees", type: "array", required: false, description: "contacts.search refs." },
+      { name: "notifyInvitees", type: "boolean", required: false, description: "Send each invitee a meeting card. Default false." },
+      { name: "shareTo", type: "array", required: false, description: "Chat refs from contacts.search or chats.search that receive the meeting card." },
+    ],
+    effects: affordanceExternalWriteEffects, confirmation: "always", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+  {
+    id: "im.send", kind: "command", title: "Prepare an IM text message",
+    description: "Prepares (does not send) a plain-text message to exactly one chat and shows a confirmation card with the full text. to is a contacts.search ref (one-to-one) or chats.search ref (group). Never target the chat currently open on screen unless the user named it.",
+    provider: nativeActionsProvider,
+    arguments: [
+      { name: "to", type: "string", required: true, description: "Chat ref." },
+      { name: "text", type: "string", required: true, description: "Full message text, at most 2000 characters." },
+    ],
+    effects: affordanceExternalWriteEffects, confirmation: "always", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+  {
+    id: "native_actions.status", kind: "query", title: "Check a prepared action",
+    description: "Read the state and step receipts of a proposal returned by calendar.create, meeting.create or im.send: pending, cancelled, expired, succeeded, partial, failed or unknown (result not confirmed; do not retry automatically).",
+    provider: nativeActionsProvider,
+    arguments: [{ name: "proposalId", type: "string", required: true, description: "id from the prepare result." }],
     effects: affordanceReadEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
   },
 ];
@@ -691,9 +751,16 @@ async function queryJuggleWorkAffordance(rawArgs: unknown, context: OpenCodeCont
     if (args.blockIds?.length) query.set("blockIds", args.blockIds.join(","));
     return affordanceResult(request.id, await serverGet(`${base}/read?${query}`), affordanceReadEffects);
   }
-  if (request.id === "product_tasks.list" || request.id === "contacts.search") {
+  if (request.id === "native_actions.status") {
     const workspace = await resolveContextWorkspace(context.workspaceId ?? context.workspaceID, context);
-    const path = request.id === "product_tasks.list" ? "product-tasks" : "contacts";
+    const args = z.object({ proposalId: z.string().min(1).max(128) }).strict().parse(request.args ?? {});
+    return affordanceResult(request.id, await postJson(`/workspace/${encodeURIComponent(workspace.id)}/native-actions/status`, {
+      sessionId: nativeActionTurn(context).sessionId, proposalId: args.proposalId,
+    }), affordanceReadEffects);
+  }
+  if (request.id === "product_tasks.list" || request.id === "contacts.search" || request.id === "chats.search") {
+    const workspace = await resolveContextWorkspace(context.workspaceId ?? context.workspaceID, context);
+    const path = request.id === "product_tasks.list" ? "product-tasks" : request.id === "contacts.search" ? "contacts" : "chats";
     return affordanceResult(request.id, await postJson(`/workspace/${encodeURIComponent(workspace.id)}/native-actions/${path}`, {
       ...nativeActionTurn(context), args: request.args ?? {},
     }), affordanceReadEffects);
@@ -772,6 +839,14 @@ async function executeJuggleWorkAffordance(
     }
     const args = z.object({ path: z.string().min(1).max(1024) }).strict().parse(request.args ?? {});
     return affordanceResult(request.id, await postJson(`${base}/import`, { ...turn, ...args }), affordanceWriteEffects);
+  }
+  if (request.id === "calendar.create" || request.id === "meeting.create" || request.id === "im.send") {
+    const workspace = await resolveContextWorkspace(context.workspaceId ?? context.workspaceID, context);
+    const path = request.id === "calendar.create" ? "calendar" : request.id === "meeting.create" ? "meeting" : "im";
+    // Prepares only; the write happens when the user confirms on the card.
+    return affordanceResult(request.id, await postJson(`/workspace/${encodeURIComponent(workspace.id)}/native-actions/prepare/${path}`, {
+      ...nativeActionTurn(context), args: request.args ?? {},
+    }), affordanceReadEffects);
   }
   if (request.id === "office.call") {
     if (!context.sessionID || !context.messageID) throw new Error("Office editing requires the calling session and message");
