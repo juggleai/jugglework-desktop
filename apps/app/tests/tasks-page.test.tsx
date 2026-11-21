@@ -86,6 +86,7 @@ mock.module("../src/components/ui/tabs", () => ({
 }));
 
 const { TaskPage, TaskShellContent } = await import("../src/react-app/domains/tasks/task-page");
+const { TaskCommentEditor, TaskDescriptionEditor } = await import("../src/react-app/domains/tasks/task-description-editor");
 const { TaskDateTimeCell } = await import("../src/react-app/domains/tasks/task-date-time-cell");
 const { useUiStateStore } = await import("../src/react-app/shell/ui-state-store");
 const queryClients = new Set<QueryClient>();
@@ -197,6 +198,15 @@ function connectedPage(client: DenClient, routeTaskId?: string) {
 
 async function settle() {
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+}
+
+async function openDetailDescription(root: TestRenderer.ReactTestInstance) {
+  await act(async () => { root.findByProps({ "data-testid": "task-detail-description-preview" }).props.onClick(); });
+  return root.find((node) => node.type === TaskDescriptionEditor && node.props.testId === "task-detail-description-editor");
+}
+
+function leaveDescription(editor: TestRenderer.ReactTestInstance) {
+  editor.findByProps({ "data-testid": "task-detail-description-editor" }).props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null });
 }
 
 test("renders an Agent-independent empty task center shell", async () => {
@@ -958,8 +968,10 @@ test("Assigned to me shows only List and Board tabs and the two creation options
     expect(fullCreateDialog.props.className).toContain("max-w-[680px]");
     expect(fullCreateDialog.props.className).toContain("h-[min(460px");
     expect(renderer!.root.findByProps({ placeholder: "Enter a title and press Enter" })).toBeDefined();
-    expect(renderer!.root.findByProps({ "data-testid": "task-create-description-toolbar" })).toBeDefined();
-    expect(renderer!.root.findByProps({ "data-testid": "task-create-description-editor" }).props.className).toContain("h-[168px]");
+    const descriptionEditor = fullCreateDialog.findByType(TaskDescriptionEditor);
+    expect(descriptionEditor.props.value).toBe("");
+    expect(descriptionEditor.findByProps({ "data-testid": "task-create-description-editor" })).toBeDefined();
+    expect(descriptionEditor.findByProps({ "data-testid": "task-create-description-toolbar" }).findAllByType("button")).toHaveLength(11);
     expect(renderer!.root.findByProps({ "data-testid": "task-create-followers-trigger" })).toBeDefined();
     expect(renderer!.root.findByProps({ "data-testid": "task-create-footer" }).props.className).toContain("sm:justify-between");
     expect(fullCreateDialog.findAllByType("button").find((button) => button.props.type === "submit")?.props.children).toBe("Create");
@@ -1206,9 +1218,7 @@ test.each([
     await act(async () => {
       dialog.findByProps({ placeholder: "Enter a title and press Enter" }).props.onChange({ target: { value: "Full task" } });
     });
-    expect(renderer!.root.findByProps({ "data-testid": "task-create-description-toolbar" }).findAllByType("button")).toHaveLength(11);
-    await act(async () => { renderer!.root.findByProps({ placeholder: "Add a description" }).props.onChange({ target: { value: "Everything" } }); });
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-description-format-bold" }).props.onClick(); });
+    await act(async () => { dialog.findByType(TaskDescriptionEditor).props.onChange("Everything"); });
     await act(async () => { renderer!.root.findAll((node) => node.props.children === "Today")[0]!.props.onClick(); });
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-option-create-dialog-draft-list_one" }).props.onClick(); });
     const assignees = assignee === "member_other" ? ["member_self", assignee] : assignee ? [assignee] : [];
@@ -1218,7 +1228,7 @@ test.each([
     await settle();
     expect(creates[0]).toMatchObject({
       title: "Full task",
-      description: "Everything**text**",
+      description: "Everything",
       priority: "none",
       visibility: expectedVisibility,
       listId: "list_one",
@@ -1864,6 +1874,54 @@ test("Personal workspace member directory populates the fixed assigned-to-me fil
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
+test("task detail opens the description from its preview and saves and collapses on blur", async () => {
+  const updates: Array<Parameters<DenClient["updateProductTask"]>[2]> = [];
+  let saved = task(1);
+  const client = connectedClient({
+    getProductTask: async () => result(saved),
+    updateProductTask: async (_orgId, _taskId, patch) => {
+      updates.push(patch);
+      saved = task(2, patch.title, patch.description);
+      return result(saved);
+    },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, "task_one")); });
+  await settle();
+  try {
+    const root = renderer!.root;
+    const editorFrame = { "data-testid": "task-detail-description-editor" };
+    expect(root.findAllByProps(editorFrame)).toHaveLength(0);
+    const editor = await openDetailDescription(root);
+    expect(root.findByProps(editorFrame)).toBeDefined();
+    expect(editor.props.value).toBe("Server description");
+    await act(async () => { editor.props.onChange("Updated description"); });
+    expect(updates).toHaveLength(0);
+    await act(async () => { leaveDescription(editor); });
+    await settle();
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({ expectedVersion: 1, description: "Updated description" });
+    expect(root.findAllByProps(editorFrame)).toHaveLength(0);
+    expect((await openDetailDescription(root)).props.value).toBe("Updated description");
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("task detail keeps the description in preview without content edit permission", async () => {
+  const detail = result(task(1));
+  detail.permissions.canEditContent = false;
+  const client = connectedClient({ getProductTask: async () => detail });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, "task_one")); });
+  await settle();
+  try {
+    const root = renderer!.root;
+    const preview = root.findByProps({ "data-testid": "task-detail-description-preview" });
+    if (!preview.props.disabled) await act(async () => { preview.props.onClick?.(); });
+    expect(root.findByProps({ "data-testid": "task-detail-description-preview" })).toBeDefined();
+    expect(root.findAllByProps({ "data-testid": "task-detail-description-editor" })).toHaveLength(0);
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
 test("loads the latest task and retries a preserved conflict draft", async () => {
   let getCount = 0;
   const updates: Array<{ taskId: string; patch: Parameters<DenClient["updateProductTask"]>[2] }> = [];
@@ -1880,20 +1938,20 @@ test("loads the latest task and retries a preserved conflict draft", async () =>
   await settle();
   try {
     const titleInput = renderer!.root.findByProps({ value: "Server title" });
-    const descriptionInput = renderer!.root.findByProps({ value: "Server description" });
+    const descriptionInput = await openDetailDescription(renderer!.root);
     await act(async () => {
       titleInput.props.onChange({ target: { value: "My draft title" } });
       descriptionInput.props.onChange("My draft description");
     });
     const button = (label: string) => renderer!.root.findAllByType("button").find((node) => node.props.children === label)!;
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-detail-description-editor" }).props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null }); });
+    await act(async () => { leaveDescription(descriptionInput); });
     await settle();
     expect(updates[0]?.patch).toMatchObject({ expectedVersion: 1, title: "My draft title", description: "My draft description" });
 
     await act(async () => { button("Load latest").props.onClick(); });
     await settle();
     expect(renderer!.root.findByProps({ value: "My draft title" })).toBeDefined();
-    expect(renderer!.root.findByProps({ value: "My draft description" })).toBeDefined();
+    expect((await openDetailDescription(renderer!.root)).props.value).toBe("My draft description");
 
     await act(async () => { button("Retry").props.onClick(); });
     await settle();
@@ -1928,7 +1986,7 @@ test("loading a conflict with revoked content permission keeps the draft but blo
   await settle();
   try {
     const input = () => renderer!.root.findByProps({ value: "My draft title" });
-    const submitDraft = () => renderer!.root.findByProps({ "data-testid": "task-detail-description-editor" }).props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null });
+    const submitDraft = () => input().props.onBlur();
     const button = (label: string) => renderer!.root.findAllByType("button").find((node) => node.props.children === label)!;
     await act(async () => { renderer!.root.findByProps({ value: "Server title" }).props.onChange({ target: { value: "My draft title" } }); });
     await act(async () => { submitDraft(); });
@@ -1958,17 +2016,19 @@ test("dismissing conflict feedback preserves the draft for another save", async 
   await act(async () => { renderer = TestRenderer.create(connectedPage(client, "task_one")); });
   await settle();
   try {
+    const editor = await openDetailDescription(renderer!.root);
     await act(async () => {
       renderer!.root.findByProps({ value: "Server title" }).props.onChange({ target: { value: "Preserved title" } });
-      renderer!.root.findByProps({ value: "Server description" }).props.onChange("Preserved description");
+      editor.props.onChange("Preserved description");
     });
     const button = (label: string) => renderer!.root.findAllByType("button").find((node) => node.props.children === label)!;
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-detail-description-editor" }).props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null }); });
+    await act(async () => { leaveDescription(editor); });
     await settle();
     await act(async () => { button("Dismiss").props.onClick(); });
     expect(renderer!.root.findByProps({ value: "Preserved title" })).toBeDefined();
-    expect(renderer!.root.findByProps({ value: "Preserved description" })).toBeDefined();
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-detail-description-editor" }).props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null }); });
+    const reopenedEditor = await openDetailDescription(renderer!.root);
+    expect(reopenedEditor.props.value).toBe("Preserved description");
+    await act(async () => { leaveDescription(reopenedEditor); });
     await settle();
     expect(updates[1]).toMatchObject({ title: "Preserved title", description: "Preserved description" });
   } finally {
@@ -1992,7 +2052,7 @@ test("switching tasks hides recovery while retaining the conflicted task draft",
   try {
     await act(async () => { renderer!.root.findByProps({ value: "Task one" }).props.onChange({ target: { value: "Task one draft" } }); });
     const button = (label: string) => renderer!.root.findAllByType("button").find((node) => node.props.children === label)!;
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-detail-description-editor" }).props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null }); });
+    await act(async () => { renderer!.root.findByProps({ value: "Task one draft" }).props.onBlur(); });
     await settle();
     const taskButton = (title: string) => renderer!.root.findAllByType("button").find((node) => node.findAll((child) => child.props.children === title).length > 0)!;
     await act(async () => { taskButton("Task two").props.onClick(); });
@@ -2050,7 +2110,7 @@ test("late update conflict cannot restore draft or feedback after organization s
   try {
     await act(async () => { renderer!.root.findByProps({ value: "Server title" }).props.onChange({ target: { value: "Old organization edit" } }); });
     const button = (label: string) => renderer!.root.findAllByType("button").find((node) => node.props.children === label)!;
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-detail-description-editor" }).props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null }); });
+    await act(async () => { renderer!.root.findByProps({ value: "Old organization edit" }).props.onBlur(); });
 
     setCloudSession(client, "org_two");
     await act(async () => { renderer!.update(taskPage(queryClient, "task_one")); });
@@ -2117,7 +2177,7 @@ test("dismissed conflict suppresses a stale load-latest failure", async () => {
   try {
     const button = (label: string) => renderer!.root.findAllByType("button").find((node) => node.props.children === label)!;
     await act(async () => { renderer!.root.findByProps({ value: "Server title" }).props.onChange({ target: { value: "Preserved draft" } }); });
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-detail-description-editor" }).props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null }); });
+    await act(async () => { renderer!.root.findByProps({ value: "Preserved draft" }).props.onBlur(); });
     await settle();
     await act(async () => { button("Load latest").props.onClick(); });
     await act(async () => { button("Dismiss").props.onClick(); });
@@ -2152,7 +2212,7 @@ test("switching tasks suppresses a stale load-latest failure", async () => {
   try {
     const button = (label: string) => renderer!.root.findAllByType("button").find((node) => node.props.children === label)!;
     await act(async () => { renderer!.root.findByProps({ value: "Task one" }).props.onChange({ target: { value: "Task one draft" } }); });
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-detail-description-editor" }).props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null }); });
+    await act(async () => { renderer!.root.findByProps({ value: "Task one draft" }).props.onBlur(); });
     await settle();
     await act(async () => { button("Load latest").props.onClick(); });
 
@@ -2188,19 +2248,21 @@ test("a pending comment from another task cannot clear the current task input", 
   await act(async () => { renderer = TestRenderer.create(connectedPage(client, "task_one")); });
   await settle();
   try {
-    const commentInput = () => renderer!.root.findByProps({ placeholder: "Add a comment…" });
-    const commentForm = () => commentInput().parent!;
-    await act(async () => { commentInput().props.onChange({ target: { value: "Task A comment" } }); });
-    await act(async () => { commentForm().props.onSubmit({ preventDefault: () => undefined }); });
+    const commentEditor = () => renderer!.root.findByType(TaskCommentEditor);
+    await act(async () => { commentEditor().props.onChange("Task A comment"); });
+    await act(async () => { commentEditor().props.onSend(); });
+    expect(commentEditor().props.pending).toBe(true);
 
     const taskButton = (title: string) => renderer!.root.findAllByType("button").find((node) => node.findAll((child) => child.props.children === title).length > 0)!;
     await act(async () => { taskButton("Task two").props.onClick(); });
     await settle();
-    await act(async () => { commentInput().props.onChange({ target: { value: "Task B input" } }); });
+    expect(commentEditor().props.value).toBe("");
+    expect(commentEditor().props.pending).toBe(false);
+    await act(async () => { commentEditor().props.onChange("Task B input"); });
 
     await act(async () => { pendingComment.resolve(); });
     await settle();
-    expect(commentInput().props.value).toBe("Task B input");
+    expect(commentEditor().props.value).toBe("Task B input");
     expect(comments).toEqual([{ taskId: "task_one", body: "Task A comment" }]);
   } finally {
     await act(async () => { renderer!.unmount(); });
@@ -2234,18 +2296,51 @@ test("task detail follows, manages followers, and submits formatted comments", a
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-detail-followers-option-member_other" }).props.onClick(); });
     await settle();
     expect(updates[1]).toMatchObject({ members: [{ memberId: "member_self", role: "follower" }, { memberId: "member_other", role: "follower" }] });
-    const commentForm = renderer!.root.findByProps({ "data-testid": "task-comment-editor" });
-    expect(renderer!.root.findByProps({ "data-testid": "task-detail-panel" }).props.className).toContain("z-50");
-    expect(renderer!.root.findByProps({ "data-testid": "task-detail-panel" }).props.className).toContain("bg-background");
-    expect(renderer!.root.findByProps({ "data-testid": "task-detail-panel" }).findAllByProps({ role: "tooltip" }).map((node) => node.props.children)).toEqual(["Assignees", "Due time", "Task list", "Description"]);
+    const panel = renderer!.root.findByProps({ "data-testid": "task-detail-panel" });
+    const fields = panel.find((node) => node.type === "section" && node.findAllByProps({ "data-testid": "task-detail-description-preview" }).length > 0);
+    expect(panel.props.className).toContain("z-50");
+    expect(panel.props.className).toContain("bg-background");
+    expect(fields.findAllByProps({ role: "tooltip" }).map((node) => node.props.children)).toEqual(["Assignees", "Due time", "Task list", "Description"]);
     expect(renderer!.root.findByProps({ "data-testid": "task-detail-backdrop" }).props.className).toContain("z-40");
-    await act(async () => { commentForm.findByProps({ placeholder: "Add a comment…" }).props.onChange({ target: { value: "Review " } }); });
-    await act(async () => { commentForm.findByProps({ "aria-label": "Bold" }).props.onClick(); });
-    await act(async () => { commentForm.findByProps({ placeholder: "Add a comment…" }).props.onKeyDown({ key: "Enter", shiftKey: false, nativeEvent: { isComposing: false }, preventDefault: () => undefined }); });
+    const commentEditor = panel.findByType(TaskCommentEditor);
+    expect(commentEditor.props.members).toEqual([self, other]);
+    await act(async () => { commentEditor.props.onChange("Review **these changes**"); });
+    await act(async () => { commentEditor.props.onSend(); });
     await settle();
-    expect(comments).toEqual(["Review ****"]);
+    expect(comments).toEqual(["Review **these changes**"]);
+    expect(commentEditor.props.value).toBe("");
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-detail-backdrop" }).props.onClick(); });
     expect(renderer!.root.findAllByProps({ "data-testid": "task-detail-panel" })).toHaveLength(0);
+  } finally {
+    await act(async () => { renderer!.unmount(); });
+  }
+});
+
+test("a failed comment keeps its draft for retry and clears it after success", async () => {
+  const attempts: string[] = [];
+  const client = connectedClient({
+    addProductTaskComment: async (_orgId, _taskId, input) => {
+      attempts.push(input.body);
+      if (attempts.length === 1) throw new Error("Comment not saved");
+    },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, "task_one")); });
+  await settle();
+  try {
+    const editor = renderer!.root.findByType(TaskCommentEditor);
+    const draft = "Please **review**";
+    await act(async () => { editor.props.onChange(draft); });
+    await act(async () => { editor.props.onSend(); });
+    await settle();
+    expect(attempts).toEqual([draft]);
+    expect(editor.props.value).toBe(draft);
+    expect(editor.props.pending).toBe(false);
+
+    await act(async () => { editor.props.onSend(); });
+    await settle();
+    expect(attempts).toEqual([draft, draft]);
+    expect(editor.props.value).toBe("");
   } finally {
     await act(async () => { renderer!.unmount(); });
   }
@@ -2274,16 +2369,15 @@ test("same task ID remounts detail and mutations across organization changes", a
   await act(async () => { renderer = TestRenderer.create(taskPage(queryClient, "task_one")); });
   await settle();
   try {
-    const commentInput = () => renderer!.root.findByProps({ placeholder: "Add a comment…" });
-    const commentForm = () => renderer!.root.findByProps({ "data-testid": "task-comment-editor" });
-    const commentButton = () => commentForm().findAllByType("button").find((node) => node.props.type === "submit")!;
-    const button = (label: string) => renderer!.root.findAllByType("button").find((node) => node.props.children === label)!;
+    const commentEditor = () => renderer!.root.findByType(TaskCommentEditor);
+    const commentButton = () => commentEditor().findByProps({ "data-testid": "task-comment-editor" }).find((node) => node.type === "button" && node.props.type === "submit");
+    const orgAEditor = await openDetailDescription(renderer!.root);
     await act(async () => {
       renderer!.root.findByProps({ value: "Org A title" }).props.onChange({ target: { value: "Org A local title" } });
-      renderer!.root.findByProps({ value: "Org A description" }).props.onChange("Org A local description");
-      commentInput().props.onChange({ target: { value: "Org A pending comment" } });
+      orgAEditor.props.onChange("Org A local description");
+      commentEditor().props.onChange("Org A pending comment");
     });
-    await act(async () => { commentForm().props.onSubmit({ preventDefault: () => undefined }); });
+    await act(async () => { commentEditor().props.onSend(); });
     expect(commentButton().props.disabled).toBe(true);
 
     setCloudSession(client, "org_two");
@@ -2291,20 +2385,20 @@ test("same task ID remounts detail and mutations across organization changes", a
     await settle();
 
     expect(renderer!.root.findByProps({ value: "Org B title" })).toBeDefined();
-    expect(renderer!.root.findByProps({ value: "Org B description" })).toBeDefined();
+    const orgBEditor = await openDetailDescription(renderer!.root);
+    expect(orgBEditor.props.value).toBe("Org B description");
     expect(renderer!.root.findAllByProps({ value: "Org A local title" })).toHaveLength(0);
-    expect(renderer!.root.findAllByProps({ value: "Org A local description" })).toHaveLength(0);
-    expect(commentInput().props.value).toBe("");
+    expect(commentEditor().props.value).toBe("");
     expect(commentButton().props.disabled).toBe(true);
     expect(renderer!.root.findAllByType("button").filter((node) => node.props.children === "Save")).toHaveLength(0);
 
     await act(async () => {
       renderer!.root.findByProps({ value: "Org B title" }).props.onChange({ target: { value: "Org B edited title" } });
-      renderer!.root.findByProps({ value: "Org B description" }).props.onChange("Org B edited description");
-      commentInput().props.onChange({ target: { value: "Org B comment" } });
+      orgBEditor.props.onChange("Org B edited description");
+      commentEditor().props.onChange("Org B comment");
     });
     expect(commentButton().props.disabled).toBe(false);
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-detail-description-editor" }).props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null }); commentForm().props.onSubmit({ preventDefault: () => undefined }); });
+    await act(async () => { orgBEditor.props.onBlur(); commentEditor().props.onSend(); });
     await settle();
     expect(updates).toEqual([{ organizationId: "org_two", title: "Org B edited title", description: "Org B edited description" }]);
     expect(comments).toEqual([
@@ -2315,7 +2409,7 @@ test("same task ID remounts detail and mutations across organization changes", a
     await act(async () => { pendingOrgAComment.resolve(); });
     await settle();
     expect(renderer!.root.findAllByProps({ value: "Org A pending comment" })).toHaveLength(0);
-    expect(commentInput().props.value).toBe("");
+    expect(commentEditor().props.value).toBe("");
   } finally {
     await act(async () => { renderer!.unmount(); });
   }

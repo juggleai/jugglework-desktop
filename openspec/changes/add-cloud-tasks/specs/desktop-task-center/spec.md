@@ -182,6 +182,12 @@ Task-row separators in List view SHALL be inset from both the title-side content
 
 The panel SHALL separate task fields from comments with a divider, render comment author, timestamp, and body, and keep a comment composer near the panel bottom. The composer SHALL offer simple bold, emoji, mention, and image markup actions and submit the resulting text through the existing task comment API. Enter SHALL submit a non-empty comment, Shift+Enter SHALL insert a line break, and Enter during IME composition SHALL NOT submit. The bottom row SHALL display follower avatars and count plus an add control that supports adding and removing organization members. Adding another member to a private task SHALL use members visibility when authorized.
 
+#### Scenario: Edit formatted descriptions and comments
+- **WHEN** a user opens task detail
+- **THEN** the description starts as a formatted preview or an add-description prompt, and an authorized user can activate it to edit in place
+- **AND** the comment composer starts on one row and its Aa toggle shows or hides formatting tools without losing the draft or selection
+- **AND** both editors display formatting directly and support links, emoji selection, and searchable organization-member mentions without selecting the same member twice in one draft
+
 #### Scenario: Follow and manage task followers
 - **WHEN** the signed-in member activates Follow or changes the bottom follower selection
 - **THEN** the Desktop persists the complete follower relationship set while retaining non-follower task members
