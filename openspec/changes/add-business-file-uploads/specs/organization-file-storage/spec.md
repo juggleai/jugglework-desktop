@@ -43,6 +43,12 @@
 - **WHEN** 合法任务文件通过校验
 - **THEN** 草稿与已保存任务按相同用途使用同一目录，各自以服务端 UUID 加扩展名命名，不包含组织、用户、任务 ID 或原始文件名。
 
+#### Scenario: 通用附件保留允许的后缀
+- **WHEN** 新通用附件的文件名带有允许列表中的最后一段 ASCII 扩展名
+- **THEN** 对象名保留该段扩展名及其大小写，例如 `报告.PDF` 保留 `.PDF`，`archive.tar.gz` 保留 `.gz`。
+- **WHEN** 文件名没有可保留的扩展名，或是网页、脚本、可执行文件或其他未列入允许列表的扩展名
+- **THEN** 以 `.bin` 命名，不因后缀拒绝合法附件；现有对象和引用不迁移。
+
 #### Scenario: 使用短路径更换头像
 - **WHEN** 成员提交 `avatars/` 下的新头像 URL
 - **THEN** 服务端要求签名标签与活动组织、当前用户、下载基址及文件名匹配，拒绝他人的头像和未经签发的短路径；原本人头像 URL 继续兼容，已有对象及引用不迁移。
@@ -50,7 +56,7 @@
 #### Scenario: 精确 key 的五分钟策略
 - **WHEN** 服务端签发成功
 - **THEN** 返回 `provider=qiniu`、`uploadUrl`、`token`、`key`、`fileUrl`、`expiresAt`。策略限定 `scope=bucket:key`、五分钟期限、`insertOnly=1`、`fsizeLimit=sizeBytes`。
-- **AND** 通用二进制附件使用 `.bin` 对象名和 `detectMime=-1`，省略 `mimeLimit`；头像、正文插图及旧版有类型附件仍使用 `detectMime=1` 和 `mimeLimit=contentType`。
+- **AND** 通用二进制附件无论对象后缀都使用 `detectMime=-1`，省略 `mimeLimit`；头像、正文插图及旧版有类型附件仍使用 `detectMime=1` 和 `mimeLimit=contentType`。
 
 #### Scenario: 不支持的文件
 - **WHEN** 文件为零字节、超过用途上限、图片用途扩展名与 MIME 不符，或请求将非白名单类型用作头像或任务图片
