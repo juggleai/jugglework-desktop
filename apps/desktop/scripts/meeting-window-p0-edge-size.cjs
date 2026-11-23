@@ -1,6 +1,17 @@
 // Standalone Windows Electron probe; never loads the app or the overlay fixture.
 const { setTimeout: delay } = require('node:timers/promises');
 
+async function withDeadline(pending, stage) {
+  let timer;
+  try {
+    return await Promise.race([pending, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(stage)), 10_000);
+    })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function contains(area, rect) {
   return rect.x >= area.x && rect.y >= area.y &&
     rect.x + rect.width <= area.x + area.width && rect.y + rect.height <= area.y + area.height;
@@ -21,6 +32,7 @@ async function probeEdgeSizes({ BrowserWindow, screen, emit, settle = () => dela
       const horizontal = orientation === 'horizontal';
       const requestedDip = { x, y, width: horizontal ? length : thickness, height: horizontal ? thickness : length };
       const record = { type: 'edge-size', scaleFactor, resizable, orientation, requestedDip };
+      emit({ type: 'edge-size-progress', stage: 'window-creating', resizable, orientation });
       const win = new BrowserWindow({
         ...requestedDip, show: false, frame: false, transparent: true, backgroundColor: '#00000000',
         alwaysOnTop: false, focusable: false, skipTaskbar: true, hasShadow: false, thickFrame: false,
@@ -29,7 +41,8 @@ async function probeEdgeSizes({ BrowserWindow, screen, emit, settle = () => dela
       });
       try {
         win.setIgnoreMouseEvents(true);
-        await win.loadURL('data:text/html,<!doctype html><body style="margin:0;background:gold">');
+        emit({ type: 'edge-size-progress', stage: 'window-loading', resizable, orientation });
+        await withDeadline(win.loadURL('data:text/html,<!doctype html><body style="margin:0;background:gold">'), 'window-load-timeout');
         win.setBounds(requestedDip);
         const beforeShowDip = win.getBounds();
         emit({ ...record, beforeShowDip });
@@ -47,7 +60,9 @@ async function probeEdgeSizes({ BrowserWindow, screen, emit, settle = () => dela
   }
 }
 
-if (require.main === module) {
+// Electron can load the application entry through its own loader instead of
+// marking the entry as Node's require.main.
+if (require.main === module || (process.versions.electron && process.type === 'browser')) {
   const emit = (record) => console.log(JSON.stringify(record));
   if (process.platform !== 'win32' || !process.versions.electron) {
     emit({ type: 'error', stage: 'windows-electron-required' });
@@ -55,10 +70,15 @@ if (require.main === module) {
   } else {
     const { app, BrowserWindow, screen } = require('electron');
     app.on('window-all-closed', () => {}); // Keep running between cases.
-    app.whenReady().then(() => probeEdgeSizes({ BrowserWindow, screen, emit })).then(
-      () => app.quit(),
+    emit({ type: 'edge-size-progress', stage: 'waiting-for-ready', electron: process.versions.electron });
+    withDeadline(app.whenReady(), 'ready-timeout').then(() => {
+      emit({ type: 'edge-size-progress', stage: 'ready' });
+      return probeEdgeSizes({ BrowserWindow, screen, emit });
+    }).then(
+      () => { emit({ type: 'edge-size-progress', stage: 'complete' }); app.quit(); },
       (error) => {
-        emit({ type: 'error', stage: error.message === 'primary-display' ? 'primary-display' : 'edge-size-probe' });
+        const stages = ['primary-display', 'ready-timeout', 'window-load-timeout'];
+        emit({ type: 'error', stage: stages.includes(error.message) ? error.message : 'edge-size-probe' });
         app.exit(1);
       },
     );

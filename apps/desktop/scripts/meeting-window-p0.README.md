@@ -86,6 +86,8 @@ pnpm --dir apps/desktop exec electron ./scripts/meeting-window-p0-edge-size.cjs
 
 先前 **100% 缩放下的 `--overlay` Win32 回读**曾观察到：一条边请求厚度 **8 px**，实际回读 **39 px**。这是脱敏的历史观测，不是本探针的结果。新探针只读 Electron `getBounds()`（DIP）；即使薄边仍为 8，也必须用现有 `--overlay` 的 Win32 回读确认物理像素尺寸。此探针也不验证层级或输入行为。
 
+若未输出测量结果，记录最后一条 `edge-size-progress` 或 `error`。`waiting-for-ready` 和 `window-loading` 分别有 10 秒等待期限；页面加载超时会销毁当前测试窗并退出。若完全无输出，或停在 `window-creating` 超过 15 秒，按 `Ctrl+C`：入口执行前或主线程同步阻塞时，脚本定时器无法保证退出。
+
 ## 无界面回归测试
 
 从仓库根目录逐文件运行；测试使用真实解析／策略／运行时代码，在 Electron／进程／管道边界提供替身，不启动 Electron 或 WinForms：
