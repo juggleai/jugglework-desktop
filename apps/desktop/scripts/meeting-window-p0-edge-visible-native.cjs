@@ -8,6 +8,7 @@ const plan = [
   ['left', 64, 72, 8, 224], ['right', 296, 72, 8, 224],
 ];
 const helperStages = new Set(['compile', 'pmv2', 'work-area', 'create', 'show', 'readback', 'native-timeout', 'cleanup']);
+const neighborRoles = new Set([...plan.map(([role]) => role), 'external', 'none']);
 
 function verify(record) {
   if (record?.type === 'error' && helperStages.has(record.stage)) return { stage: record.stage };
@@ -28,7 +29,10 @@ function verify(record) {
     if (sample.dpi !== 96 || !sample.pmv2) return { stage: 'dpi', role, dpi: sample.dpi };
     if (!sample.visible || !sample.passive) return { stage: 'visibility-style', role };
     if (sample.topmost) return { stage: 'topmost', role };
-    if (i > 0 && !sample.adjacent) return { stage: 'order', role };
+    const expectedBelow = i > 0 ? plan[i - 1][0] : null;
+    if (i === 0 ? sample.below !== null : !neighborRoles.has(sample.below) ||
+        sample.adjacent !== (sample.below === expectedBelow)) return { stage: 'protocol' };
+    if (i > 0 && !sample.adjacent) return { stage: 'order', role, expectedBelow, actualBelow: sample.below };
     windows.push({ role, px, dpi: sample.dpi, pmv2: true, visible: true, topmost: false, passive: true, adjacent: sample.adjacent });
   }
   return { windows };
@@ -38,7 +42,7 @@ function observeVisibleEdges({ child, emit, signals, durationMs = 12_000, startu
   sampleMs = 2_000, cleanupMs = 2_000, killMs = 1_000 }) {
   return new Promise(resolve => {
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
-    let seen = false, stopping = false, failed = false, settled = false;
+    let seen = false, stopping = false, failed = false, settled = false, cleanupConfirmed = false, forced = false;
     let watchdog = setTimeout(() => stop('startup-timeout'), startupMs);
     let duration, cleanup;
     const output = (stage, evidence = {}) => emit({ type: 'edge-visible-native', stage, inputEnabled: false, ...evidence });
@@ -65,6 +69,7 @@ function observeVisibleEdges({ child, emit, signals, durationMs = 12_000, startu
       clearTimeout(watchdog);
       clearTimeout(duration);
       cleanup = setTimeout(() => {
+        forced = true;
         failed = true;
         output('forced-cleanup');
         cleanup = setTimeout(() => { output('cleanup-timeout'); complete(); }, killMs);
@@ -77,7 +82,9 @@ function observeVisibleEdges({ child, emit, signals, durationMs = 12_000, startu
     child.stdout.on('error', () => stop('helper-pipe'));
     child.on('close', (code) => {
       if (settled) return;
-      if (code !== 0 || !stopping || !seen) {
+      if (failed && cleanupConfirmed && !forced && (code === 0 || code === 1)) {
+        output('removed-after-failure');
+      } else if (code !== 0 || !stopping || !seen) {
         if (!failed) output('helper-exit');
         failed = true;
       } else if (!failed) {
@@ -91,8 +98,15 @@ function observeVisibleEdges({ child, emit, signals, durationMs = 12_000, startu
       if (settled) return;
       let record;
       try { record = JSON.parse(line); } catch { if (!stopping) stop('protocol'); return; }
+      if (record?.type === 'cleanup-complete') {
+        cleanupConfirmed = true;
+        return;
+      }
       const { stage, windows, ...evidence } = verify(record);
-      if (stage === 'cleanup' && failed) { output(stage); return; }
+      if (stage === 'cleanup') {
+        cleanupConfirmed = false;
+        if (failed) { output(stage); return; }
+      }
       if (stage) return stop(stage, evidence);
       if (stopping) return;
       clearTimeout(watchdog);

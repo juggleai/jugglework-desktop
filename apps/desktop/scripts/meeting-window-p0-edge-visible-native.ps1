@@ -143,15 +143,19 @@ namespace MeetingWindowP0VisibleEdges
                             bool visible = IsWindowVisible(window);
                             bool topmost = (style & WS_EX_TOPMOST) != 0;
                             bool passive = (style & WS_EX_PASSIVE) == WS_EX_PASSIVE;
-                            bool adjacent = i == 0 || GetWindow(window, GW_HWNDNEXT) == own[i - 1];
+                            IntPtr next = i == 0 ? IntPtr.Zero : GetWindow(window, GW_HWNDNEXT);
+                            bool adjacent = i == 0 || next == own[i - 1];
+                            int nextIndex = next == IntPtr.Zero ? -1 : Array.IndexOf(own, next);
+                            string below = i == 0 ? "null" : "\"" + (next == IntPtr.Zero ? "none" :
+                                nextIndex < 0 ? "external" : roles[nextIndex]) + "\"";
                             int width = actual.Right - actual.Left, height = actual.Bottom - actual.Top;
                             accepted &= actual.Left == plan[i,0] && actual.Top == plan[i,1] &&
                                 width == plan[i,2] && height == plan[i,3] && dpi == 96 && pmv2 &&
                                 visible && passive && !topmost && adjacent;
                             samples[i] = String.Format(CultureInfo.InvariantCulture,
-                                "{{\"role\":\"{0}\",\"px\":{{\"x\":{1},\"y\":{2},\"width\":{3},\"height\":{4}}},\"dpi\":{5},\"pmv2\":{6},\"visible\":{7},\"topmost\":{8},\"passive\":{9},\"adjacent\":{10}}}",
+                                "{{\"role\":\"{0}\",\"px\":{{\"x\":{1},\"y\":{2},\"width\":{3},\"height\":{4}}},\"dpi\":{5},\"pmv2\":{6},\"visible\":{7},\"topmost\":{8},\"passive\":{9},\"adjacent\":{10},\"below\":{11}}}",
                                 roles[i], actual.Left, actual.Top, width, height, dpi, Bool(pmv2),
-                                Bool(visible), Bool(topmost), Bool(passive), i == 0 ? "null" : Bool(adjacent));
+                                Bool(visible), Bool(topmost), Bool(passive), i == 0 ? "null" : Bool(adjacent), below);
                         }
                         Write("{\"type\":\"sample\",\"windows\":[" + String.Join(",", samples) + "]}");
                         // Mismatched readback goes to the launcher for diagnostics, then
@@ -179,6 +183,10 @@ namespace MeetingWindowP0VisibleEdges
                 {
                     failed = true;
                     Write("{\"type\":\"error\",\"stage\":\"cleanup\"}");
+                }
+                else
+                {
+                    Write("{\"type\":\"cleanup-complete\"}");
                 }
             }
             return failed ? 1 : 0;

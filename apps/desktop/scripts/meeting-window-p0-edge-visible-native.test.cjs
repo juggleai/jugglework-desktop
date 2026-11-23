@@ -8,9 +8,9 @@ function sample() {
   return { type: 'sample', windows: [
     ['target', 64, 64, 240, 240], ['top', 64, 64, 240, 8], ['bottom', 64, 296, 240, 8],
     ['left', 64, 72, 8, 224], ['right', 296, 72, 8, 224],
-  ].map(([role, x, y, width, height]) => ({
+  ].map(([role, x, y, width, height], i, windows) => ({
     role, px: { x, y, width, height }, dpi: 96, pmv2: true, visible: true,
-    topmost: false, passive: true, adjacent: role === 'target' ? null : true,
+    topmost: false, passive: true, adjacent: role === 'target' ? null : true, below: i ? windows[i - 1][0] : null,
   })) };
 }
 
@@ -41,7 +41,7 @@ test('exact passive observation is time-bounded and waits for EOF cleanup', asyn
 for (const [label, patch, stage] of [
   ['one-pixel discrepancy', { px: { x: 296, y: 72, width: 9, height: 224 } }, 'geometry'],
   ['topmost edge', { topmost: true }, 'topmost'],
-  ['unexpected layer between edges', { adjacent: false }, 'order'],
+  ['unexpected layer between edges', { adjacent: false, below: 'external' }, 'order'],
   ['edge not passive', { passive: false }, 'visibility-style'],
   ['unexpected DPI', { dpi: 120 }, 'dpi'],
   ['missing evidence', { visible: undefined }, 'protocol'],
@@ -63,10 +63,38 @@ test('losing verified order later terminates instead of waiting out the observat
   run.send(sample());
   const data = sample();
   data.windows[1].adjacent = false;
+  data.windows[1].below = 'external';
   run.send(data);
   assert.equal(await run.result, 1);
   await run.closed;
   assert.deepEqual(run.records.map(r => r.stage), ['visible-sample', 'order']);
+});
+
+for (const below of ['left', 'external', 'none']) {
+  test(`order mismatch reports ${below} and confirms cleanup without exposing handles`, async () => {
+    const run = fixture({ exitsOnEof: false, cleanupMs: 200 });
+    const data = sample();
+    Object.assign(data.windows[1], { adjacent: false, below, hwnd: '1234', title: 'private' });
+    run.send(data);
+    await run.closed;
+    run.send({ type: 'cleanup-complete' });
+    run.close(1);
+    assert.equal(await run.result, 1);
+    assert.deepEqual(run.records, [
+      { type: 'edge-visible-native', stage: 'order', inputEnabled: false, role: 'top', expectedBelow: 'target', actualBelow: below },
+      { type: 'edge-visible-native', stage: 'removed-after-failure', inputEnabled: false },
+    ]);
+  });
+}
+
+test('rejects a non-allowlisted neighbor value without echoing it', async () => {
+  const run = fixture();
+  const data = sample();
+  Object.assign(data.windows[1], { adjacent: false, below: 'private external title' });
+  run.send(data);
+  assert.equal(await run.result, 1);
+  assert.deepEqual(run.records.map(r => r.stage), ['protocol']);
+  assert.ok(!JSON.stringify(run.records).includes('private external title'));
 });
 
 test('no further readback fails closed and a stuck helper is terminated', async () => {
