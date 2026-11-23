@@ -1,4 +1,4 @@
-const decimal = (value) => typeof value === 'string' && /^[1-9][0-9]*$/.test(value) &&
+﻿const decimal = (value) => typeof value === 'string' && /^[1-9][0-9]*$/.test(value) &&
   value.length <= 20 && BigInt(value) <= 0xffffffffffffffffn;
 const reasons = new Set(['dpi-context', 'process-identity', 'window-identity', 'geometry', 'layer-identity']);
 
@@ -51,7 +51,23 @@ function parseNativeSample(line, target) {
       } : {};
       layers.push({ role, hwnd, dpi, outerPx: parseBox(layer.outerPx), visible, topmost, adjacent, ...order });
     }
-    result.overlay = { clientPx: parseBox(value.clientPx), borderPx: { x: value.borderPx.x, y: value.borderPx.y }, layers };
+    let strips = null;
+    if (value.strips != null) {
+      const strip = value.strips;
+      const roles = ['top', 'bottom', 'left', 'right'];
+      const reasons = ['hwnd', 'pid', 'style', 'rect', 'geometry', 'client-overlap'];
+      if (typeof strip.ok !== 'boolean' || !Number.isSafeInteger(strip.count) || strip.count !== 4 ||
+          !Array.isArray(strip.failures) || strip.failures.length > 8) return null;
+      const failures = [];
+      for (const failure of strip.failures) {
+        if (typeof failure !== 'string') return null;
+        const [role, reason] = failure.split(':');
+        if (!roles.includes(role) || !reasons.includes(reason)) return null;
+        failures.push(role + ':' + reason);
+      }
+      strips = { ok: strip.ok, count: strip.count, failures };
+    }
+    result.overlay = { clientPx: parseBox(value.clientPx), borderPx: { x: value.borderPx.x, y: value.borderPx.y }, layers, strips };
   }
   return result;
 }

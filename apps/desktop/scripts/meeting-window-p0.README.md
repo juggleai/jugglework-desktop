@@ -129,6 +129,10 @@ node apps/desktop/scripts/meeting-window-p0-edge-visible-native.cjs
 corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs
 corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --passive-ink
 corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --native-target --passive-ink
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --native-target --passive-ink --samples 5 --sample-gap-ms 800
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --native-target --passive-ink --strips
+# 失败对照：故意声明错误边条厚度，四边都应被拒绝
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --native-target --passive-ink --strips --strips-wrong
 node --test apps/desktop/scripts/meeting-window-p0*.test.cjs
 ```
 

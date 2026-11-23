@@ -256,15 +256,44 @@ public static class MeetingWindowP0Native
                 layers.Add(new { layer.role, layer.hwnd, dpi = layerDpi, outerPx = bounds.Box(), visible, topmost, adjacent });
                 below = own;
             }
-            if (!MatchesFixture(hwnd, pid, title, process) || dpi != GetDpiForWindow(hwnd) || state != State(hwnd)) return Unavailable("geometry");
+            object strips = null;
+            if (command.strips != null) {
+                var spec = command.strips;
+                if (spec.thickness < 1 || spec.thickness > 32 || spec.handles == null) return Unavailable("strip-identity");
+                string[] stripRoles = { "top", "bottom", "left", "right" };
+                string[] stripHwnds = { spec.handles.top, spec.handles.bottom, spec.handles.left, spec.handles.right };
+                var stripFailures = new List<string>();
+                int cx = location.X, cy = location.Y, cw = client.Right - client.Left, ch = client.Bottom - client.Top, t = spec.thickness;
+                for (int s = 0; s < stripRoles.Length; s++) {
+                    IntPtr strip;
+                    try { strip = Handle(stripHwnds[s]); } catch { stripFailures.Add(stripRoles[s] + ":hwnd"); continue; }
+                    uint stripPid;
+                    if (GetWindowThreadProcessId(strip, out stripPid) == 0 || stripPid != spec.pid) { stripFailures.Add(stripRoles[s] + ":pid"); continue; }
+                    int ex = GetWindowLong(strip, -20);
+                    if ((ex & 0x80020) != 0x80020 || (ex & 8) != 0) { stripFailures.Add(stripRoles[s] + ":style"); continue; }
+                    Rect bounds;
+                    if (!GetWindowRect(strip, out bounds) || !bounds.Valid) { stripFailures.Add(stripRoles[s] + ":rect"); continue; }
+                    int exX = stripRoles[s] == "left" ? cx - t : stripRoles[s] == "right" ? cx + cw : cx;
+                    int exY = stripRoles[s] == "top" ? cy - t : stripRoles[s] == "bottom" ? cy + ch : cy;
+                    int exW = stripRoles[s] == "left" || stripRoles[s] == "right" ? t : cw;
+                    int exH = stripRoles[s] == "top" || stripRoles[s] == "bottom" ? t : ch;
+                    if (bounds.Left != exX || bounds.Top != exY || bounds.Right - bounds.Left != exW || bounds.Bottom - bounds.Top != exH)
+                        stripFailures.Add(stripRoles[s] + ":geometry");
+                    bool overlapsClient = bounds.Left < cx + cw && bounds.Right > cx && bounds.Top < cy + ch && bounds.Bottom > cy;
+                    if (overlapsClient) stripFailures.Add(stripRoles[s] + ":client-overlap");
+                    strips = new { ok = stripFailures.Count == 0, count = stripRoles.Length, failures = stripFailures.ToArray() };
+                }
+            }            if (!MatchesFixture(hwnd, pid, title, process) || dpi != GetDpiForWindow(hwnd) || state != State(hwnd)) return Unavailable("geometry");
             return new { status = "available", hwnd = decimalHwnd, pid, processCreated, state, dpi, outerPx, dwmPx,
-                overlay = new { clientPx, borderPx, layers } };
+                overlay = new { clientPx, borderPx, layers, strips } };
         }
         return new { status = "available", hwnd = decimalHwnd, pid, processCreated, state, dpi, outerPx, dwmPx };
     }
 
     public sealed class Layer { public string role { get; set; } public string hwnd { get; set; } public string title { get; set; } }
-    public sealed class LayerRequest { public Layer[] layers { get; set; } }
+    public sealed class LayerRequest { public Layer[] layers { get; set; } public StripSet strips { get; set; } }
+    public sealed class StripSet { public uint pid { get; set; } public int thickness { get; set; } public StripHandles handles { get; set; } }
+    public sealed class StripHandles { public string top { get; set; } public string bottom { get; set; } public string left { get; set; } public string right { get; set; } }
 
     static object Unavailable(string reason) { return new { status = "unavailable", reason }; }
 }

@@ -43,13 +43,14 @@ async function runElectron() {
   clearTimeout(readyTimer);
   if (readyExpired) return;
   app.on('window-all-closed', () => {});
-  let viewer, child, ink, observer, inkPoll, inkVerified = false, observerDone, stopObserver, occlusionSeen = false, targetMouse = null, inkWidth = 0, inkHeight = 0;
+  let viewer, child, ink, observer, inkPoll, inkVerified = false, observerDone, stopObserver, occlusionSeen = false, targetMouse = null, inkWidth = 0, inkHeight = 0, inkX = 0, inkY = 0, stripsChild, stripSet, stripsDone, stripsVerified = false;
   let finishing = false, closed = false, forced = false, passed = false;
   let cleanupTimer, finalTimer, observationTimer, identity, geometry, capturing = false;
   const started = Date.now();
   function disposeInk() {
     clearTimeout(inkPoll);
     if (ink && !ink.isDestroyed()) ink.destroy();
+    if (stripsChild && !stripsChild.stdin.destroyed) stripsChild.stdin.end();
     stopObserver?.();
   }
   function finish(ok, stage) {
@@ -85,7 +86,10 @@ async function runElectron() {
     ...(a4Mode ? ['-Fixed'] : []),
     ...(a4Mode === 'occluded' ? ['-OccludeMs', '1800'] : [])];
   const occludeRequested = targetArgs.includes('-OccludeMs');
+  const stripsRequested = process.argv.includes('--strips');
   const a4Ms = Math.min(180000, Math.max(5000, Number(process.argv[process.argv.indexOf('--a4-ms') + 1]) || 75000));
+  const sampleCount = Math.min(20, Math.max(1, Number(process.argv[process.argv.indexOf('--samples') + 1]) || 1));
+  const sampleGap = Math.min(5000, Math.max(100, Number(process.argv[process.argv.indexOf('--sample-gap-ms') + 1]) || 800));
   child = spawn(powershell, ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File',
     join(__dirname, nativeTarget ? 'meeting-window-p0-hybrid.ps1' : 'meeting-window-p0.ps1'),
     ...(nativeTarget ? targetArgs : ['-Probe', ...(process.argv.includes('--static-target') ? [] : ['-Animate'])])], {
@@ -106,9 +110,11 @@ async function runElectron() {
     clearTimeout(observationTimer); clearTimeout(cleanupTimer); clearTimeout(finalTimer);
     if (viewer && !viewer.isDestroyed()) viewer.destroy();
     const observerClean = observerDone ? await observerDone : null;
-    const cleanup = observerClean === false ? 'unconfirmed' : cleanupVerdict({ closed, code, signal, forced });
+    const stripsClean = stripsDone ? await stripsDone : null;
+    const cleanup = observerClean === false || stripsClean === false ? 'unconfirmed' : cleanupVerdict({ closed, code, signal, forced });
     emit({ stage: 'cleanup', cleanup, closedMessage: closed, normalExit: code === 0 && !signal,
-      forced, ...(observerDone ? { observerEof: observerClean, inkDestroyed: !ink || ink.isDestroyed() } : {}), elapsedMs: Date.now() - started });
+      forced, ...(observerDone ? { observerEof: observerClean, inkDestroyed: !ink || ink.isDestroyed() } : {}),
+      ...(stripsRequested ? { stripsEof: stripsClean } : {}), elapsedMs: Date.now() - started });
     app.exit(passed && cleanup === 'confirmed' ? 0 : 1);
   });
   app.on('before-quit', (event) => { event.preventDefault(); finish(false, 'quit-request'); });
@@ -234,19 +240,36 @@ async function runElectron() {
       finish(valid, valid ? 'perf-observed' : 'perf-rejected');
       return;
     }
-    const result = await viewer.webContents.executeJavaScript(`(${observeMarkerFrames})()`, true);
+    const series = sampleCount > 1
+      ? await viewer.webContents.executeJavaScript(`(${observeMarkerSeries})(${JSON.stringify({ samples: sampleCount, gapMs: sampleGap })})`, true)
+      : { items: [await viewer.webContents.executeJavaScript(`(${observeMarkerFrames})()`, true)] };
     if (finishing) return;
-    const valid = !result.failure && result.displaySurface === 'window' && result.frames >= 3 &&
-      result.markers.length === 4 && (occludeRequested || result.markers.every((m) => m.count > 0)) &&
-      (!ink || (inkVerified && result.inkColorPixels === 0)) && (!occludeRequested || occlusionSeen);
     let mapping = null;
-    if (ink && inkVerified && geometry && geometry.dwmPx) {
-      const { mappingVerdict } = require('./meeting-window-p0-hybrid-ink.cjs');
-      mapping = mappingVerdict(result.markers, { width: result.width, height: result.height },
-        geometry.dwmPx, { width: inkWidth, height: inkHeight });
-      emit({ stage: 'a2-mapping', ...mapping });
+    const samples = [];
+    for (const result of series.items || []) {
+      const sampleValid = !result.failure && result.displaySurface === 'window' && result.frames >= 3 &&
+        result.markers.length === 4 && (occludeRequested || result.markers.every((m) => m.count > 0)) &&
+        (!ink || (inkVerified && result.inkColorPixels === 0)) && (!occludeRequested || occlusionSeen) &&
+        (!stripsRequested || stripsVerified);
+      let sampleMapping = null;
+      if (ink && inkVerified && geometry && geometry.dwmPx) {
+        const { mappingVerdict } = require('./meeting-window-p0-hybrid-ink.cjs');
+        sampleMapping = mappingVerdict(result.markers, { width: result.width, height: result.height },
+          geometry.dwmPx, { width: inkWidth, height: inkHeight });
+        if (!mapping) mapping = sampleMapping;
+      }
+      samples.push({ index: samples.length, valid: sampleValid, inkColorPixels: result.inkColorPixels || 0, mapping: sampleMapping });
+      emit({ stage: 'stream-sample', index: samples.length - 1, ...result, valid: sampleValid, evidence: 'passive-ink-slice-not-full-A3' });
+      if (!sampleValid) break;
     }
-    emit({ stage: 'stream-sample', ...result, valid, evidence: 'passive-ink-slice-not-full-A3' });
+    if (finishing) return;
+    if (mapping) emit({ stage: 'a2-mapping', ...mapping });
+    const valid = samples.length === sampleCount && samples.every((sample) => sample.valid);
+    if (sampleCount > 1) {
+      emit({ stage: 'stream-continuous', samples: samples.length, requested: sampleCount,
+        inkFreeSamples: samples.filter((sample) => sample.inkColorPixels === 0).length,
+        mappingOk: mapping ? mapping.ok : null, valid });
+    }
     finish(valid, valid ? 'stream-observed' : 'stream-rejected');
   }
 
@@ -281,7 +304,7 @@ async function runElectron() {
     function request() {
       if (finishing) return;
       pending = true;
-      observer.stdin.write(`${JSON.stringify({ layers: layer ? [layer] : [] })}\n`);
+      observer.stdin.write(`${JSON.stringify({ layers: layer ? [layer] : [], strips: stripSet || null })}\n`);
       inkPoll = setTimeout(() => finish(false, 'ink-readback-timeout'), baseline ? 3000 : 10000);
     }
     nativeLines.on('line', async (line) => {
@@ -312,7 +335,12 @@ async function runElectron() {
           // Place our own layer directly above the target. Any window already
           // above the target stays above the ink and can occlude it. The
           // read-only observer below is the authority on the result.
-          const placement = await placeInk(layer.hwnd, identity.hwnd);
+          if (stripsRequested) {
+            const info = await startStrips(plan.px);
+            if (finishing) return;
+            if (!info) return finish(false, 'strips-failed');
+            stripSet = { pid: info.pid, thickness: process.argv.includes('--strips-wrong') ? 9 : 8, handles: info.handles };
+          }          const placement = await placeInk(layer.hwnd, identity.hwnd);
           if (finishing) return;
           emit({ stage: 'ink-placement', placed: placement?.placed === true, adjacent: placement?.adjacent === true });
           request();
@@ -342,9 +370,16 @@ async function runElectron() {
             nextOverlapsInk: actual?.nextOverlapsInk, nextHasArea: actual?.nextHasArea });
           return finish(false, failure);
         }
-        if (!inkVerified) {
+        if (stripsRequested && !stripsVerified && sample.overlay.strips) {
+          if (sample.overlay.strips.ok !== true) {
+            emit({ stage: 'strips-rejected', failures: sample.overlay.strips.failures });
+            return finish(false, 'strip-verification');
+          }
+          stripsVerified = true;
+          emit({ stage: 'strips-verified', count: sample.overlay.strips.count });
+        }        if (!inkVerified) {
           inkVerified = true;
-          inkWidth = plan.px.width; inkHeight = plan.px.height;
+          inkWidth = plan.px.width; inkHeight = plan.px.height; inkX = plan.px.x; inkY = plan.px.y;
           // Pixel evidence for our own layer only: capturePage never reads other
           // windows or the desktop.
           const shot = await ink.webContents.capturePage();
@@ -386,6 +421,38 @@ async function runElectron() {
     return ready;
   }
 
+  // Fixture-owned native edge strips around the target client. The read-only
+  // observer, not this helper, decides whether they are trustworthy.
+  function startStrips(px) {
+    return new Promise((resolve) => {
+      stripsChild = spawn(powershell, ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File',
+        join(__dirname, 'meeting-window-p0-hybrid-strips.ps1')], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+      const lines = createInterface({ input: stripsChild.stdout });
+      let settled = false, closed = false, killed = false, timer, killTimer, endTimer, resolveDone;
+      stripsDone = new Promise((done) => { resolveDone = done; });
+      const done = (value) => { if (settled) return; settled = true; clearTimeout(timer); resolve(value); };
+      timer = setTimeout(() => { killed = true; stripsChild.kill(); done(null); }, 8000);
+      lines.on('line', (line) => {
+        let record;
+        try { record = JSON.parse(line); } catch { return; }
+        if (record && record.type === 'closed') { closed = true; return; }
+        if (record && record.type === 'strips' && Number.isSafeInteger(record.pid) && record.handles &&
+            ['top', 'bottom', 'left', 'right'].every((role) => typeof record.handles[role] === 'string' &&
+              /^[1-9]\d{0,19}$/.test(record.handles[role]))) {
+          done({ pid: record.pid, handles: { top: record.handles.top, bottom: record.handles.bottom,
+            left: record.handles.left, right: record.handles.right } });
+        }
+      });
+      stripsChild.on('error', () => { done(null); resolveDone(false); });
+      stripsChild.on('close', (code, signal) => {
+        clearTimeout(killTimer); clearTimeout(endTimer);
+        resolveDone(!killed && closed && code === 0 && !signal);
+      });
+      stripsChild.stdin.on('error', () => {});
+      stripsChild.stdin.write(JSON.stringify({ target: identity.hwnd, x: px.x, y: px.y,
+        width: px.width, height: px.height, thickness: 8 }) + '\n');
+    });
+  }
   // Bounded, injection-free placement of the one ink HWND we created. Failure
   // is not fatal here: the read-only observer still decides pass/fail.
   function placeInk(inkHwnd, targetHwnd) {
@@ -454,6 +521,55 @@ async function observePerf({ ms, ink }) {
   } finally { stream?.getTracks().forEach((t) => t.stop()); video.remove(); }
 }
 
+// Same-stream repeated sampling: one getDisplayMedia, several marker readbacks.
+async function observeMarkerSeries(options) {
+  const samples = Math.max(1, Math.min(20, options?.samples | 0));
+  const gapMs = Math.max(100, Math.min(5000, options?.gapMs | 0));
+  let stream, track, stage = 'media-request', frames = 0;
+  const items = [];
+  const video = document.createElement('video');
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    [track] = stream.getVideoTracks();
+    video.muted = true; video.srcObject = stream; document.body.append(video);
+    stage = 'video-play';
+    await video.play();
+    stage = 'frame-wait';
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('frame-timeout')), 10000);
+      function next() { if (++frames >= 6) { clearTimeout(timeout); resolve(); } else video.requestVideoFrameCallback(next); }
+      video.requestVideoFrameCallback(next);
+    });
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    stage = 'pixel-readback';
+    const palette = [ ['TL',255,99,71], ['TR',255,215,0], ['BL',50,205,50], ['BR',0,191,255] ];
+    for (let index = 0; index < samples; index++) {
+      context.drawImage(video, 0, 0);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      const markers = palette.map(([role, r, g, b]) => {
+        let count = 0, sumX = 0, sumY = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          if (Math.abs(pixels[i] - r) <= 8 && Math.abs(pixels[i + 1] - g) <= 8 && Math.abs(pixels[i + 2] - b) <= 8) {
+            count++; sumX += (i / 4) % canvas.width; sumY += Math.floor((i / 4) / canvas.width);
+          }
+        }
+        return { role, count, x: count ? Math.round(sumX / count * 100) / 100 : null, y: count ? Math.round(sumY / count * 100) / 100 : null };
+      });
+      let inkColorPixels = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i] >= 230 && Math.abs(pixels[i + 1] - 53) <= 18 && Math.abs(pixels[i + 2] - 200) <= 18) inkColorPixels++;
+      }
+      items.push({ frames, width: canvas.width, height: canvas.height,
+        displaySurface: track.getSettings().displaySurface, markers, inkColorPixels });
+      if (index < samples - 1) await new Promise((resolve) => setTimeout(resolve, gapMs));
+    }
+    return { items };
+  } catch {
+    return { items, failure: stage, frames, width: video.videoWidth, height: video.videoHeight };
+  } finally { stream?.getTracks().forEach((t) => t.stop()); video.remove(); }
+}
 // Runs in a hidden sandboxed renderer; only returns synthetic marker statistics,
 // never images, source titles, track ids or device identifiers.
 async function observeMarkerFrames() {
@@ -471,7 +587,7 @@ async function observeMarkerFrames() {
     stage = 'frame-wait';
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('frame-timeout')), 10000);
-      function next() { if (++frames >= 3) { clearTimeout(timeout); resolve(); } else video.requestVideoFrameCallback(next); }
+      function next() { if (++frames >= 6) { clearTimeout(timeout); resolve(); } else video.requestVideoFrameCallback(next); }
       video.requestVideoFrameCallback(next);
     });
     canvas.width = video.videoWidth; canvas.height = video.videoHeight;

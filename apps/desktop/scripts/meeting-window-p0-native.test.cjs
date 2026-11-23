@@ -1,4 +1,4 @@
-const { test } = require('node:test');
+﻿const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { parseNativeSample, classifyNativeSample } = require('./meeting-window-p0-native.cjs');
 
@@ -78,8 +78,9 @@ test('overlay samples require native client, edge metrics and exact layer identi
   const overlay = { clientPx: { x: -4, y: 40, width: 804, height: 500 }, borderPx: { x: 10, y: 10 }, layers: [
     { role: 'ink', hwnd: '9007199254740995', dpi: 120, outerPx: bounds, visible: true, topmost: false, adjacent: true },
   ] };
+  const overlayExpected = { ...overlay, strips: null };
   const read = (value) => parseNativeSample(JSON.stringify(value), overlayTarget);
-  assert.deepEqual(read({ ...normal, overlay }), { ...normal, overlay });
+  assert.deepEqual(read({ ...normal, overlay }), { ...normal, overlay: overlayExpected });
   assert.equal(read(normal), null);
   assert.equal(read({ ...normal, overlay: { ...overlay, clientPx: null } }), null);
   assert.equal(read({ ...normal, overlay: { ...overlay, layers: [{ ...overlay.layers[0], hwnd: 9007199254740996 }] } }), null);
@@ -100,4 +101,19 @@ test('passive ink emits detailed neighbor diagnostics only for the synthetic tar
     { ...layer, nextOwner: 'other', nextRole: 'unknown', nextOwnedByTarget: null, nextVisible: null,
       nextOverlapsInk: null, nextHasArea: null, aboveRole: 'unknown', aboveOverlapsInk: null,
       occluderWalk: null, occluderTitleHits: null });
+});
+
+test('edge strip evidence accepts only four known roles with known failure tokens', () => {
+  const overlayTarget = { ...target, overlay: true, passiveInk: true };
+  const base = { clientPx: bounds, borderPx: { x: 8, y: 8 }, layers: [
+    { role: 'ink', hwnd: '9007199254740995', dpi: 96, outerPx: bounds, visible: true, topmost: false, adjacent: true } ] };
+  const read = (strips) => parseNativeSample(JSON.stringify({ ...normal, overlay: { ...base, strips } }), overlayTarget)?.overlay?.strips;
+  assert.deepEqual(read({ ok: true, count: 4, failures: [] }), { ok: true, count: 4, failures: [] });
+  assert.deepEqual(read({ ok: false, count: 4, failures: ['top:geometry', 'left:client-overlap'] }),
+    { ok: false, count: 4, failures: ['top:geometry', 'left:client-overlap'] });
+  for (const bad of [{ ok: true, count: 3, failures: [] }, { ok: 'yes', count: 4, failures: [] },
+    { ok: true, count: 4, failures: ['top:unknown'] }, { ok: true, count: 4, failures: ['middle:geometry'] },
+    { ok: true, count: 4, failures: ['top'] }, { ok: true, count: 4, failures: [1] }]) {
+    assert.equal(read(bad), undefined);
+  }
 });
