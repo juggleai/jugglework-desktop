@@ -165,7 +165,6 @@ const systemCalendarClock: CalendarClock = {
   now: () => Temporal.Now.instant(),
   timeZone: () => Temporal.Now.timeZoneId(),
 };
-const INVITED_EVENT_COLOR = "#7a36e8";
 
 function CalendarReadyView(props: { scope: CalendarScope; workspaceKind: CalendarWorkspaceKind; clock: CalendarClock; offlineRuntime?: CalendarOfflineRuntime }) {
   const cloud = useCloudSession();
@@ -189,7 +188,6 @@ function CalendarReadyView(props: { scope: CalendarScope; workspaceKind: Calenda
   >(null);
   const [view, setView] = React.useState<CalendarViewMode>(() => readCalendarViewMode(props.scope));
   const [hiddenIds, setHiddenIds] = React.useState(() => readHiddenCalendarIds(props.scope));
-  const [showInvited, setShowInvited] = React.useState(true);
   const [colorOverrides, setColorOverrides] = React.useState(() => readCalendarColorOverrides(props.scope));
   const calendarsQuery = useCalendarsQuery({ client: cloud.client, scope: props.scope, active: online && !supportsTeamCalendars });
   const collaborationQuery = useCalendarCollaborationQuery({ client: cloud.client, scope: supportsTeamCalendars ? props.scope : null, active: online });
@@ -301,8 +299,11 @@ function CalendarReadyView(props: { scope: CalendarScope; workspaceKind: Calenda
     return supportsTeamCalendars ? resource?.capabilities.canEditEvents === true : true;
   }), [calendars, supportsTeamCalendars, resourcesById]);
   const isInvitedEvent = (event: DenCalendarEvent) => online && invitedEventIds.has(event.id);
-  const isVisibleEvent = (event: DenCalendarEvent) => isInvitedEvent(event) ? showInvited : visibleIds.includes(event.calendarId);
-  const eventColor = (event: DenCalendarEvent) => isInvitedEvent(event) ? INVITED_EVENT_COLOR : calendarsById.get(event.calendarId)?.color ?? "var(--dls-accent)";
+  const authoritativeDefaultCalendarId = bootstrapQuery.data?.calendars.find((calendar) => calendar.isDefault)?.id ?? null;
+  // Project invitations into the viewer's default calendar without changing the organizer's event.
+  const displayCalendarId = (event: DenCalendarEvent) => isInvitedEvent(event) ? authoritativeDefaultCalendarId ?? "" : event.calendarId;
+  const isVisibleEvent = (event: DenCalendarEvent) => visibleIds.includes(displayCalendarId(event));
+  const eventColor = (event: DenCalendarEvent) => calendarsById.get(displayCalendarId(event))?.color ?? "var(--dls-accent)";
   const visibleEvents = (sourceEvents ?? []).filter(isVisibleEvent);
   const dayEntries = view === "month" ? layoutCalendarEvents({
     events: visibleEvents,
@@ -336,11 +337,11 @@ function CalendarReadyView(props: { scope: CalendarScope; workspaceKind: Calenda
   React.useEffect(() => {
     if (!manualSelection) return;
     if (manualSelection.invited) {
-      if (!online || !showInvited || (!schedulingQuery.isPending && !selectedEvent)) setManualSelection(null);
+      if (!online || (!schedulingQuery.isPending && !selectedEventVisible)) setManualSelection(null);
     } else if (sourceEvents && !(online && bootstrapQuery.isFetching) && !selectedEventVisible) {
       setManualSelection(null);
     }
-  }, [bootstrapQuery.isFetching, online, selectedEvent, manualSelection, selectedEventVisible, showInvited, schedulingQuery.isPending, sourceEvents]);
+  }, [bootstrapQuery.isFetching, online, manualSelection, selectedEventVisible, schedulingQuery.isPending, sourceEvents]);
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [createCalendarOpen, setCreateCalendarOpen] = React.useState(false);
   const [membersCalendarId, setMembersCalendarId] = React.useState<string | null>(null);
@@ -507,7 +508,6 @@ function CalendarReadyView(props: { scope: CalendarScope; workspaceKind: Calenda
   };
   // Writes are possible online; offline the form opens only to keep an unsynced local draft.
   const canOpenEditor = writableCalendars.length > 0 && (online || draftsAvailable);
-  const authoritativeDefaultCalendarId = bootstrapQuery.data?.calendars.find((calendar) => calendar.isDefault)?.id ?? null;
   const defaultCalendarId = writableCalendars.find((calendar) => calendar.id === authoritativeDefaultCalendarId)?.id ?? "";
   const canCreateEvent = canOpenEditor && defaultCalendarId !== "";
   const startQuickCreate = (slot: { date: Temporal.PlainDate; startMinute: number; durationMinutes?: number; snapToHalfHour?: boolean; clientX: number; clientY: number }) => {
@@ -611,7 +611,6 @@ function CalendarReadyView(props: { scope: CalendarScope; workspaceKind: Calenda
     const next = activeIds.filter((id) => id !== calendarId);
     writeHiddenCalendarIds(props.scope, next);
     setHiddenIds(next);
-    setShowInvited(false);
   };
   const changeCalendarColor = (calendarId: string, color: string) => {
     setColorOverrides((current) => {
@@ -676,12 +675,6 @@ function CalendarReadyView(props: { scope: CalendarScope; workspaceKind: Calenda
               } : undefined,
             };
           })} hiddenIds={hiddenIds} onToggle={toggleCalendar} onShowOnly={showOnlyCalendar} onColorChange={changeCalendarColor} />
-          {online ? (
-            <label className="mt-1 flex cursor-pointer items-center gap-2 rounded-lg px-5 py-2 text-sm text-dls-text hover:bg-dls-hover">
-              <input type="checkbox" className="size-4 shrink-0" style={{ accentColor: INVITED_EVENT_COLOR }} checked={showInvited} onChange={(event) => setShowInvited(event.target.checked)} data-testid="calendar-filter-invited" />
-              {t("calendar.invited_events")}
-            </label>
-          ) : null}
         </div>
         {eventDrafts.drafts.length > 0 ? (
           <CalendarDraftList
@@ -827,8 +820,8 @@ function CalendarReadyView(props: { scope: CalendarScope; workspaceKind: Calenda
           <CalendarEventDetail
             event={selectedEvent}
             scope={props.scope}
-            calendar={selectedInvited ? undefined : calendarsById.get(selectedEvent.calendarId)}
-            invitationColor={selectedInvited ? INVITED_EVENT_COLOR : undefined}
+            calendar={calendarsById.get(displayCalendarId(selectedEvent))}
+            invited={selectedInvited}
             locale={locale}
             membersById={detailMembersById}
             currentMemberId={props.scope.memberId}

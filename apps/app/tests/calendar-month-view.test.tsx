@@ -370,7 +370,7 @@ test("merges scheduling occurrences into the default 42-day month without showin
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
-test("the invitation layer toggles separately in month, week, and day and stays scoped across navigation", async () => {
+test("invitations follow the default personal calendar in month, week, and day and stay scoped across navigation", async () => {
   const day = "2026-11-09";
   const allDay = { kind: "allDay", startDate: day, endDateExclusive: "2026-11-10" } as const;
   // Sunday in the organizer's zone, Monday in the viewer's zone.
@@ -384,10 +384,9 @@ test("the invitation layer toggles separately in month, week, and day and stays 
   const otherOrg = { ...invite, id: "other-org", organizationId: "org-b", calendarId: "cal-1" };
   schedulingItems = [invite, { ...invite, id: "invited-timed", time: timed }, owner, unrelated, otherOrg].map((event) => ({ event, occurrenceIndex: 1, time: event.time }));
   const { renderer, rerender } = await render();
-  const filter = "calendar-filter-invited";
   try {
     await click(renderer, "calendar-filter-toggle");
-    expect(byId(renderer, filter).props.checked).toBe(true);
+    expect(has(renderer, "calendar-filter-invited")).toBe(false);
     expect(has(renderer, "calendar-filter-organizer-calendar")).toBe(false);
     expect(byId(renderer, "calendar-ready").props["data-visible-calendar-ids"]).toBe("cal-1,cal-2");
     await click(renderer, "calendar-create-event");
@@ -405,17 +404,13 @@ test("the invitation layer toggles separately in month, week, and day and stays 
       const timedPrefix = view === "month" ? allDayPrefix : `calendar-time-event-${day}-`;
       expect(has(renderer, `${allDayPrefix}invited`)).toBe(true);
       expect(has(renderer, `${timedPrefix}invited-timed`)).toBe(true);
-      await toggle(renderer, "calendar-filter-cal-1", false);
-      expect(has(renderer, `${allDayPrefix}owned`)).toBe(false);
-      expect(has(renderer, `${allDayPrefix}invited`)).toBe(true);
-      await toggle(renderer, "calendar-filter-cal-1", true);
       await click(renderer, `${allDayPrefix}invited`);
       expect(has(renderer, "calendar-event-detail-rsvp")).toBe(true);
-      await toggle(renderer, filter, false);
+      await toggle(renderer, "calendar-filter-cal-1", false);
       expect(has(renderer, `${allDayPrefix}invited`)).toBe(false);
       expect(has(renderer, `${timedPrefix}invited-timed`)).toBe(false);
-      expect(has(renderer, `${allDayPrefix}owned`)).toBe(true);
-      await toggle(renderer, filter, true);
+      expect(has(renderer, `${allDayPrefix}owned`)).toBe(false);
+      await toggle(renderer, "calendar-filter-cal-1", true);
       expect(has(renderer, "calendar-event-detail")).toBe(false);
     }
     await click(renderer, "calendar-all-day-event-invited");
@@ -483,7 +478,7 @@ test("RSVP for an occurrence in another member's calendar uses the real Den clie
     expect(queryClient.getQueryData(ownerKey)).toEqual({ items: [] });
     expect(queryClient.getQueryData(detailKey)).toBeUndefined();
     await click(renderer, "calendar-day-event-2026-11-23-scheduling:series%2Fwith%3Asyntax:3");
-    expect(text(byId(renderer, "calendar-event-detail-calendar"))).toBe("calendar.invited_events");
+    expect(text(byId(renderer, "calendar-event-detail-calendar"))).toBe("Ada");
     const responses = byId(renderer, "calendar-event-detail-rsvp").findAll((node) => node.type === "button");
     expect(responses.map((button) => text(button))).toEqual(["calendar.rsvp_accept", "calendar.rsvp_decline", "calendar.rsvp_tentative"]);
     await act(async () => { responses[0]!.props.onClick(); });

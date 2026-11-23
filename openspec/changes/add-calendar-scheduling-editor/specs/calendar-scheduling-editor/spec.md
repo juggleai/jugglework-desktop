@@ -107,7 +107,7 @@ Desktop MUST NOT 把参与人选择表述为已完成的 RSVP、邀请投递、�
 #### Scenario: An invitee views the calendar before responding
 
 - **WHEN** 当前成员在线，且服务端范围查询返回其他组织者邀请该成员参加的日程实例
-- **THEN** 日、周、月视图在默认可见的「受邀日程」图层显示该实例，成员可以打开详情和回应，但不能编辑、删除或发起该日程的会议
+- **THEN** 日、周、月视图在该成员的默认个人日历中显示原日程实例，沿用个人日历的颜色和显隐设置，不创建独立日历或日程副本；成员可以打开详情和回应，但不能编辑、删除或发起该日程的会议
 - **AND** Desktop 不把受邀实例写入个人离线缓存；刷新后不再返回的邀请不继续显示
 
 ### Requirement: Video meeting intent is durable and explicit
