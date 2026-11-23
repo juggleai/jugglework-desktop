@@ -2260,6 +2260,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const sessionScroll = useSessionScrollController({
     selectedSessionId: props.sessionId,
     renderedMessages,
+    latestUserMessageId: renderedMessages.findLast((message) => message.role === "user")?.id,
     containerRef: scrollRef,
     contentRef,
   });

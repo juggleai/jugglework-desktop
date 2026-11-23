@@ -173,6 +173,11 @@ The system SHALL provide a compact navigation rail for scrollable task sessions 
 - **THEN** the transcript scrolls smoothly to the corresponding user message
 - **AND** subsequent transcript growth does not force the view back to the latest message
 
+#### Scenario: User submits a task while viewing the latest turn
+- **WHEN** a new user message is added while the transcript is in sticky-bottom mode
+- **THEN** the transcript scrolls to show the new message even when its content height does not grow
+- **AND** a user who is manually reviewing earlier history keeps their current reading position
+
 #### Scenario: Session pane is narrow or does not scroll
 - **WHEN** the space to the left of the transcript cannot fit the navigation rail without crowding the transcript, or the transcript does not overflow
 - **THEN** the navigation rail remains hidden

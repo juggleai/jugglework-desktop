@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type RefObject, type UIEventHandler } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject, type UIEventHandler } from "react";
 
 import { getSessionScrollState, useSessionScrollStore, type SessionScrollState } from "./scroll-store";
 
@@ -22,6 +22,7 @@ const MANUAL_BROWSE_UPWARD_THRESHOLD_PX = 16;
 type SessionScrollControllerOptions = {
   selectedSessionId: string | null;
   renderedMessages: unknown;
+  latestUserMessageId: string | undefined;
   containerRef: RefObject<HTMLDivElement | null>;
   contentRef: RefObject<HTMLDivElement | null>;
 };
@@ -160,7 +161,7 @@ export function useSessionScrollController(
       lastKnownScrollTopRef.current = container.scrollTop;
       window.requestAnimationFrame(() => {
         const next = options.containerRef.current;
-        if (!next) {
+        if (!next || next !== container || !isStickyBottom(selectedSessionId)) {
           programmaticScrollRef.current = false;
           return;
         }
@@ -275,6 +276,15 @@ export function useSessionScrollController(
     lastKnownScrollTopRef.current = scrollTop;
     setManualScroll(selectedSessionId, scrollTop, null);
   }, [selectedSessionId, setManualScroll]);
+
+  // A new turn can replace a taller previous turn without growing the content.
+  // Follow it after DOM commit, even when ResizeObserver sees no growth.
+  useLayoutEffect(() => {
+    const container = options.containerRef.current;
+    if (!options.latestUserMessageId || !container || !isStickyBottom(selectedSessionId)) return;
+    container.scrollTop = container.scrollHeight;
+    lastKnownScrollTopRef.current = container.scrollTop;
+  }, [options.containerRef, options.latestUserMessageId, selectedSessionId]);
 
   useEffect(() => {
     updateOverflowAnchor();

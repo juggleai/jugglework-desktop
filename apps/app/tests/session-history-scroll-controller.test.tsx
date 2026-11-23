@@ -4,6 +4,8 @@ import TestRenderer, { act } from "react-test-renderer";
 
 import { setLocale, t } from "../src/i18n";
 import { SessionHistoryControl } from "../src/react-app/domains/session/surface/session-history-control";
+import { useSessionScrollController } from "../src/react-app/domains/session/surface/scroll-controller";
+import { useSessionScrollStore } from "../src/react-app/domains/session/surface/scroll-store";
 import {
   advanceHistoryThresholdGate,
   firstVisibleMessageAnchor,
@@ -13,6 +15,30 @@ import {
 } from "../src/react-app/domains/session/surface/session-history-scroll-controller";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+test("a new prompt follows the tail without a resize, unless browsing history", async () => {
+  const sessionId = "submit-scroll";
+  const containerRef: { current: HTMLDivElement | null } = { current: null };
+  const contentRef = { current: null };
+  function Probe({ prompt }: { prompt?: string }) {
+    useSessionScrollController({ selectedSessionId: sessionId, renderedMessages: prompt, latestUserMessageId: prompt, containerRef, contentRef });
+    return null;
+  }
+
+  let view!: TestRenderer.ReactTestRenderer;
+  await act(async () => { view = TestRenderer.create(<Probe />); });
+  const viewport = { scrollTop: 200, scrollHeight: 900, style: {}, querySelectorAll: () => [] };
+  containerRef.current = viewport as unknown as HTMLDivElement;
+  await act(async () => { view.update(<Probe prompt="first" />); });
+  expect(viewport.scrollTop).toBe(viewport.scrollHeight);
+
+  viewport.scrollTop = 140;
+  useSessionScrollStore.getState().setManualScroll(sessionId, 140, null);
+  await act(async () => { view.update(<Probe prompt="second" />); });
+  expect(viewport.scrollTop).toBe(140);
+  await act(async () => view.unmount());
+  useSessionScrollStore.getState().setStickyBottom(sessionId, null);
+});
 
 describe("session history threshold gate", () => {
   test("does not drain an underfilled viewport without a threshold entry", () => {
