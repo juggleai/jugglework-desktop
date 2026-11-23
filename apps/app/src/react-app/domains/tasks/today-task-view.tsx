@@ -102,7 +102,7 @@ function TodayTaskRow(props: {
 }) {
   const assignees = props.taskMembers.filter((member) => member.role === "assignee");
   const currentAssigneeCompleted = props.task.completionPolicy === "all_assignees" && assignees.some((member) => member.memberId === props.currentMemberId && Boolean(member.completedAt));
-  const listNames = productTaskListIds(props.task).map((id) => { const list = props.listById.get(id); return list ? `${list.marker} ${list.name}` : id; }).join(", ");
+  const listNames = productTaskListIds(props.task).map((id) => props.listById.get(id)?.name).filter(Boolean).join(", ");
   const time = taskTimeLabel(props.task, props.group, props.now);
   return <div data-testid={`today-task-row-${props.task.id}`} data-state={props.selected ? "selected" : undefined} className="group flex min-h-[72px] items-center gap-3 border-b border-dls-border px-4 py-3 last:border-b-0 hover:bg-dls-hover/70 data-[state=selected]:bg-dls-active">
     <button type="button" disabled={currentAssigneeCompleted} aria-label={currentAssigneeCompleted ? t("tasks.assignee_completed") : t("tasks.complete")} title={currentAssigneeCompleted ? t("tasks.waiting_for_assignees") : undefined} onClick={() => { if (!currentAssigneeCompleted) props.onComplete(props.task); }} className={`flex size-[18px] shrink-0 items-center justify-center rounded-full border transition-colors disabled:cursor-default ${currentAssigneeCompleted ? "border-blue-8 bg-blue-8 text-white" : "border-dls-secondary hover:border-blue-8 hover:bg-blue-2"}`}>{currentAssigneeCompleted ? <Check className="size-3" /> : null}</button>

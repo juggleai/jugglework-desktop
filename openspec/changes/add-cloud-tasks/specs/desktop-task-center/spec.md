@@ -14,7 +14,7 @@ The Desktop SHALL provide Tasks in the More navigation menu, allow the user to p
 ### Requirement: Task information architecture
 The Desktop SHALL provide primary task secondary navigation for Today, Assigned to me, Following, and Activity. It SHALL provide an initially expanded, collapsible Quick access section for All tasks, Created by me, Assigned by me, and Completed, followed by task lists and their create/archive actions. Inbox, Trash, and Archived lists SHALL NOT be visible sidebar destinations.
 
-Sidebar task-list rows SHALL display a consistent task-list icon followed by the list name. They SHALL NOT prepend the list marker as visible text because a first-character marker duplicates the beginning of ordinary list names.
+Sidebar task-list rows SHALL display a consistent task-list icon followed by the list name. The sidebar, Today task cards, and Activity list links SHALL NOT prepend the list marker as visible text. Today SHALL show only resolved list names, not raw list IDs.
 
 The task-list section add action and the workbench New task list menu SHALL open the same auto-focused inline name input above the existing task lists instead of opening a task-list dialog. If the sidebar is collapsed, the workbench menu action SHALL expand it first. The input SHALL prefill and select a localized `Task list N` name so typing replaces it while immediate submission accepts the default. Enter or focus loss SHALL create a private list with an empty description and a marker derived from the first name character, then open the created list. Escape SHALL cancel without a mutation. A failed create SHALL preserve the entered name for retry.
 
@@ -50,6 +50,21 @@ The task-list section add action and the workbench New task list menu SHALL open
 - **THEN** the Desktop loads authoritative task permissions and membership before applying the existing multi-assignee completion behavior
 - **AND** refreshes the Today query after a successful transition
 
+### Requirement: Task priority single selection
+The full task creation form, task detail, and enabled workbench priority column SHALL offer Low, Medium, and High as single-select choices. Existing unset priorities SHALL remain unset until a choice is made. Changing a saved task's priority SHALL require current task content-edit permission.
+
+#### Scenario: Set an existing task's priority
+- **WHEN** an authorized user selects a priority on an existing task
+- **THEN** the Desktop saves the selected value and updates the task detail and workbench from server data
+
+### Requirement: Group tasks by priority
+The workbench grouping menu SHALL offer Priority in List and Board. It SHALL show High, Medium, Low, and No priority in that order without changing filters. Tasks SHALL appear in their current priority group, and quick creation within a group SHALL inherit its priority. The grouping choice SHALL persist with the workbench settings.
+
+#### Scenario: Open the priority-grouped task list
+- **WHEN** a user selects Priority grouping
+- **THEN** each loaded task appears once under its current priority, including unset tasks in No priority
+- **AND** the List toolbar's unguided New task action opens a draft in No priority
+
 ### Requirement: Aggregate task activity
 The Desktop SHALL consume the server aggregate task-activity endpoint as one cursor-paginated timeline, SHALL keep server unread state authoritative, and SHALL NOT synthesize the timeline by issuing per-task activity requests. It SHALL present All and Unread filters, local-calendar time groups, an authoritative unread badge in the Tasks sidebar, single-event read actions, mark-all-through-sequence, task and task-list navigation, loading, empty, error, retry, and load-more states.
 
@@ -67,6 +82,11 @@ The Desktop SHALL consume the server aggregate task-activity endpoint as one cur
 #### Scenario: Open the event task list
 - **WHEN** an accessible activity event contains task-list context and the user opens the list name
 - **THEN** the Desktop opens that task list's existing workbench without treating it as a second task membership
+
+#### Scenario: Read an activity timestamp
+- **WHEN** the Desktop displays an activity event timestamp in local time
+- **THEN** events on the current calendar day show hours and minutes only, and events on other days also show the date
+- **AND** dates outside the current calendar year include the year
 
 #### Scenario: Aggregate activity is unavailable
 - **WHEN** the aggregate endpoint is unavailable or returns an invalid response
@@ -86,9 +106,9 @@ The Desktop SHALL provide a paginated task list, inline permitted actions, and a
 - **THEN** the Desktop opens the task detail and renders each field as editable or read-only according to server authorization
 
 ### Requirement: Task collection workbenches
-The Desktop SHALL render the same rich workbench for Assigned to me, Following, All tasks, Created by me, Assigned by me, and Completed, with exactly List and Board tabs persisted independently per ProductTask scope and section. List SHALL default to Task title, Assignee, Start time, Due time, Creator, Created time, Task ID, Priority, and Task list, with Priority immediately before Task list, title mandatory, and the remaining fields configurable. Board SHALL render horizontal lanes from the active workbench grouping and retain accessible complete and reopen actions without a task-card cancel action. Entering Board while grouping is None or Task list SHALL select Custom grouping. Board SHALL allow switching among Custom, Creator, Start time, and Due time grouping, but SHALL NOT offer None or Task list. Status, person, property, list, and time filters and sorting SHALL remain active in Board. Custom-group Board SHALL append a New group action that opens an inline name input and directly creates the group on Enter or blur; all other Board groupings SHALL hide this action.
+The Desktop SHALL render the same rich workbench for Assigned to me, Following, All tasks, Created by me, Assigned by me, and Completed, with exactly List and Board tabs persisted independently per ProductTask scope and section. List SHALL default to Task title, Assignee, Start time, Due time, Creator, Created time, Task ID, Priority, and Task list, with Priority immediately before Task list, title mandatory, and the remaining fields configurable. Board SHALL render horizontal lanes from the active workbench grouping and retain accessible complete and reopen actions without a task-card cancel action. Entering Board while grouping is None or Task list SHALL select Custom grouping. Board SHALL allow switching among Custom, Creator, Start time, Due time, and Priority grouping, but SHALL NOT offer None or Task list. Status, person, property, list, and time filters and sorting SHALL remain active in Board. Custom-group Board SHALL append a New group action that opens an inline name input and directly creates the group on Enter or blur; all other Board groupings SHALL hide this action.
 
-Every Board lane SHALL end with a New task action. Activating it SHALL open an inline card with a title input and the same Due time picker used by List cells; Enter SHALL create the task with the lane's representable defaults and persist a custom-group assignment when applicable. Board cards SHALL be draggable between Custom lanes and between Start-time or Due-time lanes, updating the custom assignment or corresponding task time respectively. Creator lanes SHALL not expose draggable cards because task creator is immutable.
+Every Board lane SHALL end with a New task action. Activating it SHALL open an inline card with a title input and the same Due time picker used by List cells; Enter SHALL create the task with the lane's representable defaults and persist a custom-group assignment when applicable. Board cards SHALL be draggable between Custom lanes and between Start-time or Due-time lanes, updating the custom assignment or corresponding task time respectively. Creator and Priority lanes SHALL NOT expose draggable cards.
 
 Each time a collection is opened, the Desktop SHALL populate its page semantics as ordinary editable initial filters. Assigned to me SHALL initially filter Assignee contains the current member. Following SHALL initially filter Follower contains the current member, Creator does not contain the current member, and Assignee does not contain the current member. All tasks SHALL initially have no person filter and all statuses. Created by me SHALL initially filter Creator contains the current member. Assigned by me SHALL initially filter Assignee does not contain the current member and Assigner contains the current member. Completed SHALL initially have no person filter and Completed status. The user MAY modify, remove, or clear any populated condition, and every change SHALL immediately affect the query until the collection is opened again.
 

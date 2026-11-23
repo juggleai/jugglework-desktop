@@ -6,7 +6,12 @@ export type TaskWorkbenchSection = "assigned" | "following" | "all" | "created" 
 export type TaskWorkbenchView = "list" | "board";
 export type TaskWorkbenchStatus = "incomplete" | "completed" | "all";
 export type TaskWorkbenchSort = "updated_at" | "created_at" | "start_at" | "due_at" | "completed_at";
-export type TaskWorkbenchGroup = "none" | "custom" | "list" | "creator" | "start" | "due";
+const taskWorkbenchGroups = ["none", "custom", "list", "creator", "start", "due", "priority"] as const;
+export type TaskWorkbenchGroup = (typeof taskWorkbenchGroups)[number];
+
+function isTaskWorkbenchGroup(value: unknown): value is TaskWorkbenchGroup {
+  return taskWorkbenchGroups.some((group) => group === value);
+}
 export type TaskWorkbenchField = "assignee" | "start" | "due" | "creator" | "assigner" | "followers" | "created" | "completed" | "updated" | "id" | "priority" | "list";
 export type TaskPersonFilterOperator = "contains" | "not_contains" | "empty" | "not_empty";
 export type TaskCustomGroup = { id: string; name: string };
@@ -200,7 +205,7 @@ export function readTaskWorkbenchSettings(scope: ProductTaskScope | null, sectio
       overdue: status !== "completed" && value.overdue === true,
       sort: ["updated_at", "created_at", "start_at", "due_at", "completed_at"].includes(String(value.sort)) ? value.sort as TaskWorkbenchSort : "updated_at",
       direction: value.direction === "asc" ? "asc" : "desc",
-      group: value.group === "custom" || value.group === "list" || value.group === "creator" || value.group === "start" || value.group === "due" ? value.group : "none",
+      group: isTaskWorkbenchGroup(value.group) ? value.group : "none",
       customGroupName: typeof value.customGroupName === "string" ? value.customGroupName.trim().slice(0, 80) : "",
       customGroups,
       customGroupAssignments: normalizeTaskCustomGroupAssignments(value.customGroupAssignments, customGroups),

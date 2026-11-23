@@ -34,8 +34,8 @@ test("workbench persistence is also isolated by task section", () => {
 
 test("each task-list workbench has an isolated custom-group default", () => {
   expect(readTaskWorkbenchSettings(scopeA, "all", "list_one").group).toBe("custom");
-  writeTaskWorkbenchSettings(scopeA, { ...defaultTaskWorkbenchSettings, group: "due" }, "all", "list_one");
-  expect(readTaskWorkbenchSettings(scopeA, "all", "list_one").group).toBe("due");
+  writeTaskWorkbenchSettings(scopeA, { ...defaultTaskWorkbenchSettings, group: "priority" }, "all", "list_one");
+  expect(readTaskWorkbenchSettings(scopeA, "all", "list_one").group).toBe("priority");
   expect(readTaskWorkbenchSettings(scopeA, "all", "list_two").group).toBe("custom");
   expect(taskWorkbenchStorageKey(scopeA, "all", "list_one")).not.toBe(taskWorkbenchStorageKey(scopeA, "all", "list_two"));
 });

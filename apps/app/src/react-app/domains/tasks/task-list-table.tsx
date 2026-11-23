@@ -9,6 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { t } from "@/i18n";
 import { TaskDateTimeCell, type TaskReminderDraft, type TaskTimeField } from "./task-date-time-cell";
+import { TaskPrioritySelect, type EditableTaskPriority } from "./task-priority-select";
 import type { TaskCustomGroup, TaskWorkbenchField, TaskWorkbenchGroup } from "./task-view-state";
 
 export type TaskPresentation = {
@@ -140,6 +141,11 @@ function TaskPriorityCell({ priority }: { priority: DenProductTask["priority"] }
 export type TimeGroupKey = "elapsed" | "today" | "tomorrow" | "next7" | "later" | "unscheduled";
 export const timeGroupOrder: TimeGroupKey[] = ["elapsed", "today", "tomorrow", "next7", "later", "unscheduled"];
 export const defaultCustomTaskGroupKey = "custom-default";
+const priorityGroupOrder = ["high", "medium", "low", "none"] as const satisfies readonly DenProductTask["priority"][];
+
+export function priorityTaskGroups() {
+  return priorityGroupOrder.map((key) => ({ key, label: t(`tasks.priority_${key}`) }));
+}
 
 function addLocalDays(value: Date, days: number) {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate() + days);
@@ -171,6 +177,7 @@ export function taskGroupValues(task: DenProductTask, group: TaskWorkbenchGroup,
     return ids.length ? ids.map((key) => ({ key, label: presentation.listById.get(key)?.name ?? shortId(key) })) : [{ key: "", label: t("tasks.no_list") }];
   }
   if (group === "creator") return [{ key: task.creatorMemberId, label: taskMemberName(task.creatorMemberId, presentation.memberById) }];
+  if (group === "priority") return [{ key: task.priority, label: t(`tasks.priority_${task.priority}`) }];
   if (group === "start" || group === "due") {
     const key = taskTimeGroup(group === "start" ? task.startAt : task.dueAt, group, now);
     return [{ key, label: timeGroupLabel(key, group) }];
@@ -179,10 +186,14 @@ export function taskGroupValues(task: DenProductTask, group: TaskWorkbenchGroup,
 }
 
 type InlineCreatePosition = "top" | "bottom";
-export type TaskQuickCreateDefaults = { listId?: string; startAt?: string | null; dueAt?: string | null };
+export type TaskQuickCreateDefaults = { listId?: string; startAt?: string | null; dueAt?: string | null; priority?: DenProductTask["priority"] };
 
 export function taskGroupCreateDefaults(group: TaskWorkbenchGroup, key: string, now = new Date()): TaskQuickCreateDefaults {
   if (group === "list") return key ? { listId: key } : {};
+  if (group === "priority") {
+    const priority = priorityGroupOrder.find((value) => value === key);
+    return priority ? { priority } : {};
+  }
   if (group !== "start" && group !== "due") return {};
   let value: string | null = null;
   if (key === "elapsed") value = now.toISOString();
@@ -203,11 +214,11 @@ function InlineCreateField(props: { field: TaskWorkbenchField; creatorMemberId: 
   if (props.field === "created" || props.field === "updated") return <>{formatDate(props.createdAt)}</>;
   if (props.field === "completed") return <span className="text-dls-secondary/70">{t("tasks.unavailable")}</span>;
   if (props.field === "id") return <span className="font-mono">-</span>;
-  if (props.field === "priority") return <TaskPriorityCell priority="none" />;
+  if (props.field === "priority") return <TaskPriorityCell priority={props.defaults.priority ?? "none"} />;
   return props.defaults.listId ? <span className="inline-flex rounded-md bg-dls-hover px-2 py-1 text-dls-text/85">{props.lists.get(props.defaults.listId)?.name ?? shortId(props.defaults.listId)}</span> : <span className="text-dls-secondary/70">{t("tasks.no_list")}</span>;
 }
 
-function TaskFieldCell(props: { field: TaskWorkbenchField; task: DenProductTask; taskMembers: DenProductTaskMember[]; members: Map<string, DenOrganizationMember>; lists: Map<string, DenProductTaskList>; onAssigneesChange?: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onCompletionPolicyChange?: (task: DenProductTask, policy: DenProductTaskCompletionPolicy) => Promise<boolean>; onTimeChange?: (task: DenProductTask, field: TaskTimeField, value: string | null) => Promise<boolean>; onLoadReminders?: (task: DenProductTask) => Promise<DenProductTaskReminder[]>; onReminderChange?: (task: DenProductTask, reminder: TaskReminderDraft) => Promise<boolean>; onListChange?: (task: DenProductTask, listId: string) => Promise<boolean>; onListCreate?: (task: DenProductTask, name: string) => Promise<string | null> }) {
+function TaskFieldCell(props: { field: TaskWorkbenchField; task: DenProductTask; taskMembers: DenProductTaskMember[]; members: Map<string, DenOrganizationMember>; lists: Map<string, DenProductTaskList>; onAssigneesChange?: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onCompletionPolicyChange?: (task: DenProductTask, policy: DenProductTaskCompletionPolicy) => Promise<boolean>; onTimeChange?: (task: DenProductTask, field: TaskTimeField, value: string | null) => Promise<boolean>; onLoadReminders?: (task: DenProductTask) => Promise<DenProductTaskReminder[]>; onReminderChange?: (task: DenProductTask, reminder: TaskReminderDraft) => Promise<boolean>; onListChange?: (task: DenProductTask, listId: string) => Promise<boolean>; onListCreate?: (task: DenProductTask, name: string) => Promise<string | null>; onPriorityChange?: (task: DenProductTask, priority: EditableTaskPriority) => Promise<boolean> }) {
   const assigneeIds = props.taskMembers.filter((member) => member.role === "assignee").map((member) => member.memberId);
   const followerIds = props.taskMembers.filter((member) => member.role === "follower").map((member) => member.memberId);
   const assignerIds = [...new Set(props.taskMembers.filter((member) => member.role === "assignee").map((member) => member.createdByMemberId).filter((memberId): memberId is string => Boolean(memberId)))];
@@ -221,7 +232,12 @@ function TaskFieldCell(props: { field: TaskWorkbenchField; task: DenProductTask;
   if (props.field === "completed") return <>{formatDate(props.task.completedAt)}</>;
   if (props.field === "updated") return <>{formatDate(props.task.updatedAt)}</>;
   if (props.field === "id") return <TaskIdCell id={props.task.id} displayNumber={props.task.displayNumber} />;
-  if (props.field === "priority") return <TaskPriorityCell priority={props.task.priority} />;
+  if (props.field === "priority") {
+    const { task, onPriorityChange } = props;
+    return onPriorityChange
+      ? <TaskPrioritySelect testId={`task-priority-trigger-${task.id}`} value={task.priority} onChange={(priority) => onPriorityChange(task, priority)} />
+      : <TaskPriorityCell priority={task.priority} />;
+  }
   return <TaskListCell task={props.task} lists={props.lists} onChange={props.onListChange} onCreate={props.onListCreate} />;
 }
 
@@ -244,7 +260,7 @@ function TaskGroupHeader(props: { groupKey: string; group: TaskWorkbenchGroup; l
   </div></th></tr>;
 }
 
-export function TaskListTable(props: TaskPresentation & { fields: TaskWorkbenchField[]; group: TaskWorkbenchGroup; customGroupName: string; customGroups: TaskCustomGroup[]; customGroupAssignments: Record<string, string>; selectedTaskId: string | null; currentMemberId: string | null; inlineCreatePosition: InlineCreatePosition | null; inlineCreateGroupKey: string | null; inlineCreateDefaults: TaskQuickCreateDefaults; inlineCreateTitle: string; inlineCreatePending: boolean; inlineCreateMemberId: string | null; inlineCreateCreatedAt: string; onCustomGroupsChange: (groups: TaskCustomGroup[]) => void; onCustomGroupNameChange: (name: string) => void; onInlineCreatePositionChange: (position: InlineCreatePosition | null, groupKey?: string) => void; onInlineCreateTitleChange: (title: string) => void; onInlineCreateSubmit: () => void; onSelect: (id: string) => void; onTransition: (task: DenProductTask, operation: "complete" | "reopen") => void; onAssigneesChange?: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onCompletionPolicyChange?: (task: DenProductTask, policy: DenProductTaskCompletionPolicy) => Promise<boolean>; onTimeChange?: (task: DenProductTask, field: TaskTimeField, value: string | null) => Promise<boolean>; onLoadReminders?: (task: DenProductTask) => Promise<DenProductTaskReminder[]>; onReminderChange?: (task: DenProductTask, reminder: TaskReminderDraft) => Promise<boolean>; onListChange?: (task: DenProductTask, listId: string) => Promise<boolean>; onListCreate?: (task: DenProductTask, name: string) => Promise<string | null> }) {
+export function TaskListTable(props: TaskPresentation & { fields: TaskWorkbenchField[]; group: TaskWorkbenchGroup; customGroupName: string; customGroups: TaskCustomGroup[]; customGroupAssignments: Record<string, string>; selectedTaskId: string | null; currentMemberId: string | null; inlineCreatePosition: InlineCreatePosition | null; inlineCreateGroupKey: string | null; inlineCreateDefaults: TaskQuickCreateDefaults; inlineCreateTitle: string; inlineCreatePending: boolean; inlineCreateMemberId: string | null; inlineCreateCreatedAt: string; onCustomGroupsChange: (groups: TaskCustomGroup[]) => void; onCustomGroupNameChange: (name: string) => void; onInlineCreatePositionChange: (position: InlineCreatePosition | null, groupKey?: string) => void; onInlineCreateTitleChange: (title: string) => void; onInlineCreateSubmit: () => void; onSelect: (id: string) => void; onTransition: (task: DenProductTask, operation: "complete" | "reopen") => void; onAssigneesChange?: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onCompletionPolicyChange?: (task: DenProductTask, policy: DenProductTaskCompletionPolicy) => Promise<boolean>; onTimeChange?: (task: DenProductTask, field: TaskTimeField, value: string | null) => Promise<boolean>; onLoadReminders?: (task: DenProductTask) => Promise<DenProductTaskReminder[]>; onReminderChange?: (task: DenProductTask, reminder: TaskReminderDraft) => Promise<boolean>; onListChange?: (task: DenProductTask, listId: string) => Promise<boolean>; onListCreate?: (task: DenProductTask, name: string) => Promise<string | null>; onPriorityChange?: (task: DenProductTask, priority: EditableTaskPriority) => Promise<boolean> }) {
   const [groupExpansion, setGroupExpansion] = useState<Record<string, boolean>>({});
   const [renamingCustomGroupKey, setRenamingCustomGroupKey] = useState<string | null>(null);
   const [customGroupNameDraft, setCustomGroupNameDraft] = useState("");
@@ -260,6 +276,9 @@ export function TaskListTable(props: TaskPresentation & { fields: TaskWorkbenchF
   }
   if (props.group === "start" || props.group === "due") {
     for (const key of timeGroupOrder) groups.set(key, { label: timeGroupLabel(key, props.group), tasks: [] });
+  }
+  if (props.group === "priority") {
+    for (const { key, label } of priorityTaskGroups()) groups.set(key, { label, tasks: [] });
   }
   if (props.group === "creator" && props.inlineCreateMemberId) {
     groups.set(props.inlineCreateMemberId, { label: taskMemberName(props.inlineCreateMemberId, props.memberById), tasks: [] });
@@ -303,7 +322,7 @@ export function TaskListTable(props: TaskPresentation & { fields: TaskWorkbenchF
       const taskMembers = props.membersByTaskId[task.id] ?? [];
       const overdue = task.status === "todo" && Boolean(task.dueAt && new Date(task.dueAt).getTime() < Date.now());
       const currentAssigneeCompleted = task.status === "todo" && task.completionPolicy === "all_assignees" && taskMembers.some((member) => member.role === "assignee" && member.memberId === props.currentMemberId && Boolean(member.completedAt));
-      return <tr key={JSON.stringify([groupKey, task.id])} data-state={props.selectedTaskId === task.id ? "selected" : undefined} className="group h-12 transition-colors hover:bg-dls-hover/75 data-[state=selected]:bg-dls-active"><td className="border-b border-dls-border py-2 pl-[38px] align-middle"><div className="flex items-center gap-2" data-testid={`task-title-cell-${task.id}`}><button type="button" disabled={currentAssigneeCompleted} className={`flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors disabled:cursor-default ${task.status === "completed" ? "border-green-8 bg-green-8 text-white" : currentAssigneeCompleted ? "border-blue-8 bg-blue-8 text-white" : task.status === "canceled" ? "border-dls-secondary text-dls-secondary" : "border-dls-secondary hover:border-dls-accent"}`} aria-label={currentAssigneeCompleted ? t("tasks.assignee_completed") : task.status === "todo" ? t("tasks.complete") : t("tasks.reopen")} title={currentAssigneeCompleted ? t("tasks.waiting_for_assignees") : undefined} onClick={() => { if (!currentAssigneeCompleted) props.onTransition(task, task.status === "todo" ? "complete" : "reopen"); }}>{task.status === "completed" || currentAssigneeCompleted ? <Check className="size-3" /> : task.status === "canceled" ? <RotateCcw className="size-2.5" /> : null}</button><button type="button" className={`block max-w-[290px] truncate text-left text-sm font-normal leading-5 text-dls-text hover:text-blue-10 ${task.status === "completed" ? "line-through opacity-60" : ""}`} onClick={() => props.onSelect(task.id)}>{task.title}</button></div></td>{visibleFields.map((field) => <td key={field} className={`border-b border-dls-border px-4 py-2 align-middle whitespace-nowrap ${field === "due" && overdue ? "font-medium text-red-9" : "text-dls-secondary"}`}><TaskFieldCell field={field} task={task} taskMembers={taskMembers} members={props.memberById} lists={props.listById} onAssigneesChange={props.onAssigneesChange} onCompletionPolicyChange={props.onCompletionPolicyChange} onTimeChange={props.onTimeChange} onLoadReminders={props.onLoadReminders} onReminderChange={props.onReminderChange} onListChange={props.onListChange} onListCreate={props.onListCreate} /></td>)}</tr>;
+      return <tr key={JSON.stringify([groupKey, task.id])} data-state={props.selectedTaskId === task.id ? "selected" : undefined} className="group h-12 transition-colors hover:bg-dls-hover/75 data-[state=selected]:bg-dls-active"><td className="border-b border-dls-border py-2 pl-[38px] align-middle"><div className="flex items-center gap-2" data-testid={`task-title-cell-${task.id}`}><button type="button" disabled={currentAssigneeCompleted} className={`flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors disabled:cursor-default ${task.status === "completed" ? "border-green-8 bg-green-8 text-white" : currentAssigneeCompleted ? "border-blue-8 bg-blue-8 text-white" : task.status === "canceled" ? "border-dls-secondary text-dls-secondary" : "border-dls-secondary hover:border-dls-accent"}`} aria-label={currentAssigneeCompleted ? t("tasks.assignee_completed") : task.status === "todo" ? t("tasks.complete") : t("tasks.reopen")} title={currentAssigneeCompleted ? t("tasks.waiting_for_assignees") : undefined} onClick={() => { if (!currentAssigneeCompleted) props.onTransition(task, task.status === "todo" ? "complete" : "reopen"); }}>{task.status === "completed" || currentAssigneeCompleted ? <Check className="size-3" /> : task.status === "canceled" ? <RotateCcw className="size-2.5" /> : null}</button><button type="button" className={`block max-w-[290px] truncate text-left text-sm font-normal leading-5 text-dls-text hover:text-blue-10 ${task.status === "completed" ? "line-through opacity-60" : ""}`} onClick={() => props.onSelect(task.id)}>{task.title}</button></div></td>{visibleFields.map((field) => <td key={field} className={`border-b border-dls-border px-4 py-2 align-middle whitespace-nowrap ${field === "due" && overdue ? "font-medium text-red-9" : "text-dls-secondary"}`}><TaskFieldCell field={field} task={task} taskMembers={taskMembers} members={props.memberById} lists={props.listById} onAssigneesChange={props.onAssigneesChange} onCompletionPolicyChange={props.onCompletionPolicyChange} onTimeChange={props.onTimeChange} onLoadReminders={props.onLoadReminders} onReminderChange={props.onReminderChange} onListChange={props.onListChange} onListCreate={props.onListCreate} onPriorityChange={props.onPriorityChange} /></td>)}</tr>;
     }), props.group !== "none" && props.inlineCreatePosition === "bottom" ? groupInlineRow : null, props.group !== "none" && props.group !== "creator" ? <tr key={`create:${groupKey}`}><td className="py-2.5 pl-[38px]" colSpan={visibleFields.length + 1}><button type="button" data-testid={`task-inline-create-group-trigger-${groupKey}`} onClick={() => props.onInlineCreatePositionChange("bottom", groupKey)} className="text-[13px] text-dls-secondary/65 transition-colors hover:text-blue-10">{t("tasks.new_task")}</button></td></tr> : null] : groupInlineRow ? [groupInlineRow] : [])]; })}{props.group === "custom" ? <tr data-testid="task-custom-group-create-row"><td className="py-3 pl-[38px]" colSpan={visibleFields.length + 1}>{creatingCustomGroup ? <div className="flex items-center gap-2"><ChevronRight className="size-4 text-dls-secondary" /><input autoFocus data-testid="task-custom-group-create-input" aria-label={t("tasks.group_name")} placeholder={t("tasks.group_title_placeholder")} value={customGroupCreateDraft} maxLength={80} onChange={(event) => setCustomGroupCreateDraft(event.currentTarget.value)} onBlur={finishCustomGroupCreate} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); finishCustomGroupCreate(); } else if (event.key === "Escape") { event.preventDefault(); setCreatingCustomGroup(false); setCustomGroupCreateDraft(""); } }} className="h-9 w-80 rounded-md border border-blue-8 bg-dls-surface px-3 text-sm text-dls-text outline-none ring-2 ring-blue-8/20 placeholder:text-dls-secondary/65" /></div> : null}<button type="button" data-testid="task-custom-group-create-trigger" onClick={() => setCreatingCustomGroup(true)} className="mt-2 flex items-center gap-2 text-sm font-semibold text-dls-secondary/65 transition-colors hover:text-blue-10"><Plus className="size-4" />{t("tasks.new_group")}</button></td></tr> : null}{props.group === "none" && props.inlineCreatePosition === "bottom" ? inlineRow("task-inline-create-row-bottom") : null}{props.group === "none" ? <tr><td className="py-2.5 pl-[38px]" colSpan={visibleFields.length + 1}><button type="button" data-testid="task-inline-create-bottom-trigger" onClick={() => props.onInlineCreatePositionChange("bottom")} className="flex items-center gap-2 text-[13px] text-dls-secondary/65 transition-colors hover:text-blue-10"><span className="size-4 shrink-0" aria-hidden="true" />{t("tasks.new_task")}</button></td></tr> : null}</tbody>
   </table></div>;
 }

@@ -62,7 +62,7 @@ Desktop 任务侧栏将 Today、Assigned to me、Following、Activity 作为主�
 
 ### 10. 统一的任务集合 List/Board 工作台
 
-Assigned to me、Following、All tasks、Created by me、Assigned by me 和 Completed 使用同一套富工作台。工作台按 deployment/user/organization/section scope 分别持久化 List/Board、状态、优先级、清单、逾期、排序、分组和字段设置，页面之间不共享用户设置。默认字段为任务标题、负责人、开始时间、截止时间、创建人、创建时间、任务 ID 和任务清单；标题不可关闭。List 使用可横向滚动的语义表格和粘性表头，Board 固定按 todo/completed/canceled 分列且不伪造拖拽排序。Start 排序仅排序当前已加载页，不向服务端发送不支持的 `start_at` sort。
+Assigned to me、Following、All tasks、Created by me、Assigned by me 和 Completed 使用同一套富工作台。工作台按 deployment/user/organization/section scope 分别持久化 List/Board、状态、优先级、清单、逾期、排序、分组和字段设置，页面之间不共享用户设置。默认字段为任务标题、负责人、开始时间、截止时间、创建人、创建时间、任务 ID、优先级和任务清单；标题不可关闭。List 使用可横向滚动的语义表格和粘性表头，Board 按当前分组设置分列。按优先级分组时，两种视图均按高、中、低、无优先级排列，组内新建继承优先级，看板不通过拖拽修改优先级。Start 排序仅排序当前已加载页，不向服务端发送不支持的 `start_at` sort。
 
 每次进入集合页时，Desktop 将该页语义填充为普通、可编辑的初始筛选，并通过普通列表查询参数执行：Assigned to me 为负责人包含当前成员；Following 为关注人包含当前成员且创建人、负责人均不包含当前成员；All tasks 无人员条件且初始状态为全部；Created by me 为创建人包含当前成员；Assigned by me 为负责人不包含当前成员且分配人包含当前成员；Completed 无人员条件且初始状态为已完成。用户可以修改、删除或清除这些条件，修改后立即影响查询；再次进入该集合页时恢复该页默认筛选。
 

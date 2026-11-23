@@ -582,6 +582,42 @@ test("board groups cards by creator without changing active filters", async () =
   } finally { await act(async () => renderer!.unmount()); }
 });
 
+test("priority grouping is available in the menu, orders buckets, and inherits the group when creating a task", async () => {
+  const chosen: Array<typeof defaultTaskWorkbenchSettings> = [];
+  const creates: Array<{ title: string; defaults: Record<string, unknown> }> = [];
+  const create = async (title: string, defaults: Record<string, unknown>) => { creates.push({ title, defaults }); return true; };
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(workbench(defaultTaskWorkbenchSettings, (next) => chosen.push(next))); });
+  try {
+    const menu = renderer!.root.findByProps({ "data-testid": "task-group-menu" });
+    expect(menu.findAll((node) => node.type === "button" && node.props.value === "priority").map((node) => node.props.children)).toEqual(["Priority"]);
+    await act(async () => { menu.findAll((node) => typeof node.props.onValueChange === "function")[0]!.props.onValueChange("priority"); });
+    expect(chosen.at(-1)?.group).toBe("priority");
+    const settings = { ...chosen.at(-1)!, status: "all" as const };
+    await act(async () => { renderer!.update(workbench(settings, () => undefined, () => undefined, create)); });
+    const rows = renderer!.root.findByType("tbody").findAllByType("tr");
+    const headers = rows.filter((row) => row.props["data-testid"]?.startsWith("task-group-row-"));
+    expect(headers.map((row) => row.props["data-testid"])).toEqual(["task-group-row-high", "task-group-row-medium", "task-group-row-low", "task-group-row-none"]);
+    expect(rows.indexOf(headers[0]!)).toBeLessThan(rows.findIndex((row) => row.findAllByProps({ "data-testid": `task-title-cell-${tasks[0]!.id}` }).length > 0));
+    expect(rows.indexOf(headers[3]!)).toBeLessThan(rows.findIndex((row) => row.findAllByProps({ "data-testid": `task-title-cell-${tasks[1]!.id}` }).length > 0));
+
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-group-add-medium" }).props.onClick(); });
+    const draft = renderer!.root.findByProps({ "data-testid": "task-inline-create-row-group-medium" });
+    await act(async () => { draft.findByType("input").props.onChange({ target: { value: "Follow up" } }); });
+    await act(async () => { draft.findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
+    expect(creates).toEqual([{ title: "Follow up", defaults: { priority: "medium" } }]);
+
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-inline-create-top-trigger" }).props.onClick(); });
+    expect(renderer!.root.findByProps({ "data-testid": "task-inline-create-row-group-none" })).toBeDefined();
+
+    await act(async () => { renderer!.update(workbench({ ...settings, view: "board" })); });
+    const columns = renderer!.root.findByProps({ "data-testid": "assigned-task-board" }).findAllByType("section");
+    expect(columns.map((column) => column.props["data-testid"])).toEqual(["task-board-group-high", "task-board-group-medium", "task-board-group-low", "task-board-group-none"]);
+    expect(columns[0]!.findByProps({ "data-testid": `task-board-card-${tasks[0]!.id}` })).toBeDefined();
+    expect(columns[3]!.findByProps({ "data-testid": `task-board-card-${tasks[1]!.id}` })).toBeDefined();
+  } finally { await act(async () => renderer!.unmount()); }
+});
+
 for (const view of ["list", "board"] as const) {
   test(`${view} groups a task once under each projected list, ignoring the stale legacy id`, async () => {
     const projected = [{ ...tasks[0]!, listId: "legacy_hidden", listIds: ["list_one", "list_two"] }, { ...tasks[1]!, listId: "legacy_hidden", listIds: [] }];
@@ -663,7 +699,7 @@ test("group menu places Custom group immediately after None", async () => {
   await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, group: "custom" })); });
   try {
     const menu = renderer!.root.findByProps({ "data-testid": "task-group-menu" });
-    expect(menu.findAll((node) => node.type === "button" && typeof node.props.value === "string").map((node) => node.props.value)).toEqual(["none", "custom", "list", "creator", "start", "due"]);
+    expect(menu.findAll((node) => node.type === "button" && typeof node.props.value === "string").map((node) => node.props.value)).toEqual(["none", "custom", "list", "creator", "start", "due", "priority"]);
     const selected = menu.find((node) => node.type === "button" && node.props.value === "custom");
     expect(selected.props.children).toBe("Custom group");
     expect(selected.props.className).toContain("text-blue-10");

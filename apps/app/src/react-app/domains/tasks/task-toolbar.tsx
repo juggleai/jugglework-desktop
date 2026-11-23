@@ -109,7 +109,7 @@ export function TaskToolbar(props: { settings: TaskWorkbenchSettings; lists: Den
   const overdueEnabled = props.settings.status !== "completed";
   const update = <K extends keyof TaskWorkbenchSettings>(key: K, value: TaskWorkbenchSettings[K]) => props.onChange({ ...props.settings, [key]: value });
   const statusLabels: Array<[TaskWorkbenchStatus, string]> = [["incomplete", "tasks.status_incomplete"], ["completed", "tasks.completed"], ["all", "tasks.status_all"]];
-  const groupLabels: Array<[TaskWorkbenchGroup, string]> = [["none", "tasks.group_none"], ["custom", "tasks.group_custom"], ["list", "tasks.group_list"], ["creator", "tasks.group_creator"], ["start", "tasks.group_start"], ["due", "tasks.group_due"]];
+  const groupLabels: Array<[TaskWorkbenchGroup, string]> = [["none", "tasks.group_none"], ["custom", "tasks.group_custom"], ["list", "tasks.group_list"], ["creator", "tasks.group_creator"], ["start", "tasks.group_start"], ["due", "tasks.group_due"], ["priority", "tasks.field_priority"]];
   const availableGroupLabels = props.settings.view === "board" ? groupLabels.filter(([value]) => value !== "none") : groupLabels;
   return <div className="flex flex-wrap items-center gap-0.5" aria-label={t("tasks.quick_settings")}>
     <Menu label={t(statusLabels.find(([value]) => value === props.settings.status)?.[1] ?? "tasks.status")} icon={<ListFilter className="size-3.5" />} testId="task-status-menu">

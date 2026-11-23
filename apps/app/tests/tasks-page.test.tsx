@@ -333,6 +333,7 @@ test("Activity shows authoritative unread state, marks events read, and opens ta
     await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar-section-activity" }).props.onClick(); });
     await settle();
     expect(renderer!.root.findByProps({ "data-testid": "task-activity-row-event_one" })).toBeDefined();
+    expect(renderer!.root.findByProps({ "data-testid": "task-activity-list-event_one" }).props.children).toBe("Launch");
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-activity-filter-unread" }).props.onClick(); });
     await settle();
     expect(activityOptions.some((options) => options.unreadOnly === true)).toBe(true);
@@ -364,7 +365,7 @@ test("Today renders an action summary and mutually exclusive overdue, due-today,
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const yesterdayNoon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12);
-  const overdue = { ...task(1, "Overdue launch", "", "today_overdue"), listId: "legacy_hidden", listIds: ["list_today", "second"], dueAt: yesterdayNoon.toISOString(), priority: "high" as const };
+  const overdue = { ...task(1, "Overdue launch", "", "today_overdue"), listId: "legacy_hidden", listIds: ["list_today", "unresolved_list_id", "second"], dueAt: yesterdayNoon.toISOString(), priority: "high" as const };
   const dueToday = { ...task(1, "Review today", "", "today_due"), creatorMemberId: "member_self", listId: "list_today", dueAt: today.toISOString() };
   const startsToday = { ...task(1, "Start research", "", "today_start"), listId: "list_today", startAt: today.toISOString() };
   const list: DenProductTaskList = { id: "list_today", creatorMemberId: "member_self", name: "Launch plan", description: "", marker: "L", visibility: "members", version: 1, archivedAt: null, createdAt: today.toISOString(), updatedAt: today.toISOString() };
@@ -391,7 +392,7 @@ test("Today renders an action summary and mutually exclusive overdue, due-today,
     expect(renderer!.root.findAll((node) => node.props.children === "Assigned to me")).not.toHaveLength(0);
     expect(renderer!.root.findAll((node) => node.props.children === "Created by me")).not.toHaveLength(0);
     expect(renderer!.root.findAll((node) => node.props.children === "Following")).not.toHaveLength(0);
-    expect(renderer!.root.findByProps({ "data-testid": `today-task-row-${overdue.id}` }).findByProps({ children: "L Launch plan, L Planning" })).toBeDefined();
+    expect(renderer!.root.findByProps({ "data-testid": `today-task-row-${overdue.id}` }).findByProps({ children: "Launch plan, Planning" })).toBeDefined();
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
@@ -1308,9 +1309,10 @@ test("full task creation keeps the selected start and due dates independent", as
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
-test("full task creation can create and assign a custom group", async () => {
+test("full task creation can set one priority and assign a custom group", async () => {
   const created = task(1, "Grouped task", "", "grouped_task");
-  const client = connectedClient({ createProductTask: async () => result(created) });
+  const priorities: Array<DenProductTask["priority"] | undefined> = [];
+  const client = connectedClient({ createProductTask: async (_orgId, input) => { priorities.push(input.priority); return result(created); } });
   let renderer: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
   await settle();
@@ -1321,16 +1323,68 @@ test("full task creation can create and assign a custom group", async () => {
     await settle();
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-menu" }).findAllByType("button")[0]!.props.onClick(); });
     await act(async () => { renderer!.root.findByProps({ placeholder: "Enter a title and press Enter" }).props.onChange({ target: { value: "Grouped task" } }); });
+    const priority = renderer!.root.findByProps({ "data-testid": "task-create-priority" });
+    expect(priority.props.value).toBe("none");
+    expect(priority.findAllByType("option").filter((option) => !option.props.disabled).map((option) => option.props.value)).toEqual(["low", "medium", "high"]);
+    await act(async () => { priority.props.onChange({ currentTarget: { value: "medium" } }); });
     await act(async () => { renderer!.root.findByProps({ placeholder: "Search or create a group" }).props.onChange({ target: { value: "Planning" } }); });
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-group-create" }).props.onClick(); });
     await act(async () => { renderer!.root.findByProps({ role: "dialog" }).findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
     await settle();
+    expect(priorities).toEqual(["medium"]);
     const settings = JSON.parse(localValues.get(taskWorkbenchStorageKey({ baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" }, "assigned")) ?? "{}") as { customGroups?: Array<{ id: string; name: string }>; customGroupAssignments?: Record<string, string> };
     expect(settings.customGroups?.[0]?.name).toBe("Planning");
     expect(settings.customGroupAssignments?.grouped_task).toBe(settings.customGroups?.[0]?.id);
   } finally {
     await act(async () => { renderer!.unmount(); });
   }
+});
+
+test("task priority saves from the workbench and detail only with current edit permission", async () => {
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  sessionValues.set(taskSectionStorageKey(scope), "all");
+  localValues.set(taskWorkbenchStorageKey(scope, "all"), JSON.stringify({ fields: ["priority"] }));
+  let current = task(4, "Prioritize this task", "", "priority_task");
+  let allowed = true;
+  const activityRefreshes: DenProductTask["priority"][] = [];
+  const updates: Array<{ priority: DenProductTask["priority"] | undefined; expectedVersion: number }> = [];
+  const detail = () => { const value = result(current); value.permissions.canEditContent = allowed; return value; };
+  const client = connectedClient({
+    listProductTasks: async () => ({ items: [current], nextCursor: "" }),
+    listProductTaskActivity: async () => {
+      activityRefreshes.push(current.priority);
+      return { items: [], nextCursor: "", hasMore: false, unreadCount: 0, latestSequence: 0 };
+    },
+    getProductTask: async () => detail(),
+    updateProductTask: async (_orgId, _taskId, input) => {
+      updates.push({ priority: input.priority, expectedVersion: input.expectedVersion });
+      current = { ...current, priority: input.priority ?? current.priority, version: current.version + 1 };
+      return detail();
+    },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    const listPriority = () => renderer!.root.findByProps({ "data-testid": "task-priority-trigger-priority_task" });
+    await act(async () => { listPriority().props.onChange({ currentTarget: { value: "low" } }); });
+    await settle();
+    expect(listPriority().props.value).toBe("low");
+    expect(activityRefreshes).toEqual(["none", "low"]);
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-title-cell-priority_task" }).findByProps({ children: "Prioritize this task" }).props.onClick(); });
+    await settle();
+    const detailPriority = () => renderer!.root.findByProps({ "data-testid": "task-detail-priority" });
+    await act(async () => { detailPriority().props.onChange({ currentTarget: { value: "high" } }); });
+    await settle();
+    expect(detailPriority().props.value).toBe("high");
+    expect(listPriority().props.value).toBe("high");
+    allowed = false;
+    await act(async () => { listPriority().props.onChange({ currentTarget: { value: "medium" } }); });
+    await settle();
+    expect(detailPriority().props.disabled).toBe(true);
+    expect(listPriority().props.value).toBe("high");
+    expect(updates).toEqual([{ priority: "low", expectedVersion: 4 }, { priority: "high", expectedVersion: 5 }]);
+  } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
 test("workbench transitions fetch authoritative detail before permission and confirmation checks", async () => {

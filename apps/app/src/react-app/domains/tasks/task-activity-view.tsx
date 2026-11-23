@@ -5,7 +5,7 @@ import { AtSign, Bell, CalendarClock, Check, CheckCircle2, CircleAlert, Eye, Lis
 import type { DenProductTaskActivityItem } from "@/app/lib/den";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { t } from "@/i18n";
+import { currentLocale, t } from "@/i18n";
 
 type ActivityGroup = { key: string; label: string; items: DenProductTaskActivityItem[] };
 
@@ -15,6 +15,18 @@ function localDayStart(date: Date) {
 
 function localDayKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+export function formatTaskActivityTime(occurredAt: string, now = new Date(), locale = currentLocale()) {
+  const occurred = new Date(occurredAt);
+  if (!Number.isFinite(occurred.getTime())) return "";
+  const options: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+  if (localDayKey(occurred) !== localDayKey(now)) {
+    options.month = "short";
+    options.day = "numeric";
+    if (occurred.getFullYear() !== now.getFullYear()) options.year = "numeric";
+  }
+  return new Intl.DateTimeFormat(locale, options).format(occurred);
 }
 
 export function groupTaskActivity(items: DenProductTaskActivityItem[], now = new Date()): ActivityGroup[] {
@@ -64,12 +76,11 @@ function activityPresentation(item: DenProductTaskActivityItem) {
 function ActivityRow(props: { item: DenProductTaskActivityItem; pending: boolean; onOpen: (item: DenProductTaskActivityItem) => void; onRead: (item: DenProductTaskActivityItem) => void; onOpenList?: (listId: string) => void }) {
   const { Icon, title, detail } = activityPresentation(props.item);
   const unread = props.item.readAt === null && props.item.attentionLevel !== "ambient";
-  const occurred = new Date(props.item.event.occurredAt);
-  const time = Number.isFinite(occurred.getTime()) ? new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false }).format(occurred) : "";
+  const time = formatTaskActivityTime(props.item.event.occurredAt);
   return <article data-testid={`task-activity-row-${props.item.event.id}`} className={`group relative flex gap-3 border-b border-dls-border px-4 py-4 last:border-b-0 ${unread ? "bg-blue-2/45" : "bg-dls-surface"}`}>
     <span className="relative mt-0.5 shrink-0"><Avatar><AvatarImage src={props.item.actor?.avatar ?? undefined} /><AvatarFallback>{props.item.actor?.name.slice(0, 1).toUpperCase() || <Icon className="size-4" />}</AvatarFallback></Avatar>{unread ? <span className="absolute -left-1 top-1 size-2 rounded-full bg-blue-9 ring-2 ring-dls-surface" aria-label={t("tasks.activity_unread")} /> : null}</span>
     <div className="min-w-0 flex-1"><div className="flex items-start gap-3"><button type="button" data-testid={`task-activity-open-${props.item.event.id}`} disabled={!props.item.task.accessible} onClick={() => props.onOpen(props.item)} className="min-w-0 flex-1 text-left disabled:cursor-default"><p className="text-sm text-dls-text">{title}</p><p className="mt-1 truncate text-sm font-medium text-dls-text">{props.item.task.accessible ? props.item.task.title || t("tasks.activity_unavailable_task") : t("tasks.activity_unavailable_task")}</p>{detail && props.item.task.accessible ? <p className="mt-1 line-clamp-2 text-xs text-dls-secondary">{detail}</p> : null}</button><time className="shrink-0 text-xs text-dls-secondary">{time}</time></div>
-      <div className="mt-2 flex items-center justify-between gap-3">{props.item.list && props.item.task.accessible ? <button type="button" data-testid={`task-activity-list-${props.item.event.id}`} onClick={() => props.onOpenList?.(props.item.list!.id)} className="max-w-64 truncate text-xs text-dls-secondary hover:text-blue-10">{props.item.list.marker} {props.item.list.name}</button> : <span />}{unread ? <button type="button" data-testid={`task-activity-read-${props.item.event.id}`} disabled={props.pending} onClick={() => props.onRead(props.item)} className="text-xs text-blue-10 hover:underline disabled:opacity-50">{t("tasks.activity_mark_read")}</button> : null}</div>
+      <div className="mt-2 flex items-center justify-between gap-3">{props.item.list && props.item.task.accessible ? <button type="button" data-testid={`task-activity-list-${props.item.event.id}`} onClick={() => props.onOpenList?.(props.item.list!.id)} className="max-w-64 truncate text-xs text-dls-secondary hover:text-blue-10">{props.item.list.name}</button> : <span />}{unread ? <button type="button" data-testid={`task-activity-read-${props.item.event.id}`} disabled={props.pending} onClick={() => props.onRead(props.item)} className="text-xs text-blue-10 hover:underline disabled:opacity-50">{t("tasks.activity_mark_read")}</button> : null}</div>
     </div>
   </article>;
 }

@@ -6,7 +6,7 @@ import { productTaskListIds } from "@/app/lib/den";
 import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount, AvatarImage } from "@/components/ui/avatar";
 import { t } from "@/i18n";
 import { TaskDateTimeCell, type TaskTimeField } from "./task-date-time-cell";
-import { defaultCustomTaskGroupKey, taskGroupCreateDefaults, taskGroupValues, taskMemberName, timeGroupLabel, timeGroupOrder, type TaskPresentation, type TaskQuickCreateDefaults } from "./task-list-table";
+import { defaultCustomTaskGroupKey, priorityTaskGroups, taskGroupCreateDefaults, taskGroupValues, taskMemberName, timeGroupLabel, timeGroupOrder, type TaskPresentation, type TaskQuickCreateDefaults } from "./task-list-table";
 import type { TaskWorkbenchSettings } from "./task-view-state";
 
 export function TaskKanbanBoard(props: { tasks: DenProductTask[]; membersByTaskId: Record<string, DenProductTaskMember[]>; memberById: Map<string, DenOrganizationMember>; listById: Map<string, DenProductTaskList>; currentMemberId: string | null; settings: TaskWorkbenchSettings; quickCreatePending?: boolean; onSettingsChange: (settings: TaskWorkbenchSettings) => void; onQuickCreate?: (title: string, defaults: TaskQuickCreateDefaults) => Promise<boolean | string>; onTimeChange?: (task: DenProductTask, field: TaskTimeField, value: string | null) => Promise<boolean>; onSelect: (id: string) => void; onTransition: (task: DenProductTask, operation: "complete" | "reopen" | "cancel") => void }) {
@@ -26,6 +26,9 @@ export function TaskKanbanBoard(props: { tasks: DenProductTask[]; membersByTaskI
   }
   if (props.settings.group === "start" || props.settings.group === "due") {
     for (const key of timeGroupOrder) groups.set(key, { label: timeGroupLabel(key, props.settings.group), tasks: [] });
+  }
+  if (props.settings.group === "priority") {
+    for (const { key, label } of priorityTaskGroups()) groups.set(key, { label, tasks: [] });
   }
   for (const task of props.tasks) {
     const assigned = props.settings.group === "custom" ? props.settings.customGroupAssignments[task.id] : undefined;
@@ -47,6 +50,7 @@ export function TaskKanbanBoard(props: { tasks: DenProductTask[]; membersByTaskI
     setSubmitting(false);
   };
   const dropTask = async (event: DragEvent<HTMLElement>, key: string) => {
+    if (props.settings.group === "priority") return;
     event.preventDefault();
     const taskId = event.dataTransfer.getData("text/plain");
     const task = props.tasks.find((item) => item.id === taskId);
@@ -63,15 +67,16 @@ export function TaskKanbanBoard(props: { tasks: DenProductTask[]; membersByTaskI
       await props.onTimeChange(task, field, defaults[field] ?? null);
     }
   };
-  const draftTask = (groupKey: string): DenProductTask => ({ id: `board-draft-${groupKey}`, displayNumber: null, creatorMemberId: props.currentMemberId ?? "", listId: null, title: taskTitle, description: "", priority: "none", visibility: "private", completionPolicy: "any_assignee", status: "todo", version: 1, startAt: taskDraft.startAt ?? null, dueAt: taskDraft.dueAt ?? null, completedAt: null, completedByMemberId: null, canceledAt: null, canceledByMemberId: null, deletedAt: null, restoreUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-  return <div className="flex min-h-0 w-full flex-1 items-start gap-5 overflow-auto px-6 pb-6 pt-2" data-testid="assigned-task-board">{[...groups.entries()].map(([key, group]) => <section key={key} data-testid={`task-board-group-${key}`} onDragOver={(event) => { if (props.settings.group !== "creator") { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }} onDrop={(event) => void dropTask(event, key)} className="w-[300px] shrink-0" aria-label={group.label}>
+  const draftTask = (groupKey: string): DenProductTask => ({ id: `board-draft-${groupKey}`, displayNumber: null, creatorMemberId: props.currentMemberId ?? "", listId: null, title: taskTitle, description: "", priority: taskDraft.priority ?? "none", visibility: "private", completionPolicy: "any_assignee", status: "todo", version: 1, startAt: taskDraft.startAt ?? null, dueAt: taskDraft.dueAt ?? null, completedAt: null, completedByMemberId: null, canceledAt: null, canceledByMemberId: null, deletedAt: null, restoreUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  const canDrag = props.settings.group !== "creator" && props.settings.group !== "priority";
+  return <div className="flex min-h-0 w-full flex-1 items-start gap-5 overflow-auto px-6 pb-6 pt-2" data-testid="assigned-task-board">{[...groups.entries()].map(([key, group]) => <section key={key} data-testid={`task-board-group-${key}`} onDragOver={(event) => { if (canDrag) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }} onDrop={(event) => void dropTask(event, key)} className="w-[300px] shrink-0" aria-label={group.label}>
     <header className="mb-2 flex h-9 items-center gap-2 px-1"><h3 className="min-w-0 truncate text-sm font-semibold text-dls-text">{group.label}</h3><span className="text-sm text-dls-secondary">{group.tasks.length}</span></header>
     <div className="space-y-2">{group.tasks.map((task) => {
       const taskMembers = props.membersByTaskId[task.id] ?? [];
       const assignees = taskMembers.filter((member) => member.role === "assignee").map((member) => member.memberId);
       const currentAssigneeCompleted = task.status === "todo" && task.completionPolicy === "all_assignees" && taskMembers.some((member) => member.role === "assignee" && member.memberId === props.currentMemberId && Boolean(member.completedAt));
       const overdue = task.status === "todo" && Boolean(task.dueAt && new Date(task.dueAt).getTime() < Date.now());
-      return <article key={task.id} draggable={props.settings.group !== "creator"} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", task.id); }} data-testid={`task-board-card-${task.id}`} className="rounded-xl border border-dls-border bg-dls-surface p-3 shadow-sm"><div className="flex items-start gap-2"><button type="button" disabled={currentAssigneeCompleted} className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border border-dls-secondary text-white disabled:cursor-default" aria-label={currentAssigneeCompleted ? t("tasks.assignee_completed") : task.status === "todo" ? t("tasks.complete") : t("tasks.reopen")} onClick={() => { if (!currentAssigneeCompleted) props.onTransition(task, task.status === "todo" ? "complete" : "reopen"); }}>{task.status === "completed" || currentAssigneeCompleted ? <Check className="size-3 text-green-8" /> : task.status === "canceled" ? <RotateCcw className="size-2.5 text-dls-secondary" /> : null}</button><button type="button" className={`min-w-0 flex-1 text-left text-sm leading-5 text-dls-text hover:text-blue-10 ${task.status === "completed" ? "line-through opacity-60" : ""}`} onClick={() => props.onSelect(task.id)}>{task.title}</button></div>
+      return <article key={task.id} draggable={canDrag} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", task.id); }} data-testid={`task-board-card-${task.id}`} className="rounded-xl border border-dls-border bg-dls-surface p-3 shadow-sm"><div className="flex items-start gap-2"><button type="button" disabled={currentAssigneeCompleted} className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border border-dls-secondary text-white disabled:cursor-default" aria-label={currentAssigneeCompleted ? t("tasks.assignee_completed") : task.status === "todo" ? t("tasks.complete") : t("tasks.reopen")} onClick={() => { if (!currentAssigneeCompleted) props.onTransition(task, task.status === "todo" ? "complete" : "reopen"); }}>{task.status === "completed" || currentAssigneeCompleted ? <Check className="size-3 text-green-8" /> : task.status === "canceled" ? <RotateCcw className="size-2.5 text-dls-secondary" /> : null}</button><button type="button" className={`min-w-0 flex-1 text-left text-sm leading-5 text-dls-text hover:text-blue-10 ${task.status === "completed" ? "line-through opacity-60" : ""}`} onClick={() => props.onSelect(task.id)}>{task.title}</button></div>
         <div className="mt-3 flex items-center justify-between gap-2"><AvatarGroup>{assignees.slice(0, 3).map((id) => { const member = props.memberById.get(id); const name = taskMemberName(id, props.memberById); return <Avatar key={id} size="sm" title={name}><AvatarImage src={member?.user.avatar ?? undefined} /><AvatarFallback>{name.slice(0, 1).toUpperCase()}</AvatarFallback></Avatar>; })}{assignees.length > 3 ? <AvatarGroupCount>+{assignees.length - 3}</AvatarGroupCount> : null}</AvatarGroup>{task.dueAt ? <span className={`flex items-center gap-1 text-xs ${overdue ? "font-medium text-red-9" : "text-dls-secondary"}`}><Calendar className="size-3" />{new Date(task.dueAt).toLocaleDateString()}</span> : null}</div>
         <div className="mt-2 flex items-center gap-2"><span className="truncate text-xs text-dls-secondary">{productTaskListIds(task).map((id) => props.listById.get(id)?.name ?? id).join(", ") || t("tasks.no_list")}</span></div>
       </article>;
