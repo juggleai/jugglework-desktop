@@ -2899,7 +2899,7 @@ function GroupDropZone({ groupId, workspaceId, children }: {
   );
 }
 
-/** Renders sessions partitioned by group. Empty groups always show. Ungrouped sessions render at the end. */
+/** Renders unassigned sessions at the workspace root, followed by named groups. */
 function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree, workspaceId, forcedExpandedSessionIds, store, layoutDependency }: {
   sessionRows: FlattenedSessionRow[];
   groups: SessionGroupDefinition[];
@@ -3000,8 +3000,6 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
     );
   };
 
-  const ungroupedExpanded = ctx.filteringSessions
-    || !(store.getState().groupsByWorkspace[workspaceId]?.collapsedGroupIds ?? []).includes(UNGROUPED_GROUP_ID);
   const ungroupedLimit = ctx.filteringSessions ? Number.MAX_SAFE_INTEGER : groupPreviewCount(UNGROUPED_GROUP_ID);
   const visibleUngroupedRows = ungroupedRows.slice(0, ungroupedLimit);
   const ungroupedRemaining = Math.max(0, ungroupedRows.length - ungroupedLimit);
@@ -3009,6 +3007,54 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
 
   return (
     <>
+      {ungroupedRows.length > 0 ? (
+        <GroupDropZone groupId={null} workspaceId={workspaceId}>
+          <Reorder.Group
+            as="div"
+            axis="y"
+            values={visibleUngroupedRootIds}
+            onReorder={(ids) => {
+              const allRootIds = sessionRows.filter((r) => r.depth === 0).map((r) => r.session.id);
+              const ungroupedSet = new Set(ungroupedRows.map((r) => r.session.id));
+              const visibleSet = new Set(ids);
+              const fullUngrouped = [...ids, ...ungroupedRows.map((r) => r.session.id).filter((id) => !visibleSet.has(id))];
+              let ui = 0;
+              const full = allRootIds.map((id) => ungroupedSet.has(id) ? fullUngrouped[ui++] : id);
+              store.getState().reorderSessions(workspaceId, full);
+            }}
+            className="flex flex-col gap-0.5"
+          >
+            {visibleUngroupedRows.map((row) => (
+              <React.Fragment key={row.session.id}>
+                <SessionMenuItem
+                  session={row.session}
+                  depth={row.depth}
+                  tree={tree}
+                  workspaceId={workspaceId}
+                  forcedExpandedSessionIds={forcedExpandedSessionIds}
+                  isPinned={pinnedIds.has(row.session.id)}
+                  reorderable={manualSort && row.depth === 0}
+                  groupDraggable={row.depth === 0}
+                  layoutDependency={layoutDependency}
+                />
+                {(childrenByParent.get(row.session.id) ?? []).map(renderRow)}
+              </React.Fragment>
+            ))}
+            {ungroupedRemaining > 0 ? (
+              <SidebarMenuSubItem>
+                <SidebarMenuSubButton
+                  className="text-muted-foreground text-xs"
+                  onClick={() => showMoreInGroup(UNGROUPED_GROUP_ID, ungroupedRows.length)}
+                >
+                  <span className="truncate">
+                    {t("workspace_list.show_more", { count: Math.min(MAX_SESSIONS_PREVIEW, ungroupedRemaining) })}
+                  </span>
+                </SidebarMenuSubButton>
+              </SidebarMenuSubItem>
+            ) : null}
+          </Reorder.Group>
+        </GroupDropZone>
+      ) : null}
       <Reorder.Group
         as="div"
         axis="y"
@@ -3018,67 +3064,6 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
       >
         {groups.map(renderGroup)}
       </Reorder.Group>
-      {ungroupedRows.length > 0 ? (
-        <GroupDropZone groupId={null} workspaceId={workspaceId}>
-          <Collapsible
-            open={ungroupedExpanded}
-            onOpenChange={() => store.getState().toggleGroupExpanded(workspaceId, UNGROUPED_GROUP_ID)}
-          >
-            <SessionGroupSeparator
-              label={t("session_management.ungrouped")}
-              count={ungroupedRows.length}
-              expanded={ungroupedExpanded}
-              onToggle={() => store.getState().toggleGroupExpanded(workspaceId, UNGROUPED_GROUP_ID)}
-            />
-            <CollapsibleContent className="pt-0.5">
-              <Reorder.Group
-                as="div"
-                axis="y"
-                values={visibleUngroupedRootIds}
-                onReorder={(ids) => {
-                  const allRootIds = sessionRows.filter((r) => r.depth === 0).map((r) => r.session.id);
-                  const ungroupedSet = new Set(ungroupedRows.map((r) => r.session.id));
-                  const visibleSet = new Set(ids);
-                  const fullUngrouped = [...ids, ...ungroupedRows.map((r) => r.session.id).filter((id) => !visibleSet.has(id))];
-                  let ui = 0;
-                  const full = allRootIds.map((id) => ungroupedSet.has(id) ? fullUngrouped[ui++] : id);
-                  store.getState().reorderSessions(workspaceId, full);
-                }}
-                className="flex flex-col gap-0.5"
-              >
-                {visibleUngroupedRows.map((row) => (
-                  <React.Fragment key={row.session.id}>
-                    <SessionMenuItem
-                      session={row.session}
-                      depth={row.depth}
-                      tree={tree}
-                      workspaceId={workspaceId}
-                      forcedExpandedSessionIds={forcedExpandedSessionIds}
-                      isPinned={pinnedIds.has(row.session.id)}
-                      reorderable={manualSort && row.depth === 0}
-                      groupDraggable={row.depth === 0}
-                      layoutDependency={layoutDependency}
-                    />
-                    {(childrenByParent.get(row.session.id) ?? []).map(renderRow)}
-                  </React.Fragment>
-                ))}
-              </Reorder.Group>
-              {ungroupedRemaining > 0 ? (
-                <SidebarMenuSubItem>
-                  <SidebarMenuSubButton
-                    className="text-muted-foreground text-xs"
-                    onClick={() => showMoreInGroup(UNGROUPED_GROUP_ID, ungroupedRows.length)}
-                  >
-                    <span className="truncate">
-                      {t("workspace_list.show_more", { count: Math.min(MAX_SESSIONS_PREVIEW, ungroupedRemaining) })}
-                    </span>
-                  </SidebarMenuSubButton>
-                </SidebarMenuSubItem>
-              ) : null}
-            </CollapsibleContent>
-          </Collapsible>
-        </GroupDropZone>
-      ) : null}
     </>
   );
 }

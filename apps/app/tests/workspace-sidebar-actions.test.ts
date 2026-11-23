@@ -76,6 +76,16 @@ describe("workspace sidebar actions", () => {
     expect(source).toContain("setManualOrder(listId, next)");
   });
 
+  test("shows unassigned project chats directly above the named groups", () => {
+    const list = source.slice(source.indexOf("function GroupedSessionList("), source.indexOf("function SessionGroupSection("));
+    const rootRows = list.indexOf("{visibleUngroupedRows.map(");
+    expect(rootRows).toBeGreaterThan(-1);
+    expect(list.indexOf("{groups.map(renderGroup)}")).toBeGreaterThan(rootRows);
+    expect(list).not.toContain("<SessionGroupSeparator");
+    expect(list).not.toContain("<Collapsible");
+    expect(list).toContain("<GroupDropZone groupId={null}");
+  });
+
   test("always reorders local project workspaces independently from chat sort mode", () => {
     const projects = source.slice(source.indexOf("function LocalProjectsSection("), source.indexOf("// Heading actions stay hidden"));
     const workspaceItem = source.slice(source.indexOf("function WorkspaceReorderItem("), source.indexOf("type WorkspaceHeaderProps"));
