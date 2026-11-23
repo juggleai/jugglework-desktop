@@ -36,7 +36,9 @@ function verify(record) {
     if (i > 0 && !sample.adjacent) {
       if (!targetRelations.has(sample.targetRelativeToEdge)) return { stage: 'protocol' };
       return { stage: 'order', role, expectedBelow, actualBelow: sample.below,
-        targetRelativeToEdge: sample.targetRelativeToEdge };
+        targetRelativeToEdge: sample.targetRelativeToEdge,
+        ...(sample.nextWindowOwner === 'self' || sample.nextWindowOwner === 'other'
+          ? { nextWindowOwner: sample.nextWindowOwner } : {}) };
     }
     windows.push({ role, px, dpi: sample.dpi, pmv2: true, visible: true, topmost: false, passive: true, adjacent: sample.adjacent });
   }

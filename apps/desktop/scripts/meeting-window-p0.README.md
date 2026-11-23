@@ -114,9 +114,10 @@ node apps/desktop/scripts/meeting-window-p0-edge-visible-native.cjs
 - 沿用隐藏探针的合成矩形：目标位于 `(64,64)`，大小 `240×240 px`；上下两条 `240×8 px` 含角，左右两条 `8×224 px` 不重叠。窗口始终鼠标穿透、无激活；只创建、显示、排列和销毁本探针窗口。不接收 HWND、不挂钩或注入输入、不采集。
 - `visible-sample` 表示首次读回满足：PMv2、DPI 96、五窗位置和尺寸逐项精确、可见且非置顶、自下而上 `target → top → bottom → left → right` 严格相邻。约每 100 ms 继续校验；读回并非原子，也不证明像素已呈现或未被遮住。可肉眼查看目标和四条边，不需要点击或拖拽。
 - 正常观察约 12 秒；`removed` 和退出码 `0` 表示观察期结束且 helper 报告清理成功。失败、`Ctrl+C` 或父进程断开时通过 EOF 请求清理；原生 helper 对读回不符也主动撤层。无响应则尝试终止 helper，报 `forced-cleanup`；`cleanup-timeout` 表示未确认退出。失败返回 `1`。日志不含句柄或进程标识。
-- 这是独立的原生可见阶段，**没有 Electron ink 或输入启用路径**（始终 `inputEnabled:false`）。不验证混合层级、真实边缘拦截、遮挡输入、跟随或混合 DPI；本次未在 Windows 编译或运行。原 `--overlay`、`--native-only` 和隐藏探针命令不变。
-- Windows 首轮可见测试在上边条报 `order`。新版同类失败会附 `expectedBelow` 和 `actualBelow`：实际值仅为测试窗角色、`external`（不属于这五个测试窗）或 `none`（未读到下一窗）。若另有 `removed-after-failure`，表示 helper 确认清理并退出，但本轮仍失败；没有此记录不能据日志确认失败后的清理。请回传层级错误和清理状态两行。
-- 逐窗显示的实机回读确认上边条下方为 `external`，失败后清理已确认。现在改为一次 `DeferWindowPos` 批量提交五个自有窗口的显示和排序，严格相邻判据不变。若仍报 `order`，`targetRelativeToEdge` 表示合成目标在失败边条上方（`above`）、下方（`below`），或有限、非原子回读未能确定（`unknown`）。不读取或输出外部窗口身份。批量版本尚待 Windows 实测。
+- 这是独立的原生可见阶段，**没有 Electron ink 或输入启用路径**（始终 `inputEnabled:false`）。不验证混合层级、真实边缘拦截、遮挡输入、跟随或混合 DPI。已在 Windows x64、100% 缩放实机确认可见几何、相邻顺序和清理；混合 DPI 与遮挡输入仍未验证。原 `--overlay`、`--native-only` 和隐藏探针命令不变。
+- Windows 首轮可见测试在上边条报 `order`。新版同类失败会附 `expectedBelow`、`actualBelow` 和 `nextWindowOwner`：实际值仅为测试窗角色、`external`（不属于这五个测试窗）或 `none`（未读到下一窗）；`nextWindowOwner` 只说明夹层窗口属于本进程（`self`）还是其它进程（`other`），不输出类名、pid 或标题。若另有 `removed-after-failure`，表示 helper 确认清理并退出，但本轮仍失败；没有此记录不能据日志确认失败后的清理。请回传层级错误和清理状态两行。
+- 实机首轮失败原因是 `nextWindowOwner: "self"`：helper 进程在首次显示窗口时懒创建了默认 `IME` 窗口，并插在 `top` 与 `target` 之间，破坏严格相邻。现在在创建任何窗口前对本进程调用 `ImmDisableIME(-1)`（不影响其它进程），随后两次运行均为 `visible-sample` + `removed`、退出码 `0`。
+- 逐窗显示的实机回读确认上边条下方为 `external`，失败后清理已确认。现在改为一次 `DeferWindowPos` 批量提交五个自有窗口的显示和排序，严格相邻判据不变。若仍报 `order`，`targetRelativeToEdge` 表示合成目标在失败边条上方（`above`）、下方（`below`），或有限、非原子回读未能确定（`unknown`）。不读取或输出外部窗口身份。批量版本已在 Windows 实机通过。
 
 ## 无界面回归测试
 

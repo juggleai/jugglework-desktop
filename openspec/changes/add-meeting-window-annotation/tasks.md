@@ -25,7 +25,7 @@
   - [x] 记录脱敏历史观测：100% 缩放下，独立 Electron 探针的 `resizable:false` 和 `resizable:true` 均曾回读 **39×32 DIP**；另一次 `--overlay` Win32 回读中，请求 **8 px** 的边实际为 **39 px**。两组证据来源不同。
   - [x] 实现独立 PowerShell 5.1／Win32 隐藏几何探针：仅测合成目标和四条自有边，PMv2 下精确回读物理矩形与 DPI，清理后输出脱敏 JSON。不接入 Electron。启动：`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\apps\desktop\scripts\meeting-window-p0-edge-size-native.ps1`。
   - [x] 记录先前回报的主屏 100% 隐藏测量：五窗 DPI 均为 96，所有 `requestedPx` 与 `actualPx` 精确相等（`x,y,width,height`，单位 px）：目标 `(64,64,240,240)`、上 `(64,64,240,8)`、下 `(64,296,240,8)`、左 `(64,72,8,224)`、右 `(296,72,8,224)`。属于历史隐藏几何证据，本次未复测；不验收显示后尺寸、输入、遮挡或层级。
-  - [ ] 独立 Win32 可见被动阶段已实现：同一固定合成矩形，持续读回 PMv2／DPI 96／精确物理矩形／非置顶严格相邻顺序，失败或 EOF 撤层。没有 Electron ink、不启用输入；待 Windows 编译并确认可见几何、相邻顺序和清理。完整混合探针及输入验收仍未完成。命令见 `apps/desktop/scripts/meeting-window-p0.README.md`。
+  - [x] 独立 Win32 可见被动阶段已实现并在 Windows x64 实机确认：同一固定合成矩形，持续读回 PMv2／DPI 96／精确物理矩形／非置顶严格相邻顺序，失败或 EOF 撤层。没有 Electron ink、不启用输入。首轮在上边条报 `order`，夹层窗口属探针自身进程懒创建的 `IME` 窗口；创建窗口前对本进程调用 `ImmDisableIME(-1)` 后连续两次 `visible-sample` + `removed`、退出码 `0`。完整混合探针及输入验收仍未完成。命令见 `apps/desktop/scripts/meeting-window-p0.README.md`。
 - [ ] 0.8 按 P0 结果更新 OpenSpec
   - [x] 记录 macOS 首轮 P0-1、P0-2、P0-4、P0-6 的实测结果及限制
 

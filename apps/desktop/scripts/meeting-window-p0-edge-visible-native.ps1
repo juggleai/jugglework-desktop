@@ -51,6 +51,15 @@ namespace MeetingWindowP0VisibleEdges
             return GetWindowThreadProcessId(window, out pid);
         }
 
+        private static string DescribeOwner(IntPtr window)
+        {
+            // Only ownership is reported: never another process's class, pid or title.
+            if (window == IntPtr.Zero) return "null";
+            uint pid;
+            GetWindowThreadProcessId(window, out pid);
+            return pid == (uint)Process.GetCurrentProcess().Id ? "\"self\"" : "\"other\"";
+        }
+
         private static bool Reaches(IntPtr start, IntPtr target, uint direction)
         {
             // Bounded diagnostic only; Z order can change during the walk.
@@ -79,6 +88,12 @@ namespace MeetingWindowP0VisibleEdges
             {
                 previous = SetThreadDpiAwarenessContext(PMv2);
                 if (previous == IntPtr.Zero) throw new InvalidOperationException();
+
+                // This process never takes keyboard input, but Win32 lazily creates a
+                // default "IME" window for the thread and inserts it above our strips,
+                // breaking strict adjacency. Suppress IME for this probe process only,
+                // before any window exists, so no foreign window joins the band.
+                ImmDisableIME(unchecked((uint)-1));
 
                 // EOF (or any unexpected input) requests teardown. Only this STA thread
                 // touches HWNDs. The reader never blocks teardown or process exit.
@@ -181,6 +196,13 @@ namespace MeetingWindowP0VisibleEdges
                                 "{{\"role\":\"{0}\",\"px\":{{\"x\":{1},\"y\":{2},\"width\":{3},\"height\":{4}}},\"dpi\":{5},\"pmv2\":{6},\"visible\":{7},\"topmost\":{8},\"passive\":{9},\"adjacent\":{10},\"below\":{11},\"targetRelativeToEdge\":\"{12}\"}}",
                                 roles[i], actual.Left, actual.Top, width, height, dpi, Bool(pmv2),
                                 Bool(visible), Bool(topmost), Bool(passive), i == 0 ? "null" : Bool(adjacent), below, relative);
+                            if (i > 0 && !adjacent)
+                            {
+                                // Read-only diagnosis: who is interleaved between the
+                                // edge window and its owned predecessor?
+                                samples[i] = samples[i].Substring(0, samples[i].Length - 1) +
+                                    ",\"nextWindowOwner\":" + DescribeOwner(next) + "}";
+                            }
                         }
                         Write("{\"type\":\"sample\",\"windows\":[" + String.Join(",", samples) + "]}");
                         // Mismatched readback goes to the launcher for diagnostics, then
@@ -220,6 +242,7 @@ namespace MeetingWindowP0VisibleEdges
         [DllImport("kernel32.dll", ExactSpelling = true)] private static extern uint GetCurrentThreadId();
         [DllImport("user32.dll", ExactSpelling = true)] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
         [DllImport("user32.dll", ExactSpelling = true)] private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+        [DllImport("imm32.dll", ExactSpelling = true)] private static extern bool ImmDisableIME(uint thread);
         [DllImport("user32.dll", ExactSpelling = true)] private static extern IntPtr GetWindowDpiAwarenessContext(IntPtr hwnd);
         [DllImport("user32.dll", ExactSpelling = true)] private static extern bool AreDpiAwarenessContextsEqual(IntPtr first, IntPtr second);
         [DllImport("user32.dll", ExactSpelling = true)] private static extern bool SystemParametersInfoW(uint action, uint parameter, out Rect rect, uint flags);
