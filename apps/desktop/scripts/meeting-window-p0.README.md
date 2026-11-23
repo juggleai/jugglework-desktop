@@ -86,7 +86,22 @@ pnpm --dir apps/desktop exec electron ./scripts/meeting-window-p0-edge-size.cjs
 
 先前 **100% 缩放下的 `--overlay` Win32 回读**曾观察到：一条边请求厚度 **8 px**，实际回读 **39 px**。这是脱敏的历史观测，不是本探针的结果。新探针只读 Electron `getBounds()`（DIP）；即使薄边仍为 8，也必须用现有 `--overlay` 的 Win32 回读确认物理像素尺寸。此探针也不验证层级或输入行为。
 
+另一次 **100% 缩放下的独立 Electron 探针**历史观测中，`resizable:false` 和 `resizable:true` 都曾回读到 **39×32 DIP**。仅记录脱敏尺寸；这两条是 Electron `getBounds()` 观测，不是 Win32 物理矩形证据。
+
 若未输出测量结果，记录最后一条 `edge-size-progress` 或 `error`。`waiting-for-ready` 和 `window-loading` 分别有 10 秒等待期限；页面加载超时会销毁当前测试窗并退出。若完全无输出，或停在 `window-creating` 超过 15 秒，按 `Ctrl+C`：入口执行前或主线程同步阻塞时，脚本定时器无法保证退出。
+
+## 独立 Win32 边缘尺寸探针：隐藏测量
+
+从仓库根目录在支持 Per-Monitor V2 的 Windows（Windows 10 1703 或更新版本）上运行；首次对照建议将主屏设为 **100%**（预期回读 DPI 为 96）：
+
+```powershell
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\apps\desktop\scripts\meeting-window-p0-edge-size-native.ps1
+```
+
+Windows PowerShell 5.1 通过内嵌 C# 同步创建五个自有 `WS_POPUP`：一个固定的 **240×240 px** 合成目标和四条 **8 px** 边（上下含角，左右不重叠）。所有窗口全程隐藏、非激活、非置顶；不接受外部 HWND，不采集画面，不拦截输入。`GetWindowRect` 在 PMv2 线程上回读物理矩形，逐项精确比较位置和尺寸；`GetDpiForWindow` 报告每窗 DPI。没有消息循环或等待；同线程销毁已创建的窗口并恢复 DPI 上下文后才输出一行脱敏 JSON，只含合成几何、角色、DPI 和状态，不含窗口或进程标识。
+
+- 退出码 `0`：五个隐藏窗口的 `requestedPx` 与 `actualPx` 全部精确匹配；`2`：测量完成但至少一项不匹配；`1`：探针失败，输出脱敏 `stage`。
+- 本步只验证隐藏窗口的原生几何；Windows 编译和实测待完成。不能据此判断显示后的尺寸、层级、遮挡或输入行为。
 
 ## 无界面回归测试
 

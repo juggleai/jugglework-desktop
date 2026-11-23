@@ -22,6 +22,9 @@
   - [x] 夹具观察到最小化、恢复和关闭；最小化时采集轨仍为 `live`，恢复后继续收到帧。未读取画面内容，不据此判断是否黑帧或是否保留最后一帧。
   - [ ] Windows 上继续验证混合 DPI／跨屏、窗口样式与身份复用，以及真实边框拖拽、遮挡输入和相对层级；本次未开启产品标注。
   - [ ] `--overlay` 独立合成夹具候选：静态 ink、Pointer／Draw、四边输入窗与合成遮挡窗／输入计数；仅被动显示和移动自有 Electron 层。原生回读确认 HWND、物理边界、DPI、非 topmost 与相邻顺序才启用输入；不调用 `moveAbove()`，失序即撤层。计数不阻塞原生跟踪。PowerShell/C# 编译、真实 Windows 层级／输入／遮挡未验证，不接入会议或生产门控。命令与限制见 `apps/desktop/scripts/meeting-window-p0.README.md`。
+  - [x] 记录脱敏历史观测：100% 缩放下，独立 Electron 探针的 `resizable:false` 和 `resizable:true` 均曾回读 **39×32 DIP**；另一次 `--overlay` Win32 回读中，请求 **8 px** 的边实际为 **39 px**。两组证据来源不同。
+  - [x] 实现独立 PowerShell 5.1／Win32 隐藏几何探针：仅测合成目标和四条自有边，PMv2 下精确回读物理矩形与 DPI，清理后输出脱敏 JSON。不接入 Electron。启动：`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\apps\desktop\scripts\meeting-window-p0-edge-size-native.ps1`。
+  - [ ] 在 Windows 编译探针并实测五个隐藏窗口的物理矩形与 DPI（先在主屏 100% 缩放下对照）；保留脱敏结果。本步不验收显示后尺寸、输入、遮挡或层级。
 - [ ] 0.8 按 P0 结果更新 OpenSpec
   - [x] 记录 macOS 首轮 P0-1、P0-2、P0-4、P0-6 的实测结果及限制
 
