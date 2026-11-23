@@ -1,4 +1,5 @@
-import { Cloud } from "lucide-react";
+import { Box, Cloud, Info } from "lucide-react";
+import { submittedTaskModelNotices, type ModelSwitch } from "./model-switch-notices";
 import { UserMessageText } from "./user-message-text";
 import { Badge } from "@/components/ui/badge";
 import { CloudDocsTurnCard } from "@/react-app/domains/cloud-docs/cloud-docs-turn-card";
@@ -1376,6 +1377,22 @@ interface MessageListProps {
   compactionRunning?: boolean
 }
 
+function ModelSwitchNotice({ change }: { change: ModelSwitch }) {
+  return (
+    <div className="mx-3 my-4 flex items-center gap-3 text-sm text-dls-secondary md:mx-8">
+      <span className="h-px flex-1 bg-dls-border" />
+      <span className="flex min-w-0 items-center justify-center gap-2 text-center">
+        <Box size={15} className="shrink-0" aria-hidden />
+        <span className="min-w-0 break-words">{t("session.model_changed", { from: change.from, to: change.to })}</span>
+        <span title={t("session.model_change_hint")} tabIndex={0} aria-label={t("session.model_change_hint")}>
+          <Info size={13} aria-hidden />
+        </span>
+      </span>
+      <span className="h-px flex-1 bg-dls-border" />
+    </div>
+  )
+}
+
 export function MessageList({ messages, status, activityStatus = "idle", retryActivity, compactionRunning = false }: MessageListProps) {
   const { workspaceId, sessionId } = useMessageList()
   const interactions = useQueryCacheState<WorkspaceInteractionState>(
@@ -1384,6 +1401,7 @@ export function MessageList({ messages, status, activityStatus = "idle", retryAc
   )
   const isStreaming = status === "streaming" || status === "retrying"
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
+  const notices = React.useMemo(() => submittedTaskModelNotices(messages), [messages])
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
   // TIPS: 底部提示展示的是当前真实动作（执行命令 / 写文件 / 工具调用…），
@@ -1414,12 +1432,14 @@ export function MessageList({ messages, status, activityStatus = "idle", retryAc
           )
         }
 
+        const notice = notices.get(item.message.id)
         const isLastMessage = item.index === messages.length - 1
         const isLastStep =
           !messages[item.index + 1] || messages[item.index + 1].role !== item.message.role
 
         return (
           <div key={item.message.id}>
+            {notice && <ModelSwitchNotice change={notice} />}
             <MessageComponent
               message={item.message}
               isLastMessage={isLastMessage}

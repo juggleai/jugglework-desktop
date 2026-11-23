@@ -7,6 +7,8 @@
  */
 
 export default {
+  "session.model_changed": "模型已从 {from} 更改为 {to}。",
+  "session.model_change_hint": "此会话的新任务将使用所选模型。",
   "settings.prompt_suggestions": "下一轮输入建议",
   "settings.prompt_suggestions_desc": "在回复结束后，使用当前会话模型生成下一轮输入建议；可能产生额外模型费用。按 Tab 填入后可编辑，不会自动发送。",
   "composer.prompt_suggestion.available_hint": "下一轮输入建议已可用。按 Tab 填入可编辑草稿，不会发送。",

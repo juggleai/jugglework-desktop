@@ -3,6 +3,8 @@
  */
 
 export default {
+  "session.model_changed": "モデルが {from} から {to} に変更されました。",
+  "session.model_change_hint": "このセッションの新しいタスクには選択したモデルが使われます。",
   "settings.prompt_suggestions": "次の入力候補",
   "settings.prompt_suggestions_desc": "返信の終了後、現在のセッションのモデルで次の入力候補を生成します。追加のモデル料金が発生する場合があります。Tab で編集可能な下書きに適用でき、自動送信はされません。",
   "composer.prompt_suggestion.available_hint": "次の入力候補があります。Tab で編集可能な下書きに適用できます。送信はされません。",

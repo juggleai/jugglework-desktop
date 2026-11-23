@@ -4,6 +4,8 @@
  */
 
 export default {
+  "session.model_changed": "El model ha canviat de {from} a {to}.",
+  "session.model_change_hint": "Les tasques noves d’aquesta sessió utilitzen el model seleccionat.",
   "settings.prompt_suggestions": "Suggeriments per al missatge següent",
   "settings.prompt_suggestions_desc": "Després d’una resposta, fa servir el model de la sessió actual per suggerir el missatge següent. Això pot generar costos addicionals del model. Prem Tab per omplir un esborrany editable; no s’enviarà automàticament.",
   "composer.prompt_suggestion.available_hint": "Hi ha un suggeriment per al missatge següent. Prem Tab per aplicar-lo com a esborrany editable, sense enviar-lo.",

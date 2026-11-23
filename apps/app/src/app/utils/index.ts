@@ -3,7 +3,6 @@ import { t } from "../../i18n";
 import type {
   ArtifactItem,
   MessageGroup,
-  MessageInfo,
   MessageWithParts,
   ModelRef,
   OpencodeEvent,
@@ -548,16 +547,11 @@ export function normalizeSessionStatus(status: unknown) {
   return "idle";
 }
 
-export function modelFromUserMessage(info: MessageInfo): ModelRef | null {
-  if (!info || typeof info !== "object") return null;
-  if ((info as any).role !== "user") return null;
-
-  const model = (info as any).model as unknown;
-  if (!model || typeof model !== "object") return null;
-
-  const providerID = (model as any).providerID;
-  const modelID = (model as any).modelID;
-
+export function modelFromUserMessage(info: { role?: string; model?: unknown } | undefined): ModelRef | null {
+  if (info?.role !== "user") return null;
+  const model = info.model;
+  if (!model || typeof model !== "object" || !("providerID" in model) || !("modelID" in model)) return null;
+  const { providerID, modelID } = model;
   if (typeof providerID !== "string" || typeof modelID !== "string") return null;
   return { providerID, modelID };
 }

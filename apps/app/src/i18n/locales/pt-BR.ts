@@ -4,6 +4,8 @@
  */
 
 export default {
+  "session.model_changed": "O modelo mudou de {from} para {to}.",
+  "session.model_change_hint": "Novas tarefas nesta sessão usam o modelo selecionado.",
   "settings.prompt_suggestions": "Sugestões para a próxima mensagem",
   "settings.prompt_suggestions_desc": "Após uma resposta, usa o modelo da sessão atual para sugerir a próxima mensagem. Isso pode gerar custos adicionais do modelo. Pressione Tab para preencher um rascunho editável; ele não será enviado automaticamente.",
   "composer.prompt_suggestion.available_hint": "Há uma sugestão para a próxima mensagem. Pressione Tab para aplicá-la como rascunho editável, sem enviar.",

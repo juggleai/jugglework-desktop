@@ -4,6 +4,8 @@
  */
 
 export default {
+  "session.model_changed": "Model changed from {from} to {to}.",
+  "session.model_change_hint": "New tasks in this session use the selected model.",
   "settings.prompt_suggestions": "Next prompt suggestions",
   "settings.prompt_suggestions_desc": "After a reply ends, use the current session model to suggest your next prompt. This may incur additional model charges. Press Tab to fill in an editable draft; it will not send automatically.",
   "composer.prompt_suggestion.available_hint": "A next prompt suggestion is available. Press Tab to apply it as an editable draft without sending.",

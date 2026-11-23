@@ -4,6 +4,8 @@
  */
 
 export default {
+  "session.model_changed": "El modelo ha cambiado de {from} a {to}.",
+  "session.model_change_hint": "Las nuevas tareas de esta sesión usan el modelo seleccionado.",
   "settings.prompt_suggestions": "Sugerencias para el siguiente mensaje",
   "settings.prompt_suggestions_desc": "Tras una respuesta, usa el modelo de la sesión actual para sugerir el siguiente mensaje. Esto puede generar cargos adicionales del modelo. Pulsa Tab para completar un borrador editable; no se enviará automáticamente.",
   "composer.prompt_suggestion.available_hint": "Hay una sugerencia para el siguiente mensaje. Pulsa Tab para aplicarla como borrador editable, sin enviarla.",

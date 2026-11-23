@@ -4,6 +4,8 @@
  */
 
 export default {
+  "session.model_changed": "Đã đổi mô hình từ {from} sang {to}.",
+  "session.model_change_hint": "Các tác vụ mới trong phiên này sẽ dùng mô hình đã chọn.",
   "settings.prompt_suggestions": "Gợi ý lời nhắc tiếp theo",
   "settings.prompt_suggestions_desc": "Sau khi câu trả lời kết thúc, dùng mô hình của phiên hiện tại để gợi ý lời nhắc tiếp theo. Việc này có thể phát sinh thêm phí mô hình. Nhấn Tab để điền bản nháp có thể chỉnh sửa; nội dung sẽ không tự động gửi.",
   "composer.prompt_suggestion.available_hint": "Có gợi ý lời nhắc tiếp theo. Nhấn Tab để điền bản nháp có thể chỉnh sửa mà không gửi.",

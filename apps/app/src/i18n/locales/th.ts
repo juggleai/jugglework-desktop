@@ -4,6 +4,8 @@
  */
 
 export default {
+  "session.model_changed": "เปลี่ยนโมเดลจาก {from} เป็น {to} แล้ว",
+  "session.model_change_hint": "งานใหม่ในเซสชันนี้จะใช้โมเดลที่เลือก",
   "settings.prompt_suggestions": "คำแนะนำข้อความถัดไป",
   "settings.prompt_suggestions_desc": "หลังจากตอบเสร็จ ใช้โมเดลของเซสชันปัจจุบันเพื่อแนะนำข้อความถัดไป ซึ่งอาจมีค่าใช้จ่ายโมเดลเพิ่มเติม กด Tab เพื่อเติมเป็นฉบับร่างที่แก้ไขได้ โดยจะไม่ส่งอัตโนมัติ",
   "composer.prompt_suggestion.available_hint": "มีคำแนะนำข้อความถัดไป กด Tab เพื่อเติมเป็นฉบับร่างที่แก้ไขได้โดยไม่ส่ง",
