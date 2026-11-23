@@ -19,6 +19,7 @@ namespace MeetingWindowP0VisibleEdges
         private const uint WS_EX_PASSIVE = 0x080800A0; // NOACTIVATE | LAYERED | TOOLWINDOW | TRANSPARENT
         private const int WS_EX_TOPMOST = 8;
         private const uint GW_HWNDNEXT = 2;
+        private const uint GW_HWNDPREV = 3;
         private static readonly IntPtr PMv2 = new IntPtr(-4);
 
         [StructLayout(LayoutKind.Sequential)]
@@ -48,6 +49,19 @@ namespace MeetingWindowP0VisibleEdges
         {
             uint pid;
             return GetWindowThreadProcessId(window, out pid);
+        }
+
+        private static bool Reaches(IntPtr start, IntPtr target, uint direction)
+        {
+            // Bounded diagnostic only; Z order can change during the walk.
+            IntPtr cursor = start;
+            for (int i = 0; i < 128; i++)
+            {
+                cursor = GetWindow(cursor, direction);
+                if (cursor == IntPtr.Zero || cursor == start) return false;
+                if (cursor == target) return true;
+            }
+            return false;
         }
 
         public static int Run()
@@ -100,19 +114,23 @@ namespace MeetingWindowP0VisibleEdges
                     }
 
                     stage = "show";
+                    if (stop.WaitOne(0)) return 1;
+                    foreach (IntPtr window in own)
+                        if (OwnerThread(window) != thread || (GetWindowLongW(window, -20) & WS_EX_TOPMOST) != 0)
+                            throw new InvalidOperationException();
+                    IntPtr batch = BeginDeferWindowPos(own.Length);
+                    if (batch == IntPtr.Zero) throw new InvalidOperationException();
                     for (int i = own.Length - 1; i >= 0; i--)
                     {
-                        if (stop.WaitOne(0)) return 1;
-                        // Leave the first shown strip in its existing band. Insert each
-                        // remaining window directly BELOW the previously shown owned window.
+                        // Keep the first strip in its existing band. Queue every other
+                        // window directly below its owned predecessor in the same batch.
                         IntPtr after = i == own.Length - 1 ? IntPtr.Zero : own[i + 1];
                         uint flags = 0x0053; // NOMOVE | NOSIZE | NOACTIVATE | SHOWWINDOW
                         if (after == IntPtr.Zero) flags |= 0x0004; // NOZORDER
-                        else if (OwnerThread(after) != thread || (GetWindowLongW(after, -20) & WS_EX_TOPMOST) != 0)
-                            throw new InvalidOperationException();
-                        if (OwnerThread(own[i]) != thread || !SetWindowPos(own[i], after, 0, 0, 0, 0, flags))
-                            throw new InvalidOperationException();
+                        batch = DeferWindowPos(batch, own[i], after, 0, 0, 0, 0, flags);
+                        if (batch == IntPtr.Zero) throw new InvalidOperationException();
                     }
+                    if (!EndDeferWindowPos(batch)) throw new InvalidOperationException();
 
                     stage = "readback";
                     while (!stop.WaitOne(0))
@@ -148,14 +166,21 @@ namespace MeetingWindowP0VisibleEdges
                             int nextIndex = next == IntPtr.Zero ? -1 : Array.IndexOf(own, next);
                             string below = i == 0 ? "null" : "\"" + (next == IntPtr.Zero ? "none" :
                                 nextIndex < 0 ? "external" : roles[nextIndex]) + "\"";
+                            string relative = "unknown";
+                            if (i > 0 && !adjacent)
+                            {
+                                bool targetBelow = next == own[0] || Reaches(window, own[0], GW_HWNDNEXT);
+                                bool targetAbove = Reaches(window, own[0], GW_HWNDPREV);
+                                if (targetBelow != targetAbove) relative = targetBelow ? "below" : "above";
+                            }
                             int width = actual.Right - actual.Left, height = actual.Bottom - actual.Top;
                             accepted &= actual.Left == plan[i,0] && actual.Top == plan[i,1] &&
                                 width == plan[i,2] && height == plan[i,3] && dpi == 96 && pmv2 &&
                                 visible && passive && !topmost && adjacent;
                             samples[i] = String.Format(CultureInfo.InvariantCulture,
-                                "{{\"role\":\"{0}\",\"px\":{{\"x\":{1},\"y\":{2},\"width\":{3},\"height\":{4}}},\"dpi\":{5},\"pmv2\":{6},\"visible\":{7},\"topmost\":{8},\"passive\":{9},\"adjacent\":{10},\"below\":{11}}}",
+                                "{{\"role\":\"{0}\",\"px\":{{\"x\":{1},\"y\":{2},\"width\":{3},\"height\":{4}}},\"dpi\":{5},\"pmv2\":{6},\"visible\":{7},\"topmost\":{8},\"passive\":{9},\"adjacent\":{10},\"below\":{11},\"targetRelativeToEdge\":\"{12}\"}}",
                                 roles[i], actual.Left, actual.Top, width, height, dpi, Bool(pmv2),
-                                Bool(visible), Bool(topmost), Bool(passive), i == 0 ? "null" : Bool(adjacent), below);
+                                Bool(visible), Bool(topmost), Bool(passive), i == 0 ? "null" : Bool(adjacent), below, relative);
                         }
                         Write("{\"type\":\"sample\",\"windows\":[" + String.Join(",", samples) + "]}");
                         // Mismatched readback goes to the launcher for diagnostics, then
@@ -202,7 +227,9 @@ namespace MeetingWindowP0VisibleEdges
         private static extern IntPtr CreateWindowExW(uint exStyle, string className, string title, uint style,
             int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
         [DllImport("user32.dll", ExactSpelling = true)] private static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint key, byte alpha, uint flags);
-        [DllImport("user32.dll", ExactSpelling = true)] private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int width, int height, uint flags);
+        [DllImport("user32.dll", ExactSpelling = true)] private static extern IntPtr BeginDeferWindowPos(int count);
+        [DllImport("user32.dll", ExactSpelling = true)] private static extern IntPtr DeferWindowPos(IntPtr batch, IntPtr hwnd, IntPtr after, int x, int y, int width, int height, uint flags);
+        [DllImport("user32.dll", ExactSpelling = true)] private static extern bool EndDeferWindowPos(IntPtr batch);
         [DllImport("user32.dll", ExactSpelling = true)] private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
         [DllImport("user32.dll", ExactSpelling = true)] private static extern int GetWindowLongW(IntPtr hwnd, int index);
         [DllImport("user32.dll", ExactSpelling = true)] private static extern uint GetDpiForWindow(IntPtr hwnd);

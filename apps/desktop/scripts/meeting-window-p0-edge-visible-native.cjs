@@ -9,6 +9,7 @@ const plan = [
 ];
 const helperStages = new Set(['compile', 'pmv2', 'work-area', 'create', 'show', 'readback', 'native-timeout', 'cleanup']);
 const neighborRoles = new Set([...plan.map(([role]) => role), 'external', 'none']);
+const targetRelations = new Set(['above', 'below', 'unknown']);
 
 function verify(record) {
   if (record?.type === 'error' && helperStages.has(record.stage)) return { stage: record.stage };
@@ -32,7 +33,11 @@ function verify(record) {
     const expectedBelow = i > 0 ? plan[i - 1][0] : null;
     if (i === 0 ? sample.below !== null : !neighborRoles.has(sample.below) ||
         sample.adjacent !== (sample.below === expectedBelow)) return { stage: 'protocol' };
-    if (i > 0 && !sample.adjacent) return { stage: 'order', role, expectedBelow, actualBelow: sample.below };
+    if (i > 0 && !sample.adjacent) {
+      if (!targetRelations.has(sample.targetRelativeToEdge)) return { stage: 'protocol' };
+      return { stage: 'order', role, expectedBelow, actualBelow: sample.below,
+        targetRelativeToEdge: sample.targetRelativeToEdge };
+    }
     windows.push({ role, px, dpi: sample.dpi, pmv2: true, visible: true, topmost: false, passive: true, adjacent: sample.adjacent });
   }
   return { windows };
