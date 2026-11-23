@@ -1,5 +1,5 @@
 # Windows PowerShell 5.1, interactive Windows 10 (1703+) or Windows 11.
-param([switch]$Probe)
+param([switch]$Probe, [switch]$Overlay)
 
 $ErrorActionPreference = 'Stop'
 if ($PSVersionTable.PSEdition -ne 'Desktop' -or
@@ -10,6 +10,7 @@ if ($PSVersionTable.PSEdition -ne 'Desktop' -or
 Add-Type -ReferencedAssemblies System,System.Core,System.Windows.Forms,System.Drawing,System.Web.Extensions -TypeDefinition @'
 using System;
 using System.Drawing;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
@@ -37,16 +38,21 @@ public sealed class MeetingWindowP0 : Form
     static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
     readonly Timer timer = new Timer { Interval = 100 };
     readonly bool probe;
+    readonly bool overlay;
+    Label inputLabel;
+    Form occluder;
+    Point? pointerStart;
+    int clicks, drags;
     string lastGeometry;
 
-    public static void Run(bool probe, string windowsBuild, string processArchitecture)
+    public static void Run(bool probe, bool overlay, string windowsBuild, string processArchitecture)
     {
         // powershell.exe can already own HWNDs. Set the context for this UI thread
         // before creating the fixture, rather than trying to change the host process.
         IntPtr previous = SetThreadDpiAwarenessContext(PerMonitorV2);
         if (previous == IntPtr.Zero) throw new System.ComponentModel.Win32Exception();
         try {
-            using (var form = new MeetingWindowP0(probe)) {
+            using (var form = new MeetingWindowP0(probe, overlay)) {
                 if (!AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(form.Handle), PerMonitorV2))
                     throw new InvalidOperationException("Fixture HWND is not Per-Monitor V2 aware");
                 Write(new { type = "fixture", windowsBuild, processArchitecture, dpiAwareness = "per-monitor-v2" });
@@ -57,9 +63,10 @@ public sealed class MeetingWindowP0 : Form
         }
     }
 
-    MeetingWindowP0(bool probe)
+    MeetingWindowP0(bool probe, bool overlay)
     {
         this.probe = probe;
+        this.overlay = overlay;
         Text = "Meeting Window P0 " + Guid.NewGuid().ToString("N");
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -69,6 +76,17 @@ public sealed class MeetingWindowP0 : Form
         ResizeRedraw = true;
         DoubleBuffered = true;
         timer.Tick += delegate { ReportGeometry(); };
+        if (overlay) {
+            // Native controls stay in the first 80 DIP of client area, outside the ink input window.
+            var pointer = new Button { Text = "Pointer", TabStop = false };
+            var draw = new Button { Text = "Draw", TabStop = false };
+            var cover = new Button { Text = "Occluder", TabStop = false };
+            inputLabel = new Label { ForeColor = Color.White, AutoSize = false };
+            pointer.Click += delegate { Write(new { type = "mode", mode = "pointer" }); };
+            draw.Click += delegate { Write(new { type = "mode", mode = "draw" }); };
+            cover.Click += delegate { ShowOccluder(); };
+            Controls.AddRange(new Control[] { pointer, draw, cover, inputLabel });
+        }
     }
 
     protected override void OnShown(EventArgs e)
@@ -76,8 +94,20 @@ public sealed class MeetingWindowP0 : Form
         base.OnShown(e);
         // Only the private child pipe receives the transient identity. Standalone
         // output and the Electron probe's console output omit it.
-        if (probe) Write(new { type = "identity", hwnd = Handle.ToInt64().ToString(), title = Text });
+        if (probe) {
+            ulong bits = IntPtr.Size == 8 ? unchecked((ulong)Handle.ToInt64()) : unchecked((uint)Handle.ToInt32());
+            Write(new { type = "identity", hwnd = bits.ToString(CultureInfo.InvariantCulture), title = Text });
+            // Only the launcher-owned fixture has a lifetime pipe. Never block the UI thread.
+            var lifetime = new System.Threading.Thread(new System.Threading.ThreadStart(delegate {
+                while (Console.ReadLine() != null) { }
+                try { BeginInvoke(new MethodInvoker(Close)); }
+                catch (InvalidOperationException) { } // the user already closed the form
+            }));
+            lifetime.IsBackground = true;
+            lifetime.Start();
+        }
         ReportGeometry();
+        if (overlay) { LayoutControls(); ReportInput(); }
         timer.Start();
     }
 
@@ -89,7 +119,7 @@ public sealed class MeetingWindowP0 : Form
 
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == 0x02E0 /* WM_DPICHANGED */) {
+        if (m.Msg == 0x02E0 /* WM_DPICHANGED */ && !overlay) {
             // Apply the OS-suggested physical rectangle to this fixture only,
             // so crossing monitors attempts to preserve its logical size.
             Rect suggested = (Rect)Marshal.PtrToStructure(m.LParam, typeof(Rect));
@@ -101,6 +131,62 @@ public sealed class MeetingWindowP0 : Form
             return;
         }
         base.WndProc(ref m);
+    }
+
+    void LayoutControls() {
+        double scale = GetDpiForWindow(Handle) / 96.0;
+        for (int i = 0; i < 3; i++) Controls[i].SetBounds((int)((12 + 112 * i) * scale),
+            (int)(10 * scale), (int)(104 * scale), (int)(28 * scale));
+        inputLabel.SetBounds((int)(12 * scale), (int)(44 * scale), (int)(580 * scale), (int)(28 * scale));
+    }
+
+    void ReportInput() {
+        inputLabel.Text = "Target clicks: " + clicks + "   drags: " + drags + "   (body only; controls excluded)";
+        Write(new { type = "fixture-input", role = "target", clicks, drags });
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e) {
+        base.OnMouseDown(e);
+        if (!overlay || e.Button != MouseButtons.Left) return;
+        clicks++;
+        pointerStart = e.Location;
+        Capture = true;
+        ReportInput();
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e) {
+        base.OnMouseUp(e);
+        if (!overlay || e.Button != MouseButtons.Left || !pointerStart.HasValue) return;
+        if (Math.Abs(e.X - pointerStart.Value.X) + Math.Abs(e.Y - pointerStart.Value.Y) > 4 * GetDpiForWindow(Handle) / 96.0) drags++;
+        pointerStart = null;
+        Capture = false;
+        ReportInput();
+    }
+
+    void ShowOccluder() {
+        if (occluder != null && !occluder.IsDisposed) { occluder.Activate(); return; }
+        // An independent fixture-created normal window: no owner/topmost relationship.
+        occluder = new Form { Text = "P0 fixture occluder", StartPosition = FormStartPosition.Manual,
+            Location = new Point(Left + Width / 2, Top + Height / 2), ClientSize = new Size(280, 160),
+            BackColor = Color.FromArgb(45, 80, 110), TopMost = false };
+        int coverClicks = 0, coverDrags = 0;
+        Point? start = null;
+        occluder.Paint += delegate(object sender, PaintEventArgs e) {
+            e.Graphics.DrawString("Occluder clicks: " + coverClicks + "  drags: " + coverDrags,
+                Font, Brushes.White, 12, 20);
+        };
+        occluder.MouseDown += delegate(object sender, MouseEventArgs e) {
+            if (e.Button != MouseButtons.Left) return;
+            coverClicks++; start = e.Location; occluder.Capture = true; occluder.Invalidate();
+            Write(new { type = "fixture-input", role = "occluder", clicks = coverClicks, drags = coverDrags });
+        };
+        occluder.MouseUp += delegate(object sender, MouseEventArgs e) {
+            if (e.Button != MouseButtons.Left || !start.HasValue) return;
+            if (Math.Abs(e.X - start.Value.X) + Math.Abs(e.Y - start.Value.Y) > 4 * GetDpiForWindow(occluder.Handle) / 96.0) coverDrags++;
+            start = null; occluder.Capture = false; occluder.Invalidate();
+            Write(new { type = "fixture-input", role = "occluder", clicks = coverClicks, drags = coverDrags });
+        };
+        occluder.Show();
     }
 
     void ReportGeometry()
@@ -149,6 +235,7 @@ public sealed class MeetingWindowP0 : Form
     {
         timer.Stop();
         timer.Dispose();
+        if (occluder != null) occluder.Dispose();
         Write(new { type = "closed" });
         base.OnFormClosed(e);
     }
@@ -156,4 +243,4 @@ public sealed class MeetingWindowP0 : Form
 '@
 
 $version = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
-[MeetingWindowP0]::Run($Probe.IsPresent, "$($version.CurrentBuildNumber).$($version.UBR)", $env:PROCESSOR_ARCHITECTURE)
+[MeetingWindowP0]::Run($Probe.IsPresent, $Overlay.IsPresent, "$($version.CurrentBuildNumber).$($version.UBR)", $env:PROCESSOR_ARCHITECTURE)

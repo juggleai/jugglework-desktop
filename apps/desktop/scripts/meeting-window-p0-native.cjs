@@ -1,0 +1,61 @@
+const decimal = (value) => typeof value === 'string' && /^[1-9][0-9]*$/.test(value) &&
+  value.length <= 20 && BigInt(value) <= 0xffffffffffffffffn;
+const reasons = new Set(['dpi-context', 'process-identity', 'window-identity', 'geometry', 'layer-identity']);
+
+function parseBox(box) {
+  if (!box || ![box.x, box.y, box.width, box.height].every(Number.isSafeInteger) ||
+      box.width <= 0 || box.height <= 0) return null;
+  const { x, y, width, height } = box;
+  return { x, y, width, height };
+}
+
+function parseNativeSample(line, target) {
+  let record;
+  try { record = JSON.parse(line); } catch { return null; }
+  if (!record) return null;
+  const { status, reason, hwnd, pid, processCreated, state, dpi } = record;
+  if (status === 'unavailable' && reasons.has(reason)) return { status, reason };
+  if (status !== 'available' || !decimal(hwnd) || hwnd !== target.hwnd || pid !== target.pid ||
+      !decimal(processCreated) || !['normal', 'minimized', 'maximized'].includes(state) ||
+      !Number.isSafeInteger(dpi) || dpi <= 0) return null;
+  const outerPx = parseBox(record.outerPx), dwmPx = parseBox(record.dwmPx);
+  if (state === 'minimized' ? record.outerPx !== null || record.dwmPx !== null : !outerPx || !dwmPx) return null;
+  const result = { status, hwnd, pid, processCreated, state, dpi, outerPx, dwmPx };
+  if (target.overlay) {
+    const value = record.overlay;
+    if (!value || !parseBox(value.clientPx) || !value.borderPx ||
+        ![value.borderPx.x, value.borderPx.y].every((n) => Number.isSafeInteger(n) && n > 0 && n <= 64) ||
+        !Array.isArray(value.layers) || value.layers.length > 5) return null;
+    const layers = [];
+    for (const layer of value.layers) {
+      if (!layer || !['ink', 'top', 'bottom', 'left', 'right'].includes(layer.role) || !decimal(layer.hwnd) ||
+          !Number.isSafeInteger(layer.dpi) || layer.dpi <= 0 || !parseBox(layer.outerPx) ||
+          !['visible', 'topmost', 'adjacent'].every((k) => typeof layer[k] === 'boolean')) return null;
+      const { role, hwnd, dpi, visible, topmost, adjacent } = layer;
+      layers.push({ role, hwnd, dpi, outerPx: parseBox(layer.outerPx), visible, topmost, adjacent });
+    }
+    result.overlay = { clientPx: parseBox(value.clientPx), borderPx: { x: value.borderPx.x, y: value.borderPx.y }, layers };
+  }
+  return result;
+}
+
+function classifyNativeSample(before, after) {
+  if (after.status === 'unavailable') return 'unavailable';
+  if (before?.status !== 'available') return 'baseline';
+  if (before.hwnd !== after.hwnd || before.pid !== after.pid || before.processCreated !== after.processCreated) {
+    return 'identity-change';
+  }
+  if (before.state !== after.state) return 'state-change';
+  if (before.dpi !== after.dpi) return 'dpi-change';
+  if (after.state === 'minimized') return 'unchanged';
+  const { outerPx: a, dwmPx: frameA } = before;
+  const { outerPx: b, dwmPx: frameB } = after;
+  if (a.width !== b.width || a.height !== b.height) return 'resize';
+  const dx = b.x - a.x, dy = b.y - a.y;
+  if (frameA.width !== frameB.width || frameA.height !== frameB.height ||
+      frameB.x - frameA.x !== dx || frameB.y - frameA.y !== dy) return 'mapping-change';
+  if (dx || dy) return 'move';
+  return 'unchanged';
+}
+
+module.exports = { parseNativeSample, classifyNativeSample };
