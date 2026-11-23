@@ -1,4 +1,4 @@
-# Private read-only observer for the synthetic fixture; launched by Electron.
+﻿# Private read-only observer for the synthetic fixture; launched by Electron.
 $ErrorActionPreference = 'Stop'
 $target = ConvertFrom-Json -InputObject ([Console]::ReadLine())
 
@@ -25,6 +25,7 @@ public static class MeetingWindowP0Native
     [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int capacity);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder text, int capacity);
     [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr hwnd);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hwnd);
     [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr hwnd);
@@ -36,6 +37,7 @@ public static class MeetingWindowP0Native
     [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hwnd, uint command);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] static extern int GetWindowLong(IntPtr hwnd, int index);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("imm32.dll")] static extern IntPtr ImmGetDefaultIMEWnd(IntPtr hwnd);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out Rect rect, int size);
     [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint pid);
     [DllImport("kernel32.dll")] static extern bool GetProcessTimes(IntPtr process, out long created,
@@ -53,7 +55,7 @@ public static class MeetingWindowP0Native
         return IntPtr.Size == 8 ? new IntPtr(unchecked((long)bits)) : new IntPtr(unchecked((int)bits));
     }
 
-    public static void Run(string decimalHwnd, uint pid, string title, uint overlayPid)
+    public static void Run(string decimalHwnd, uint pid, string title, uint overlayPid, bool passiveInk, bool interactive)
     {
         ulong bits;
         if (!Regex.IsMatch(decimalHwnd, @"\A[1-9][0-9]*\z") ||
@@ -75,7 +77,7 @@ public static class MeetingWindowP0Native
             while ((request = Console.ReadLine()) != null) {
                 object sample = previous == IntPtr.Zero ? Unavailable("dpi-context") :
                     processCreated == null ? Unavailable("process-identity") :
-                    Sample(hwnd, decimalHwnd, pid, title, process, processCreated, overlayPid, request);
+                    Sample(hwnd, decimalHwnd, pid, title, process, processCreated, overlayPid, request, passiveInk, interactive);
                 Console.WriteLine(Json.Serialize(sample));
                 Console.Out.Flush();
             }
@@ -101,8 +103,18 @@ public static class MeetingWindowP0Native
         return IsIconic(hwnd) ? "minimized" : IsZoomed(hwnd) ? "maximized" : "normal";
     }
 
+    static bool Reaches(IntPtr from, IntPtr target, uint direction) {
+        IntPtr cursor = from;
+        for (int i = 0; i < 128; i++) {
+            cursor = GetWindow(cursor, direction);
+            if (cursor == IntPtr.Zero || cursor == from) return false;
+            if (cursor == target) return true;
+        }
+        return false;
+    }
+
     static object Sample(IntPtr hwnd, string decimalHwnd, uint pid, string title, IntPtr process, string processCreated,
-        uint overlayPid, string request)
+        uint overlayPid, string request, bool passiveInk, bool interactive)
     {
         if (!MatchesFixture(hwnd, pid, title, process)) return Unavailable("window-identity");
         uint dpi = GetDpiForWindow(hwnd);
@@ -119,6 +131,8 @@ public static class MeetingWindowP0Native
         if (!MatchesFixture(hwnd, pid, title, process)) return Unavailable("window-identity");
         if (dpi == 0 || dpi != GetDpiForWindow(hwnd) || state != State(hwnd)) return Unavailable("geometry");
         if (overlayPid != 0) {
+            if (passiveInk && (state != "normal" || !IsWindowVisible(hwnd) || (GetWindowLong(hwnd, -20) & 8) != 0))
+                return Unavailable("geometry");
             // Read-only overlay evidence. No enumeration, hit-testing, input injection or window mutation.
             Rect client;
             Point location = new Point();
@@ -127,7 +141,7 @@ public static class MeetingWindowP0Native
             object borderPx = new { x = GetSystemMetricsForDpi(32 /* SM_CXSIZEFRAME */, dpi) + GetSystemMetricsForDpi(92 /* SM_CXPADDEDBORDER */, dpi),
                 y = GetSystemMetricsForDpi(33 /* SM_CYSIZEFRAME */, dpi) + GetSystemMetricsForDpi(92, dpi) };
             var command = Json.Deserialize<LayerRequest>(request);
-            if (command == null || command.layers == null || (command.layers.Length != 0 && command.layers.Length != 5)) return Unavailable("layer-identity");
+            if (command == null || command.layers == null || (command.layers.Length != 0 && command.layers.Length != (passiveInk ? 1 : 5))) return Unavailable("layer-identity");
             string[] roles = { "ink", "top", "bottom", "left", "right" };
             var layers = new List<object>();
             var seen = new HashSet<IntPtr>();
@@ -142,9 +156,103 @@ public static class MeetingWindowP0Native
                 uint layerDpi = GetDpiForWindow(own);
                 bool topmost = (GetWindowLong(own, -20 /* GWL_EXSTYLE */) & 8 /* WS_EX_TOPMOST */) != 0;
                 bool visible = IsWindowVisible(own);
+                if (passiveInk) {
+                    int exStyle = GetWindowLong(own, -20);
+                    if (!interactive && (exStyle & 0x80020) != 0x80020)
+                        return Unavailable("layer-identity");
+                }
                 // Exact immediate sibling is intentionally conservative: unknown intervening HWNDs fail closed.
-                bool adjacent = GetWindow(own, 2 /* GW_HWNDNEXT */) == below;
+                IntPtr next = GetWindow(own, 2 /* GW_HWNDNEXT */);
+                bool adjacent = next == below;
+                string targetRelative = null, nextOwner = null, nextRole = null;
+                bool? nextOwnedByTarget = null, nextVisible = null, nextOverlapsInk = null, nextHasArea = null;
+                if (passiveInk && !adjacent) {
+                    bool targetBelow = Reaches(own, hwnd, 2), targetAbove = Reaches(own, hwnd, 3);
+                    targetRelative = targetBelow == targetAbove ? "unknown" : targetBelow ? "below" : "above";
+                    uint nextPid = 0;
+                    if (next != IntPtr.Zero) GetWindowThreadProcessId(next, out nextPid);
+                    nextOwner = next == IntPtr.Zero ? "none" : nextPid == pid ? "target-process" :
+                        nextPid == overlayPid ? "ink-process" : nextPid == 0 ? "unknown" : "other";
+                    nextRole = nextOwner == "target-process" && next == ImmGetDefaultIMEWnd(hwnd) ? "target-default-ime" : "unknown";
+                    // Only inspect the synthetic target process's interleaver in detail.
+                    if (nextOwner == "target-process") {
+                        IntPtr owner = GetWindow(next, 4 /* GW_OWNER */);
+                        bool visibleNeighbor = IsWindowVisible(next);
+                        Rect neighbor;
+                        bool read = GetWindowRect(next, out neighbor);
+                        uint checkedPid;
+                        if (GetWindowThreadProcessId(next, out checkedPid) != 0 && checkedPid == pid &&
+                            GetWindow(own, 2) == next) {
+                            nextOwnedByTarget = owner == hwnd;
+                            nextVisible = visibleNeighbor;
+                            if (read) {
+                                nextHasArea = neighbor.Valid;
+                                nextOverlapsInk = neighbor.Valid && neighbor.Left < bounds.Right && neighbor.Right > bounds.Left &&
+                                    neighbor.Top < bounds.Bottom && neighbor.Bottom > bounds.Top;
+                            }
+                            if (nextRole == "unknown") {
+                                // Class text stays in this process. A family match is a hint, not identity.
+                                var cls = new StringBuilder(256);
+                                if (GetClassName(next, cls, cls.Capacity) > 0 && GetWindow(own, 2) == next) {
+                                    string value = cls.ToString();
+                                    if (value == "IME" || value == "MSCTFIME UI") nextRole = "ime-class";
+                                    else if (value.StartsWith("WindowsForms10.", StringComparison.Ordinal)) nextRole = "winforms-class";
+                                }
+                            }
+                        }
+                    }
+                }
                 if (!MatchesWindow(own, overlayPid, layer.title)) return Unavailable("layer-identity");
+                string aboveOwner = null, aboveRole = null;
+                bool? aboveOverlapsInk = null;
+                if (passiveInk) {
+                    // Read-only: who is immediately above our own ink, and does it overlap?
+                    IntPtr above = GetWindow(own, 3 /* GW_HWNDPREV */);
+                    uint abovePid = 0;
+                    if (above != IntPtr.Zero) GetWindowThreadProcessId(above, out abovePid);
+                    aboveOwner = above == IntPtr.Zero ? "none" : abovePid == pid ? "target-process" :
+                        abovePid == overlayPid ? "ink-process" : abovePid == 0 ? "unknown" : "other";
+                    Rect aboveRect;
+                    if (above != IntPtr.Zero && GetWindowRect(above, out aboveRect)) {
+                        aboveOverlapsInk = aboveRect.Valid && aboveRect.Left < bounds.Right && aboveRect.Right > bounds.Left &&
+                            aboveRect.Top < bounds.Bottom && aboveRect.Bottom > bounds.Top;
+                    }
+                    aboveRole = "unknown";
+                    if (aboveOwner == "target-process" && above != IntPtr.Zero) {
+                        string expected = title + " Occluder";
+                        var text = new StringBuilder(expected.Length + 2);
+                        if (GetWindowText(above, text, text.Capacity) == expected.Length && text.ToString() == expected)
+                            aboveRole = "fixture-occluder";
+                    }
+                    bool occluderAboveInk = false;
+                    int occluderWalk = 0, occluderTitleHits = 0;
+                    object occluderPx = null, occluderRaw = null;
+                    string occluderTitle = title + " Occluder";
+                    IntPtr up = own;
+                    for (int k = 0; k < 16; k++) {
+                        up = GetWindow(up, 3 /* GW_HWNDPREV */);
+                        if (up == IntPtr.Zero) break;
+                        occluderWalk++;
+                        var upText = new StringBuilder(occluderTitle.Length + 2);
+                        if (GetWindowText(up, upText, upText.Capacity) == occluderTitle.Length && upText.ToString() == occluderTitle) {
+                            occluderTitleHits++;
+                            Rect upRect;
+                            bool readUp = GetWindowRect(up, out upRect);
+                            var upClass = new StringBuilder(128); GetClassName(up, upClass, upClass.Capacity);
+                            occluderRaw = new { l = upRect.Left, t = upRect.Top, r = upRect.Right, b = upRect.Bottom, valid = upRect.Valid, read = readUp, cls = upClass.ToString() };
+                            if (readUp && upRect.Valid) occluderPx = upRect.Box();
+                            occluderAboveInk = readUp && upRect.Valid && upRect.Left < bounds.Right &&
+                                upRect.Right > bounds.Left && upRect.Top < bounds.Bottom && upRect.Bottom > bounds.Top;
+                            break;
+                        }
+                    }
+                    layers.Add(new { layer.role, layer.hwnd, dpi = layerDpi, outerPx = bounds.Box(), visible, topmost, adjacent,
+                        targetRelative, nextOwner, nextRole, nextOwnedByTarget, nextVisible, nextOverlapsInk, nextHasArea,
+                        aboveOwner, aboveRole, aboveOverlapsInk, occluderAboveInk, occluderWalk, occluderTitleHits, occluderPx, occluderRaw });
+                    below = own;
+                    continue;
+                }
+
                 layers.Add(new { layer.role, layer.hwnd, dpi = layerDpi, outerPx = bounds.Box(), visible, topmost, adjacent });
                 below = own;
             }
@@ -162,4 +270,5 @@ public static class MeetingWindowP0Native
 }
 '@
 
-[MeetingWindowP0Native]::Run($target.hwnd, $target.pid, $target.title, [uint32]$target.overlayPid)
+[MeetingWindowP0Native]::Run($target.hwnd, $target.pid, $target.title, [uint32]$target.overlayPid, ($target.passiveInk -eq $true), ($target.interactive -eq $true))
+if ($target.passiveInk -eq $true) { [Console]::WriteLine('{"type":"observer-eof"}') }

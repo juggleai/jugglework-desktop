@@ -32,7 +32,24 @@ function parseNativeSample(line, target) {
           !Number.isSafeInteger(layer.dpi) || layer.dpi <= 0 || !parseBox(layer.outerPx) ||
           !['visible', 'topmost', 'adjacent'].every((k) => typeof layer[k] === 'boolean')) return null;
       const { role, hwnd, dpi, visible, topmost, adjacent } = layer;
-      layers.push({ role, hwnd, dpi, outerPx: parseBox(layer.outerPx), visible, topmost, adjacent });
+      const order = target.passiveInk ? {
+        ...(adjacent ? {} : {
+          targetRelative: ['above', 'below', 'unknown'].includes(layer.targetRelative) ? layer.targetRelative : 'unknown',
+          nextOwner: ['none', 'ink-process', 'target-process', 'other', 'unknown'].includes(layer.nextOwner) ? layer.nextOwner : 'unknown',
+          nextRole: layer.nextOwner === 'target-process' && ['target-default-ime', 'ime-class', 'winforms-class'].includes(layer.nextRole)
+            ? layer.nextRole : 'unknown',
+          ...Object.fromEntries(['nextOwnedByTarget', 'nextVisible', 'nextOverlapsInk', 'nextHasArea'].map((key) =>
+            [key, layer.nextOwner === 'target-process' && typeof layer[key] === 'boolean' ? layer[key] : null])),
+        }),
+        aboveOwner: ['none', 'ink-process', 'target-process', 'other', 'unknown'].includes(layer.aboveOwner) ? layer.aboveOwner : 'unknown',
+        aboveRole: layer.aboveRole === 'fixture-occluder' ? 'fixture-occluder' : 'unknown',
+        aboveOverlapsInk: typeof layer.aboveOverlapsInk === 'boolean' ? layer.aboveOverlapsInk : null,
+        occluderAboveInk: typeof layer.occluderAboveInk === 'boolean' ? layer.occluderAboveInk : null,
+        occluderWalk: Number.isSafeInteger(layer.occluderWalk) && layer.occluderWalk >= 0 && layer.occluderWalk <= 32 ? layer.occluderWalk : null,
+        occluderTitleHits: Number.isSafeInteger(layer.occluderTitleHits) && layer.occluderTitleHits >= 0 && layer.occluderTitleHits <= 32 ? layer.occluderTitleHits : null,
+        occluderPx: parseBox(layer.occluderPx), occluderRaw: layer.occluderRaw && ['l','t','r','b'].every((k)=>Number.isSafeInteger(layer.occluderRaw[k])) ? { l: layer.occluderRaw.l, t: layer.occluderRaw.t, r: layer.occluderRaw.r, b: layer.occluderRaw.b, valid: layer.occluderRaw.valid === true, read: layer.occluderRaw.read === true, cls: typeof layer.occluderRaw.cls === 'string' && layer.occluderRaw.cls.length <= 128 ? layer.occluderRaw.cls : '' } : null,
+      } : {};
+      layers.push({ role, hwnd, dpi, outerPx: parseBox(layer.outerPx), visible, topmost, adjacent, ...order });
     }
     result.overlay = { clientPx: parseBox(value.clientPx), borderPx: { x: value.borderPx.x, y: value.borderPx.y }, layers };
   }

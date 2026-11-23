@@ -85,3 +85,19 @@ test('overlay samples require native client, edge metrics and exact layer identi
   assert.equal(read({ ...normal, overlay: { ...overlay, layers: [{ ...overlay.layers[0], hwnd: 9007199254740996 }] } }), null);
   assert.equal(read({ ...normal, overlay: { ...overlay, layers: [{ ...overlay.layers[0], adjacent: 'true' }] } }), null);
 });
+
+test('passive ink emits detailed neighbor diagnostics only for the synthetic target process', () => {
+  const layer = { role: 'ink', hwnd: '9007199254740995', dpi: 120, outerPx: bounds, visible: true,
+    topmost: false, adjacent: false, targetRelative: 'below', nextOwner: 'target-process', nextRole: 'ime-class',
+    nextOwnedByTarget: false, nextVisible: false, nextOverlapsInk: false, nextHasArea: true,
+    aboveOwner: 'target-process', aboveRole: 'fixture-occluder', aboveOverlapsInk: true, occluderAboveInk: true, occluderWalk: 3, occluderTitleHits: 1,
+    occluderPx: { x: 0, y: 0, width: 4, height: 6 }, occluderRaw: { l: 0, t: 0, r: 4, b: 6, valid: true, read: true, cls: '' } };
+  const read = (fields) => parseNativeSample(JSON.stringify({ ...normal, overlay: { clientPx: bounds,
+    borderPx: { x: 10, y: 10 }, layers: [{ ...layer, ...fields }] } }), { ...target, overlay: true, passiveInk: true })?.overlay.layers[0];
+  assert.deepEqual(read({}), layer);
+  assert.deepEqual(read({ nextOwner: 'other', rawTitle: 'private', aboveRole: 'arbitrary-class', aboveOverlapsInk: 'yes',
+    occluderWalk: 'x', occluderTitleHits: 99 }),
+    { ...layer, nextOwner: 'other', nextRole: 'unknown', nextOwnedByTarget: null, nextVisible: null,
+      nextOverlapsInk: null, nextHasArea: null, aboveRole: 'unknown', aboveOverlapsInk: null,
+      occluderWalk: null, occluderTitleHits: null });
+});

@@ -1,5 +1,5 @@
 # Windows PowerShell 5.1, interactive Windows 10 (1703+) or Windows 11.
-param([switch]$Probe, [switch]$Overlay)
+param([switch]$Probe, [switch]$Overlay, [switch]$Animate)
 
 $ErrorActionPreference = 'Stop'
 if ($PSVersionTable.PSEdition -ne 'Desktop' -or
@@ -33,26 +33,29 @@ public sealed class MeetingWindowP0 : Form
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hwnd);
     [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out Rect rect, int size);
 
     static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
     readonly Timer timer = new Timer { Interval = 100 };
     readonly bool probe;
     readonly bool overlay;
+    readonly bool animate;
+    int animationPhase;
     Label inputLabel;
     Form occluder;
     Point? pointerStart;
     int clicks, drags;
     string lastGeometry;
 
-    public static void Run(bool probe, bool overlay, string windowsBuild, string processArchitecture)
+    public static void Run(bool probe, bool overlay, bool animate, string windowsBuild, string processArchitecture)
     {
         // powershell.exe can already own HWNDs. Set the context for this UI thread
         // before creating the fixture, rather than trying to change the host process.
         IntPtr previous = SetThreadDpiAwarenessContext(PerMonitorV2);
         if (previous == IntPtr.Zero) throw new System.ComponentModel.Win32Exception();
         try {
-            using (var form = new MeetingWindowP0(probe, overlay)) {
+            using (var form = new MeetingWindowP0(probe, overlay, animate)) {
                 if (!AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(form.Handle), PerMonitorV2))
                     throw new InvalidOperationException("Fixture HWND is not Per-Monitor V2 aware");
                 Write(new { type = "fixture", windowsBuild, processArchitecture, dpiAwareness = "per-monitor-v2" });
@@ -63,10 +66,13 @@ public sealed class MeetingWindowP0 : Form
         }
     }
 
-    MeetingWindowP0(bool probe, bool overlay)
+    Rectangle AnimationRect { get { return new Rectangle(ClientSize.Width / 4, ClientSize.Height / 2, 32, 16); } }
+
+    MeetingWindowP0(bool probe, bool overlay, bool animate)
     {
         this.probe = probe;
         this.overlay = overlay;
+        this.animate = animate;
         Text = "Meeting Window P0 " + Guid.NewGuid().ToString("N");
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -75,7 +81,13 @@ public sealed class MeetingWindowP0 : Form
         BackColor = Color.FromArgb(22, 30, 45);
         ResizeRedraw = true;
         DoubleBuffered = true;
-        timer.Tick += delegate { ReportGeometry(); };
+        timer.Tick += delegate {
+            ReportGeometry();
+            if (this.animate) {
+                animationPhase = (animationPhase + 1) % 4;
+                Invalidate(AnimationRect);
+            }
+        };
         if (overlay) {
             // Native controls stay in the first 80 DIP of client area, outside the ink input window.
             var pointer = new Button { Text = "Pointer", TabStop = false };
@@ -199,7 +211,7 @@ public sealed class MeetingWindowP0 : Form
         uint dpi = GetDpiForWindow(hwnd);
         // Iconic windows can report sentinel or stale bounds. Don't compare them.
         string line = Json.Serialize(new {
-            type = "geometry", state, dpi, scalePercent = dpi * 100.0 / 96,
+            type = "geometry", state, dpi, visible = IsWindowVisible(hwnd), scalePercent = dpi * 100.0 / 96,
             outerPx = state != "minimized" && validOuter ? outer.Box() : null,
             dwmPx = state != "minimized" && result == 0 ? dwm.Box() : null,
             dwmHresult = result
@@ -221,6 +233,10 @@ public sealed class MeetingWindowP0 : Form
         Mark(e.Graphics, w, h, inset, h - inset, scale, Brushes.LimeGreen, "BL");
         Mark(e.Graphics, w, h, w - inset, h - inset, scale, Brushes.DeepSkyBlue, "BR");
         Mark(e.Graphics, w, h, w / 2, h / 2, scale, Brushes.White, "C");
+        if (animate) {
+            Rectangle patch = AnimationRect;
+            e.Graphics.FillRectangle(Brushes.WhiteSmoke, patch.X + animationPhase * 8, patch.Y, 8, patch.Height);
+        }
     }
 
     void Mark(Graphics g, float w, float h, float x, float y, float scale, Brush color, string label)
@@ -243,4 +259,4 @@ public sealed class MeetingWindowP0 : Form
 '@
 
 $version = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
-[MeetingWindowP0]::Run($Probe.IsPresent, $Overlay.IsPresent, "$($version.CurrentBuildNumber).$($version.UBR)", $env:PROCESSOR_ARCHITECTURE)
+[MeetingWindowP0]::Run($Probe.IsPresent, $Overlay.IsPresent, $Animate.IsPresent, "$($version.CurrentBuildNumber).$($version.UBR)", $env:PROCESSOR_ARCHITECTURE)

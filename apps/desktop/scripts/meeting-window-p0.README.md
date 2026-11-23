@@ -121,6 +121,46 @@ node apps/desktop/scripts/meeting-window-p0-edge-visible-native.cjs
 
 ## 无界面回归测试
 
+### A3 前置来源／标记流诊断（未完成的候选）
+
+`meeting-window-p0-hybrid.cjs` 默认只做隔离目标的来源和实际视频标记诊断；`--passive-ink` 可加一个本地透明墨层，**没有组合 Win32 边条，不是完整 A3 验收**。仅对其自建目标读取合成色点统计，不保存画面、标题、HWND/PID。零缩略图枚举后按 HWND 字符串和私有随机标题唯一匹配，请求捕获前再次确认。整个入口保持 `inputEnabled:false`。`--native-target` 改用不走 WinForms 的合成原生目标。
+
+```powershell
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --passive-ink
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --native-target --passive-ink
+node --test apps/desktop/scripts/meeting-window-p0*.test.cjs
+```
+
+正常预期为 `waiting-for-ready`、`target-geometry`、`source`、（带墨时）`ink-placement`/`ink-presented`/`ink-native-verified`、`stream-sample`、`stream-observed` 和 `cleanup:"confirmed"`。默认自建目标局部动画；`--static-target` 可关闭动画做对照。Windows x64、100% 单屏下，静态对照只取得1次帧回调而未达3帧判据；动画目标两轮均取得 `642×432` 单窗流、3次帧回调，末次画面检出四角色点且确认清理。
+
+`--native-target --passive-ink` 已两轮通过正常相邻切片：先由只读观察器读回客户区，再仅把自有墨层精确插到目标正上方（`SetWindowPos` 只动自有窗口），观察器复核严格相邻、几何、非置顶与 DPI；自有页面用 `capturePage` 读出 816 个墨色像素（640×400），同时目标单窗流 `inkColorPixels:0`，随后确认清理。这只证明正常相邻下的被动呈现与无回灌，**不证明输入**。
+
+生命周期与遮挡（`--native-target` 限定）：
+
+```powershell
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --native-target --passive-ink --occlude-after
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --native-target --passive-ink --minimize-after
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --native-target --passive-ink --resize-after
+```
+
+预期：遮挡两轮 `ink-occluded`（遮挡窗在墨层上方并与墨层相交，墨层仍紧邻目标）；最小化撤层报 `ink-native-unavailable`；改尺寸撤层报 `ink-geometry`；三者均 `cleanup:"confirmed"`。遮挡期间目标流 BR 色点曾连续两轮为 0，原因未定，不能据此判断遮挡可见性。
+
+本机性能（1902×1112 实际帧，10 秒，非 ZEGO）：
+
+```powershell
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --native-target --perf --perf-ms 10000
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --native-target --perf --perf-ink --perf-ms 10000
+```
+
+实测无墨约 28.6 fps、带墨约 1.1 fps，差异未解释，不能作为同轨合成性能结论；近 4K 在本机不可测。
+
+ready等待10秒、观察30秒；结束时先销毁viewer并关闭本轮child的stdin，等待5秒，必要时仅终止本轮child并再等待1.5秒。只有收到closed消息且child正常exit0、无signal/强制终止才确认清理；强制清理永远不能报成功。计时器不能保证入口执行前或主线程同步阻塞时退出。`--diagnose-hidden-start` 仅用于隐藏启动对照，不是默认运行方式。
+
+`meeting-window-p0-compositor.cjs` 的位图覆盖测试仅证明像素一致性；不透明覆盖幂等，无法由结果推导实际叠加次数。不得用其绿灯替代持续视频或真实墨层证据。
+
+未放置墨层时，PowerShell 承载的目标（WinForms 与原生替代都算）会贡献一个不可见、零面积的同进程窗口，夹在墨层与目标之间，使严格相邻失败；三轮 WinForms 与三轮原生对照均因此报 `ink-order` 并撤层。该诊断只记录布尔值和有限角色，不输出类名或 HWND，也不能按进程归属放行。`--native-target --passive-ink` 通过的是“自有墨层主动定位到目标正上方再由观察器复核”，不是放宽判据。
+
 从仓库根目录逐文件运行；测试使用真实解析／策略／运行时代码，在 Electron／进程／管道边界提供替身，不启动 Electron 或 WinForms：
 
 ```sh
@@ -152,3 +192,13 @@ node --test apps/desktop/scripts/meeting-window-p0-edge-visible-native.test.cjs
 - `outerPx` 是 Per-Monitor V2 线程读取的 `GetWindowRect`，可含不可见缩放边框；`dwmPx` 是 DWM 扩展边框，调用失败时为 `null` 并保留 `dwmHresult`。DIP 由 Electron `screenToDipRect(null, …)` 转换，跨屏停稳后再比较。
 - `settings` 是视频轨道公布的设置，`intrinsic` 是视频元素的固有尺寸，`frame` 是最近一次 `requestVideoFrameCallback` 回报的媒体像素宽高。三者不保证相等，也不保证等于 DWM 尺寸。`geometrySeq` 仅关联采样时最近一次几何记录；`frameAdvanced:false` 时 `frame` 可能是旧值，`true` 也不证明内容正确或没有黑帧。
 - 如需保存证据，仅保留脱敏的 JSON 行（含 Windows 构建号、进程架构、Electron/Chromium 版本和夹具所在显示器缩放），并附操作步骤。混合 DPI、Snap、实际应用和标注输入仍待实机验证。
+
+### A4 真人输入（需要人在机器前）
+
+``powershell
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --native-target --passive-ink --a4-passive --a4-ms 75000
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --native-target --passive-ink --a4-draw --a4-ms 75000
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --native-target --passive-ink --a4-occluded --a4-ms 75000
+``
+
+穿透模式：在窗口内部（避开标题栏和边框）做 8 条拖拽 + 3 次单击，预期墨层 0 击/0 拖、目标收到拖拽。绘制模式：中间画 3 条线 + 单击 2 下，预期墨层收到拖拽、目标 0 击。A4 使用固定尺寸目标；目标被点击激活时，夹具会重放自有墨层（最多 5 次）后复核。真人误拖边框导致几何变化时按设计撤层。遮挡模式会生成一块橙色 240×160 自有遮挡窗并持续置顶：在其内部单击应只计入遮挡窗。实测通过：遮挡窗 10 击、目标 0 击。另有一轮暴露真实风险：遮挡块与背景同色时不可见，且点击激活目标后遮挡窗落到墨层下方，后续点击会穿透到目标（19 击）——产品必须重放并复核层级。
