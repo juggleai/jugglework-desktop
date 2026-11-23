@@ -43,6 +43,7 @@
 | A3-continuous / A3 | `--native-target --passive-ink --samples 5 --sample-gap-ms 800`，两轮 | 同一路流多次采样均无墨、映射一致 | 两轮均 5/5 采样通过：每帧 3 次回调、四角色点、`inkColorPixels:0`、映射 `ok:true`；约5.9秒 | 0、0 | 目标与观察器 EOF 确认，墨层销毁确认 | PASS（切片） | 仍需更长时间与真实 ZEGO 双端；过早取样曾出现下半部色点缺失，故先预热 6 次回调 |
 | A3-strips / A3 | `--native-target --passive-ink --strips`，两轮 | 四条自有原生边条与墨层共存，边条几何/样式/层级可信 | 两轮 `strips-verified`：观察器核对 4 条边条的 PID、`WS_EX_LAYERED\|TRANSPARENT`、非 topmost、精确矩形且不与客户区相交；同轮墨层相邻与目标流无墨仍成立；约8.0秒 | 0、0 | 目标、观察器、边条助手 EOF 全部确认，墨层与边条销毁确认 | PASS（切片） | 边条为纯显示与层级证据，尚未接输入热区；真实 ZEGO 未测 |
 | A3-strips-negative | 同入口加 `--strips-wrong`，故意声明错误厚度 | 任一边条不符即拒绝 | `strips-rejected`，四边均 `geometry`；未进入采样 | 1 | 全部 EOF 确认 | PASS（失败对照） | 证明边条校验不是自我声明 |
+| A3-strips-input / A3 | `--native-target --passive-ink --a4-strips`，30 秒真人点击 | 点在边条上只计入边条 | 边条可见且几何/样式通过，但点击 18 次全部落到目标、边条 0 次；`WindowFromPoint` 在四条边条中心都返回目标窗口，说明目标在边条之上 | 1 | 目标/观察器/边条 EOF 确认 | BLOCKED（方案限制） | 后台进程无法把自有窗口稳定抬到前台窗口之上；用户点击目标会激活并抬升目标。拆分原生边条窗口不适合作为热区方案，应在同一标注窗口内做命中测试或同进程层 |
 | A4-passive / A4 | `--native-target --passive-ink --a4-passive`，75 秒，真人操作 | 墨层全穿透，拖拽落到目标 | 墨层 0 击/0 拖；目标 18 击、13 拖；期间目标被激活 1 次，夹具重放自有墨层后复核 `adjacent:true` | 0 | 目标与观察器 EOF 正常退出、墨层销毁确认；77.4 秒 | PASS | 穿透模式不偷输入；重放只移动自有层 |
 | A4-draw / A4 | `--a4-draw`，75 秒，真人操作 | 墨层独占输入，目标收不到点击 | 墨层 12 击、7 拖；目标 0 击/0 拖 | 0 | 同上；77.3 秒 | PASS | 绘制模式输入归属正确 |
 | A4-geometry-fail | 同 A4，真人误拖边框 | 几何变化即撤层 | 一轮约 10.7 秒撤层，清理确认 | 1 | 确认 | PASS（撤层） | 真人操作确实会碰边框，产品需同样处理 |

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { matchFixtureSource, composeAndVerify, cleanupVerdict } = require('./meeting-window-p0-hybrid.cjs');
-const { inkPlan, inkVerdict, a4Verdict, mappingVerdict } = require('./meeting-window-p0-hybrid-ink.cjs');
+const { inkPlan, inkVerdict, a4Verdict, mappingVerdict, stripInputVerdict } = require('./meeting-window-p0-hybrid-ink.cjs');
 
 test('passive ink requires stable identity, normal state and exact geometry and order', () => {
   const rect = { x: 20, y: 40, width: 640, height: 400 };
@@ -614,4 +614,14 @@ test('occluded A4 verdict needs real clicks on the fixture occluder and none on 
     { pass: true, reason: 'occluder-owned-input' });
   assert.equal(a4Verdict('occluded', zero, { clicks: 0, drags: 0, occluderClicks: 2 }).reason, 'occluder-clicks-missing');
   assert.equal(a4Verdict('occluded', zero, { clicks: 1, drags: 0, occluderClicks: 5 }).reason, 'target-received-occluded-click');
+});
+test('edge strip hot zones accept only strip-owned clicks', () => {
+  const zero = { clicks: 0, drags: 0 };
+  const strips = { top: 2, bottom: 2, left: 2, right: 2 };
+  assert.deepEqual(stripInputVerdict(strips, zero, zero), { pass: true, reason: 'strips-owned-input', total: 8 });
+  assert.equal(stripInputVerdict({ top: 1 }, zero, zero).reason, 'strip-clicks-missing');
+  assert.equal(stripInputVerdict(strips, zero, { clicks: 1, drags: 0 }).reason, 'target-received-edge-click');
+  assert.equal(stripInputVerdict(strips, { clicks: 1, drags: 0 }, zero).reason, 'ink-stole-edge-input');
+  assert.equal(stripInputVerdict(null, zero, zero).reason, 'counts');
+  assert.equal(stripInputVerdict({ top: -1, bottom: 9 }, zero, zero).reason, 'counts');
 });

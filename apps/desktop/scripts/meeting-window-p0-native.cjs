@@ -55,7 +55,7 @@ function parseNativeSample(line, target) {
     if (value.strips != null) {
       const strip = value.strips;
       const roles = ['top', 'bottom', 'left', 'right'];
-      const reasons = ['hwnd', 'pid', 'style', 'rect', 'geometry', 'client-overlap'];
+      const reasons = ['hwnd', 'pid', 'style', 'hidden', 'below-target', 'rect', 'geometry', 'client-overlap', 'not-hittable', 'target-above', 'ink-above', 'other-above'];
       if (typeof strip.ok !== 'boolean' || !Number.isSafeInteger(strip.count) || strip.count !== 4 ||
           !Array.isArray(strip.failures) || strip.failures.length > 8) return null;
       const failures = [];

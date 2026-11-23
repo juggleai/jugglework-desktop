@@ -43,7 +43,7 @@ async function runElectron() {
   clearTimeout(readyTimer);
   if (readyExpired) return;
   app.on('window-all-closed', () => {});
-  let viewer, child, ink, observer, inkPoll, inkVerified = false, observerDone, stopObserver, occlusionSeen = false, targetMouse = null, inkWidth = 0, inkHeight = 0, inkX = 0, inkY = 0, stripsChild, stripSet, stripsDone, stripsVerified = false;
+  let viewer, child, ink, observer, inkPoll, inkVerified = false, observerDone, stopObserver, occlusionSeen = false, targetMouse = null, inkWidth = 0, inkHeight = 0, inkX = 0, inkY = 0, stripsChild, stripSet, stripsDone, stripsVerified = false, stripClicks = {};
   let finishing = false, closed = false, forced = false, passed = false;
   let cleanupTimer, finalTimer, observationTimer, identity, geometry, capturing = false;
   const started = Date.now();
@@ -78,7 +78,8 @@ async function runElectron() {
   const perfInk = process.argv.includes('--perf-ink');
   const perfToggle = process.argv.includes('--perf-toggle');
   const perfMs = Number(process.argv[process.argv.indexOf('--perf-ms') + 1]) || 12000;
-  const a4Mode = process.argv.includes('--a4-passive') ? 'passive' : process.argv.includes('--a4-draw') ? 'draw' : process.argv.includes('--a4-occluded') ? 'occluded' : null;
+  const a4Mode = process.argv.includes('--a4-passive') ? 'passive' : process.argv.includes('--a4-draw') ? 'draw' :
+    process.argv.includes('--a4-occluded') ? 'occluded' : process.argv.includes('--a4-strips') ? 'strips' : null;
   const targetArgs = [...actionArg('--minimize-after', ['MinimizeMs', '1800']),
     ...actionArg('--resize-after', ['ResizeMs', '1800']),
     ...actionArg('--occlude-after', ['OccludeMs', '1800']),
@@ -86,7 +87,9 @@ async function runElectron() {
     ...(a4Mode ? ['-Fixed'] : []),
     ...(a4Mode === 'occluded' ? ['-OccludeMs', '1800'] : [])];
   const occludeRequested = targetArgs.includes('-OccludeMs');
-  const stripsRequested = process.argv.includes('--strips');
+  const stripsInput = process.argv.includes('--strips-input');
+  const stripsRequested = process.argv.includes('--strips') || stripsInput || a4Mode === 'strips';
+  const stripThickness = stripsInput ? 24 : 8;
   const a4Ms = Math.min(180000, Math.max(5000, Number(process.argv[process.argv.indexOf('--a4-ms') + 1]) || 75000));
   const sampleCount = Math.min(20, Math.max(1, Number(process.argv[process.argv.indexOf('--samples') + 1]) || 1));
   const sampleGap = Math.min(5000, Math.max(100, Number(process.argv[process.argv.indexOf('--sample-gap-ms') + 1]) || 800));
@@ -198,7 +201,9 @@ async function runElectron() {
         }
         if (finishing) return;
         const target = targetMouse || { clicks: 0, drags: 0 };
-        const verdict = a4Verdict(a4Mode, counts, target);
+        const verdict = a4Mode === 'strips'
+          ? require('./meeting-window-p0-hybrid-ink.cjs').stripInputVerdict(stripClicks, counts, target)
+          : a4Verdict(a4Mode, counts, target);
         emit({ stage: 'a4-result', mode: a4Mode, ink: counts, target, valid: verdict.pass, reason: verdict.reason });
         return finish(verdict.pass, verdict.pass ? 'a4-observed' : 'a4-rejected');
       }
@@ -339,7 +344,8 @@ async function runElectron() {
             const info = await startStrips(plan.px);
             if (finishing) return;
             if (!info) return finish(false, 'strips-failed');
-            stripSet = { pid: info.pid, thickness: process.argv.includes('--strips-wrong') ? 9 : 8, handles: info.handles };
+            stripSet = { pid: info.pid, thickness: process.argv.includes('--strips-wrong') ? stripThickness + 1 : stripThickness,
+              interactive: stripsInput, handles: info.handles };
           }          const placement = await placeInk(layer.hwnd, identity.hwnd);
           if (finishing) return;
           emit({ stage: 'ink-placement', placed: placement?.placed === true, adjacent: placement?.adjacent === true });
@@ -436,6 +442,8 @@ async function runElectron() {
         let record;
         try { record = JSON.parse(line); } catch { return; }
         if (record && record.type === 'closed') { closed = true; return; }
+        if (record && record.type === 'strip-mouse' && ['top', 'bottom', 'left', 'right'].includes(record.role) &&
+            Number.isSafeInteger(record.clicks) && record.clicks >= 0) { stripClicks[record.role] = record.clicks; return; }
         if (record && record.type === 'strips' && Number.isSafeInteger(record.pid) && record.handles &&
             ['top', 'bottom', 'left', 'right'].every((role) => typeof record.handles[role] === 'string' &&
               /^[1-9]\d{0,19}$/.test(record.handles[role]))) {
@@ -449,8 +457,8 @@ async function runElectron() {
         resolveDone(!killed && closed && code === 0 && !signal);
       });
       stripsChild.stdin.on('error', () => {});
-      stripsChild.stdin.write(JSON.stringify({ target: identity.hwnd, x: px.x, y: px.y,
-        width: px.width, height: px.height, thickness: 8 }) + '\n');
+      stripsChild.stdin.write(JSON.stringify({ target: identity.hwnd, input: stripsInput, x: px.x, y: px.y,
+        width: px.width, height: px.height, thickness: stripThickness }) + '\n');
     });
   }
   // Bounded, injection-free placement of the one ink HWND we created. Failure

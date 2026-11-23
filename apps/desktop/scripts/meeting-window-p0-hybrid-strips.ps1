@@ -27,8 +27,19 @@ public static class P0Strips {
     static readonly Procedure Proc = Dispatch;
     static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
     static readonly List<IntPtr> windows = new List<IntPtr>();
+    static readonly Dictionary<IntPtr, string> roleOf = new Dictionary<IntPtr, string>();
+    static readonly Dictionary<string, int> clickCount = new Dictionary<string, int>();
 
     static IntPtr Dispatch(IntPtr hwnd, uint msg, IntPtr wp, IntPtr lp) {
+        if (msg == 0x0201) {
+            string role;
+            if (roleOf.TryGetValue(hwnd, out role)) {
+                clickCount[role] = clickCount[role] + 1;
+                Console.WriteLine(Json.Serialize(new { type = "strip-mouse", role, clicks = clickCount[role] }));
+                Console.Out.Flush();
+            }
+            return IntPtr.Zero;
+        }
         if (msg != 0x0f) return DefWindowProcW(hwnd, msg, wp, lp);
         Paint paint;
         IntPtr dc = BeginPaint(hwnd, out paint);
@@ -65,11 +76,14 @@ public static class P0Strips {
             };
             var handles = new Dictionary<string, string>();
             foreach (var spec in specs) {
-                IntPtr handle = CreateWindowExW(0x080800A0 /* LAYERED|TRANSPARENT|TOOLWINDOW|NOACTIVATE */, cls.Name, "",
+                IntPtr handle = CreateWindowExW(request.input ? 0x08080080u /* LAYERED|TOOLWINDOW|NOACTIVATE */ : 0x080800A0u /* +TRANSPARENT */, cls.Name, "",
                     0x80000000 /* WS_POPUP */, spec.x, spec.y, spec.w, spec.h, IntPtr.Zero, IntPtr.Zero, cls.Instance, IntPtr.Zero);
                 if (handle == IntPtr.Zero) throw new InvalidOperationException("window");
                 windows.Add(handle);
-                if (!SetWindowPos(handle, IntPtr.Zero, spec.x, spec.y, spec.w, spec.h, 0x0054)) throw new InvalidOperationException("show");
+                if (!SetLayeredWindowAttributes(handle, 0, 255, 0x00000002 /* LWA_ALPHA */)) throw new InvalidOperationException("layered");
+                roleOf[handle] = spec.role;
+                clickCount[spec.role] = 0;
+                if (!SetWindowPos(handle, IntPtr.Zero, 0, 0, 0, 0, 0x0053 /* SHOWWINDOW|NOMOVE|NOSIZE|NOACTIVATE|top */)) throw new InvalidOperationException("show");
                 handles[spec.role] = (IntPtr.Size == 8 ? unchecked((ulong)handle.ToInt64()) : unchecked((uint)handle.ToInt32())).ToString(CultureInfo.InvariantCulture);
             }
             Console.WriteLine(Json.Serialize(new { type = "strips", pid = Process.GetCurrentProcess().Id, handles }));
@@ -94,7 +108,7 @@ public static class P0Strips {
         return failed ? 1 : 0;
     }
 
-    public sealed class Request { public string target { get; set; } public int x { get; set; } public int y { get; set; } public int width { get; set; } public int height { get; set; } public int thickness { get; set; } }
+    public sealed class Request { public string target { get; set; } public int x { get; set; } public int y { get; set; } public int width { get; set; } public int height { get; set; } public int thickness { get; set; } public bool input { get; set; } }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)] static extern IntPtr GetModuleHandleW(string name);
     [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
@@ -108,6 +122,7 @@ public static class P0Strips {
     [DllImport("user32.dll", ExactSpelling = true)] static extern bool PeekMessageW(out Message msg, IntPtr hwnd, uint min, uint max, uint remove);
     [DllImport("user32.dll", ExactSpelling = true)] static extern IntPtr DispatchMessageW(ref Message msg);
     [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint colorKey, byte alpha, uint flags);
 }
 '@
     exit ([P0Strips]::Run([Console]::ReadLine()))

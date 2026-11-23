@@ -35,6 +35,7 @@ public static class MeetingWindowP0Native
     [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr hwnd, ref Point point);
     [DllImport("user32.dll")] static extern int GetSystemMetricsForDpi(int index, uint dpi);
     [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hwnd, uint command);
+    [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] static extern int GetWindowLong(IntPtr hwnd, int index);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("imm32.dll")] static extern IntPtr ImmGetDefaultIMEWnd(IntPtr hwnd);
@@ -256,6 +257,8 @@ public static class MeetingWindowP0Native
                 layers.Add(new { layer.role, layer.hwnd, dpi = layerDpi, outerPx = bounds.Box(), visible, topmost, adjacent });
                 below = own;
             }
+            IntPtr layer0Hwnd = IntPtr.Zero;
+            foreach (Layer own in command.layers) { if (own != null) { try { layer0Hwnd = Handle(own.hwnd); } catch {} break; } }
             object strips = null;
             if (command.strips != null) {
                 var spec = command.strips;
@@ -270,7 +273,10 @@ public static class MeetingWindowP0Native
                     uint stripPid;
                     if (GetWindowThreadProcessId(strip, out stripPid) == 0 || stripPid != spec.pid) { stripFailures.Add(stripRoles[s] + ":pid"); continue; }
                     int ex = GetWindowLong(strip, -20);
-                    if ((ex & 0x80020) != 0x80020 || (ex & 8) != 0) { stripFailures.Add(stripRoles[s] + ":style"); continue; }
+                    bool styleOk = (ex & 0x80000) != 0 && (ex & 8) == 0 && (spec.interactive ? (ex & 0x20) == 0 : (ex & 0x20) != 0);
+                    if (!styleOk) { stripFailures.Add(stripRoles[s] + ":style"); continue; }
+                    if (!IsWindowVisible(strip)) { stripFailures.Add(stripRoles[s] + ":hidden"); continue; }
+                    if (!Reaches(strip, hwnd, 2)) { stripFailures.Add(stripRoles[s] + ":below-target"); continue; }
                     Rect bounds;
                     if (!GetWindowRect(strip, out bounds) || !bounds.Valid) { stripFailures.Add(stripRoles[s] + ":rect"); continue; }
                     int exX = stripRoles[s] == "left" ? cx - t : stripRoles[s] == "right" ? cx + cw : cx;
@@ -281,6 +287,13 @@ public static class MeetingWindowP0Native
                         stripFailures.Add(stripRoles[s] + ":geometry");
                     bool overlapsClient = bounds.Left < cx + cw && bounds.Right > cx && bounds.Top < cy + ch && bounds.Bottom > cy;
                     if (overlapsClient) stripFailures.Add(stripRoles[s] + ":client-overlap");
+                    Point center = new Point();
+                    center.X = (bounds.Left + bounds.Right) / 2; center.Y = (bounds.Top + bounds.Bottom) / 2;
+                    IntPtr at = spec.interactive ? WindowFromPoint(center) : strip;
+                    if (at != strip) {
+                        string above = at == hwnd ? "target-above" : (layer0Hwnd != IntPtr.Zero && at == layer0Hwnd) ? "ink-above" : "other-above";
+                        stripFailures.Add(stripRoles[s] + ":" + above);
+                    }
                     strips = new { ok = stripFailures.Count == 0, count = stripRoles.Length, failures = stripFailures.ToArray() };
                 }
             }            if (!MatchesFixture(hwnd, pid, title, process) || dpi != GetDpiForWindow(hwnd) || state != State(hwnd)) return Unavailable("geometry");
@@ -292,7 +305,7 @@ public static class MeetingWindowP0Native
 
     public sealed class Layer { public string role { get; set; } public string hwnd { get; set; } public string title { get; set; } }
     public sealed class LayerRequest { public Layer[] layers { get; set; } public StripSet strips { get; set; } }
-    public sealed class StripSet { public uint pid { get; set; } public int thickness { get; set; } public StripHandles handles { get; set; } }
+    public sealed class StripSet { public uint pid { get; set; } public int thickness { get; set; } public bool interactive { get; set; } public StripHandles handles { get; set; } }
     public sealed class StripHandles { public string top { get; set; } public string bottom { get; set; } public string left { get; set; } public string right { get; set; } }
 
     static object Unavailable(string reason) { return new { status = "unavailable", reason }; }

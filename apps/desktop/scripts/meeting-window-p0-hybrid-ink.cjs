@@ -1,4 +1,4 @@
-﻿// Fixture-only passive ink; never enables input or reorders another window.
+// Fixture-only passive ink; never enables input or reorders another window.
 const rectKeys = ['x', 'y', 'width', 'height'];
 const same = (a, b) => !!a && !!b && rectKeys.every((key) => a[key] === b[key]);
 
@@ -85,4 +85,22 @@ function mappingVerdict(markers, frame, dwm, client) {
     expectedX: client.width - 48, expectedY: client.height - 48 };
 }
 
-module.exports = { inkPlan, inkVerdict, page, a4Verdict, mappingVerdict };
+// Strip hot zones: only the four fixture strips may receive the clicks.
+function stripInputVerdict(strips, ink, target) {
+  const roles = ['top', 'bottom', 'left', 'right'];
+  if (!strips || typeof strips !== 'object' || !Array.isArray(roles)) return { pass: false, reason: 'counts' };
+  let total = 0;
+  for (const role of roles) {
+    const value = strips[role] ?? 0;
+    if (!Number.isSafeInteger(value) || value < 0) return { pass: false, reason: 'counts' };
+    total += value;
+  }
+  const valid = (v) => v && Number.isSafeInteger(v.clicks) && Number.isSafeInteger(v.drags) && v.clicks >= 0 && v.drags >= 0;
+  if (!valid(ink) || !valid(target)) return { pass: false, reason: 'counts' };
+  if (total < 8) return { pass: false, reason: 'strip-clicks-missing' };
+  if (target.clicks !== 0) return { pass: false, reason: 'target-received-edge-click' };
+  if (ink.clicks !== 0 || ink.drags !== 0) return { pass: false, reason: 'ink-stole-edge-input' };
+  return { pass: true, reason: 'strips-owned-input', total };
+}
+
+module.exports = { inkPlan, inkVerdict, page, a4Verdict, mappingVerdict, stripInputVerdict };
