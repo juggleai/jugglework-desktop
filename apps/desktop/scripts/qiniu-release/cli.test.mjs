@@ -119,7 +119,7 @@ test("recover-lock routes authorized and completed records to the required audit
   };
   const records = [];
   await runCli([
-    "recover-lock", ...REQUIRED, "--reason", "publisher confirmed terminated", "--actor", "operator", "--audit", "/secure/audit.jsonl",
+    "recover-lock", ...REQUIRED.with(1, "1.2.41").with(7, "arm64"), "--reason", "publisher confirmed terminated", "--actor", "operator", "--audit", "/secure/audit.jsonl",
   ], {
     qiniu,
     output: () => {},
@@ -131,4 +131,16 @@ test("recover-lock routes authorized and completed records to the required audit
     ["/secure/audit.jsonl", "completed"],
   ]);
   assert.equal(records[0].record.platform, "mac");
+});
+
+test("bootstrap is explicit for the exact first Mac route and legacy commands cannot write", async () => {
+  const base = REQUIRED.with(1, "1.2.41").with(7, "arm64");
+  const flags = ["--bootstrap", "manual-transition-1.2.41", "--standing-policy", "stable-mac-arm64-standing-policy",
+    "--pre-canary-exception-reason", "Standing authorization to omit the real upgrade canary",
+    "--metadata-exception-reason", "Standing authorization to omit only mutable cache metadata"];
+  assert.equal(parseArguments(["promote-channel", ...base, ...flags]).options.bootstrap, "manual-transition-1.2.41");
+  assert.throws(() => parseArguments(["promote-channel", ...base, ...flags, "--bucket", "juggleim"]), /Bucket/);
+  assert.throws(() => parseArguments(["promote-channel", ...base.with(1, "1.2.42"), ...flags]), /bootstrap/);
+  assert.throws(() => parseArguments(["promote-channel", ...base, ...flags, "--expected-previous-channel-digest", "a".repeat(64)]), /bootstrap/);
+  await assert.rejects(runCli(["upload-version", ...REQUIRED], { run: () => assert.fail("must not call qshell") }), /Legacy release route is read-only/);
 });

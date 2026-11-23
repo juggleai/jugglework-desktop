@@ -53,11 +53,13 @@ test("trusted main frame only and environment excludes tokens/injection", () => 
 });
 
 test("terminal uses the platform UTF-8 locale when the effective character locale is ASCII", () => {
-  assert.equal(terminalEnvironment({}, "darwin").LC_CTYPE, "UTF-8");
-  const linux = terminalEnvironment({ LANG: "zh_CN.UTF-8", LC_ALL: "C" }, "linux");
+  /** @type {(env: NodeJS.ProcessEnv, platform: NodeJS.Platform) => NodeJS.ProcessEnv} */
+  const environment = terminalEnvironment;
+  assert.equal(environment({}, "darwin").LC_CTYPE, "UTF-8");
+  const linux = environment({ LANG: "zh_CN.UTF-8", LC_ALL: "C" }, "linux");
   assert.equal(linux.LC_CTYPE, "C.UTF-8");
   assert.equal(linux.LC_ALL, undefined);
   assert.equal(linux.LANG, "zh_CN.UTF-8");
-  assert.equal(terminalEnvironment({ LC_ALL: "C.UTF-8", LC_CTYPE: "C" }, "linux").LC_ALL, "C.UTF-8");
-  assert.equal(terminalEnvironment({}, "win32").LC_CTYPE, undefined);
+  assert.equal(environment({ LC_ALL: "C.UTF-8", LC_CTYPE: "C" }, "linux").LC_ALL, "C.UTF-8");
+  assert.equal(environment({}, "win32").LC_CTYPE, undefined);
 });

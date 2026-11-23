@@ -5,7 +5,8 @@ import { parse as parseYaml } from "yaml";
 
 import { CANARY_SCHEMA, EXPECTED_BUNDLE_ID, EXPECTED_TEAM_ID, LOCAL_VERIFICATION_SCHEMA, assertRecordedPromotion, createEvidence, withEvidenceResults } from "./evidence.mjs";
 import { readBackDigest } from "./cdn.mjs";
-import { CHANNEL_MANIFEST_CACHE_CONTROL, publicUrl } from "./constants.mjs";
+import { CHANNEL_MANIFEST_CACHE_CONTROL, RELEASE_CDN_ORIGIN, publicUrl } from "./constants.mjs";
+import { BOOTSTRAP } from "./bootstrap.mjs";
 import { metadataForBuffer } from "./metadata.mjs";
 import { preflightImmutable, promoteChannel, recoverPromotionLock, uploadVersion, verifyCdn } from "./workflow.mjs";
 import { STANDING_POLICY_SCOPE, standingPolicyException } from "./standing-policy.mjs";
@@ -88,6 +89,9 @@ function verifiedEvidence(plan) {
     },
     artifacts: plan.objects.map((item) => ({ name: item.name, size: item.size, sha256: item.sha256, sha512: item.sha512, etag: item.etag })),
     manifest: { name: "latest-mac.yml", size: plan.manifest.size, sha256: plan.manifest.sha256, sha512: plan.manifest.sha512, etag: plan.manifest.etag },
+    ...(plan.origin ? { packagedUpdater: Object.fromEntries(["app", "zip", "dmg"].map((kind) => [kind, {
+      provider: "generic", url: `${plan.origin}/jugglework/releases/stable/mac`, monotonic: true,
+    }])) } : {}),
   };
   const canary = {
     schema: CANARY_SCHEMA, schemaVersion: 1, producer: "jugglework-macos-update-canary", result: "passed", channel: plan.channel,
@@ -98,13 +102,88 @@ function verifiedEvidence(plan) {
   };
   const qiniuChecks = [...plan.objects, plan.manifest].map((item) => ({ key: item.key, size: item.size, etag: item.etag, verified: true }));
   const cdnChecks = [...plan.objects, plan.manifest].map((item) => ({ key: item.key, url: item.url, https: true, mime: item.mime, contentLength: item.size, range: true, size: item.size, sha256: item.sha256, sha512: item.sha512 }));
-  return withEvidenceResults(createEvidence({ plan, commit: "abc123", localVerification, canary, timestamps: { createdAt: "2026-09-08T00:00:00.000Z" } }), {
+  return withEvidenceResults(createEvidence({ plan, commit: plan.origin ? "a".repeat(40) : "abc123", localVerification, canary, timestamps: { createdAt: "2026-09-08T00:00:00.000Z" } }), {
     workflow: {
       immutable: { status: "verified", qiniuChecks, verifiedAt: "2026-09-08T02:00:00.000Z" },
       cdn: { status: "verified", qiniuChecks, cdnChecks, verifiedAt: "2026-09-08T03:00:00.000Z" },
     },
   }, "2026-09-08T03:00:00.000Z");
 }
+
+function bootstrapFixture() {
+  const plan = fixturePlan("1.2.41");
+  plan.origin = RELEASE_CDN_ORIGIN;
+  for (const item of [...plan.objects, plan.manifest, plan.channelManifest]) item.url = publicUrl(item.key, plan.origin);
+  const evidence = verifiedEvidence(plan);
+  evidence.canary = null;
+  const immutable = new Map([...plan.objects, plan.manifest].map((item, index) => [item.url, {
+    ...item, content: ["zip", "dmg", "zip-blockmap", "dmg-blockmap", plan.manifest.content][index],
+  }]));
+  const qiniu = createFakeQiniu(new Map([...immutable.values()].map((item) => [item.key, item])));
+  qiniu.bucket = "jugglework";
+  qiniu.assertObjectAbsent = async (key) => {
+    qiniu.calls.push(["absence", key]);
+    if (qiniu.state.has(key)) throw new Error("object exists");
+  };
+  const options = { ...standing, bootstrap: BOOTSTRAP, qiniu,
+    refresh: async (urls) => qiniu.calls.push(["refresh", ...urls]),
+    fetchImpl: async (url, request) => {
+      const object = immutable.get(url) ?? (qiniu.state.has(plan.channelManifest.key) && !immutable.has(url) ? plan.manifest : null);
+      if (!object) return Response.json({ error: "Document not found" }, { status: 404 });
+      const range = request.headers?.Range;
+      return new Response(request.method === "HEAD" ? null : range ? object.content.slice(0, 1) : object.content, {
+        status: range ? 206 : 200,
+        headers: { "content-type": object.mime, "content-length": range ? 1 : object.size,
+          "cache-control": "public, max-age=31536000", ...(range ? { "content-range": `bytes 0-0/${object.size}` } : {}) },
+      });
+    },
+  };
+  return { plan, evidence, qiniu, options };
+}
+
+test("first new Stable requires two absence proofs, insert-only and exact public read-back", async () => {
+  const { plan, evidence, qiniu, options } = bootstrapFixture();
+  const result = await promoteChannel(plan, evidence, options);
+  assert.equal(result.bootstrap.preLock.httpStatus, 404);
+  assert.equal(result.bootstrap.postLock.qiniu, "object_absent");
+  assert.equal(Object.hasOwn(result.lock, "expectedPreviousChannelDigest"), false);
+  assert.deepEqual(qiniu.calls.find(([op, key]) => op === "uploadContent" && key === plan.channelManifest.key).at(-1), { overwrite: false });
+  assert.equal(qiniu.calls.filter(([op]) => op === "absence").length, 4);
+  assert.equal(qiniu.calls.some(([op]) => op === "setCacheControl"), false);
+  assert.equal(result.mutableCdn.sha256, plan.manifest.sha256);
+  assert.equal(result.workflow.canary, "skipped_by_standing_policy");
+  const { workflow, releasePolicy, ...promotion } = result;
+  const recorded = withEvidenceResults(evidence, { releasePolicy, workflow: { ...workflow,
+    promotion: { ...promotion, status: "verified", promotedAt: result.readBack.checkedAt },
+  } });
+  assertRecordedPromotion(plan, recorded);
+  delete recorded.workflow.promotion.bootstrap;
+  assert.throws(() => assertRecordedPromotion(plan, recorded), /requires bootstrap evidence/);
+});
+
+test("first new Stable fails closed on wrong public status, post-lock race, or insert collision", async () => {
+  for (const scenario of ["5xx", "unrelated 404", "post-lock", "insert collision"]) {
+    const { plan, evidence, qiniu, options } = bootstrapFixture();
+    const fetch = options.fetchImpl;
+    const upload = qiniu.uploadContent;
+    qiniu.uploadContent = async (key, ...args) => {
+      if (scenario === "insert collision" && key === plan.channelManifest.key) {
+        assert.equal(args.at(-1).overwrite, false);
+        qiniu.state.set(key, { etag: "other-writer" });
+        throw new Error("insert collided");
+      }
+      await upload(key, ...args);
+      if (scenario === "post-lock" && /\.lock$/.test(key)) qiniu.state.set(plan.channelManifest.key, { etag: "other-writer" });
+    };
+    options.fetchImpl = (url, request) => url !== plan.channelManifest.url ? fetch(url, request)
+      : scenario === "5xx" ? new Response(null, { status: 503 })
+        : scenario === "unrelated 404" ? Response.json({ error: "routing error" }, { status: 404 }) : fetch(url, request);
+    await assert.rejects(promoteChannel(plan, evidence, options), /HTTP 404|does not prove|object exists|insert collided/);
+    assert.equal(qiniu.calls.some(([op]) => op === "refresh"), false);
+    assert.equal(qiniu.calls.some(([op, key]) => op === "uploadContent" && key === plan.channelManifest.key), false);
+    if (scenario === "post-lock" || scenario === "insert collision") assert.equal(qiniu.state.get(plan.channelManifest.key).etag, "other-writer");
+  }
+});
 
 test("immutable preflight distinguishes absent, matching resume, and mismatch", async () => {
   const target = fixturePlan().objects[0];

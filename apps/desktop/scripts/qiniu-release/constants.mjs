@@ -1,6 +1,13 @@
 export const CDN_ORIGIN = "https://downloads.jugglechat.cn";
 export const RELEASE_ROOT = "jugglework/releases";
-export const DEFAULT_BUCKET = "juggleim";
+export const LEGACY_BUCKET = "juggleim";
+export const DEFAULT_BUCKET = "jugglework";
+export const RELEASE_CDN_ORIGIN = "https://downloads.jugglework.cn";
+
+export function usesNewReleaseOrigin({ version, channel, platform, architectures }) {
+  return channel === "stable" && platform === "mac" && architectures?.length === 1 && architectures[0] === "arm64"
+    && STABLE_VERSION.test(version) && compareSemver(version, "1.2.41") >= 0;
+}
 export const SUPPORTED_ARCHITECTURES = ["arm64", "x64", "universal"];
 export const SUPPORTED_PLATFORMS = ["mac", "windows"];
 export const SUPPORTED_CHANNELS = ["stable", "alpha"];
@@ -137,7 +144,8 @@ export function promotionLockKey(channel, platform = "mac") {
   return `${RELEASE_ROOT}/locks/${channel}-${platform}.lock`;
 }
 
-export function publicUrl(key) {
+export function publicUrl(key, origin = CDN_ORIGIN) {
   if (!key.startsWith(`${RELEASE_ROOT}/`)) throw new Error(`Object key is outside release root: ${key}`);
-  return `${CDN_ORIGIN}/${key}`;
+  if (![CDN_ORIGIN, RELEASE_CDN_ORIGIN].includes(origin)) throw new Error("Unapproved CDN origin");
+  return `${origin}/${key}`;
 }

@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { metadataForBuffer } from "./metadata.mjs";
-import { CHANNEL_MANIFEST_CACHE_CONTROL, promotionLockKey } from "./constants.mjs";
+import { CHANNEL_MANIFEST_CACHE_CONTROL, RELEASE_CDN_ORIGIN, promotionLockKey } from "./constants.mjs";
 import { cdnFailureDetails, readBackDigest, verifyCdnObject } from "./cdn.mjs";
 import { assertEvidenceMatchesPlan, assertLocalVerification, assertPromotionEvidence } from "./evidence.mjs";
 import { standingPolicyException, standingPolicyEvidence } from "./standing-policy.mjs";
+import { assertBootstrap, proveBootstrapAbsence } from "./bootstrap.mjs";
 
 function exactRemote(remote, object) {
   return remote?.size === object.size && remote?.etag === object.etag;
@@ -92,7 +94,7 @@ export async function verifyCdn(plan, { qiniu, fetchImpl, verifyObject = verifyC
       phase = "head";
       cdnChecks.push({ key: object.key, ...(await verifyObject(object, { fetchImpl, onCheck: (value) => {
         if (["head", "metadata_get", "range", "full"].includes(value)) phase = value;
-      } })) });
+      }, origin: plan.origin, immutable: plan.origin === RELEASE_CDN_ORIGIN })) });
     }
   } catch (error) {
     // Only producer-owned fixed enums enter continuation evidence. Never retain
@@ -120,12 +122,21 @@ export async function promoteChannel(plan, evidence, {
   metadataExceptionReason = "",
   standingPolicy = "",
   expectedPreviousChannelDigest,
+  bootstrap,
   onEvent = () => {},
   onPromotionVerified = async () => {},
 } = {}) {
   assertPromotionEvidence(plan, evidence, { notarizationExceptionReason, preCanaryExceptionReason, cacheExceptionReason, metadataExceptionReason, standingPolicy });
   const policyEvidence = standingPolicy ? standingPolicyEvidence(plan, evidence, { standingPolicy, preCanaryExceptionReason, metadataExceptionReason }) : {};
-  if (standingPolicy && expectedPreviousChannelDigest === undefined) throw new Error("Standing policy requires an explicit approved predecessor digest");
+  const initialization = bootstrap === undefined ? null : assertBootstrap(plan, { bootstrap, bucket: qiniu?.bucket, standingPolicy, expectedPreviousChannelDigest });
+  if (plan.origin === RELEASE_CDN_ORIGIN && plan.version === "1.2.41" && !initialization) {
+    throw new Error("First new Stable promotion requires explicit manual-transition bootstrap");
+  }
+  if (initialization && (plan.origin !== RELEASE_CDN_ORIGIN || plan.channelManifest.key !== initialization.key
+    || plan.channelManifest.url !== initialization.url || typeof qiniu.assertObjectAbsent !== "function")) {
+    throw new Error("Bootstrap requires the exact new Stable object and authenticated absence support");
+  }
+  if ((standingPolicy || plan.origin === RELEASE_CDN_ORIGIN) && !initialization && expectedPreviousChannelDigest === undefined) throw new Error("Promotion requires an explicit approved predecessor digest");
   if (expectedPreviousChannelDigest !== undefined && !/^[a-f0-9]{64}$/.test(expectedPreviousChannelDigest)) {
     throw new Error("Expected predecessor must be a SHA-256 digest");
   }
@@ -150,7 +161,8 @@ export async function promoteChannel(plan, evidence, {
       dryRun: true,
       lockKey,
       channelKey: plan.channelManifest.key,
-      overwrite: true,
+      overwrite: !initialization,
+      ...(initialization ? { expectedAbsent: initialization } : {}),
       cacheControl: metadataException ? null : { conditional: true, value: CHANNEL_MANIFEST_CACHE_CONTROL, verifiedBeforeRefresh: true },
       refreshUrl: plan.channelManifest.url,
       readBack: { sha256: plan.manifest.sha256, size: plan.manifest.size },
@@ -158,12 +170,16 @@ export async function promoteChannel(plan, evidence, {
   }
   if (!cacheException && !metadataException && typeof qiniu.prepareCacheControl === "function") await qiniu.prepareCacheControl();
 
+  // Re-run the immutable public gates at promotion for the new origin, not just persisted checks.
+  const immutableReadBack = plan.origin === RELEASE_CDN_ORIGIN ? await verifyCdn(plan, { qiniu, fetchImpl }) : null;
+
   const existingLock = await qiniu.stat(lockKey);
   if (existingLock) {
     throw new Error(`Promotion lock is held at ${lockKey}; putTime=${existingLock.putTime ?? "unknown"}. Inspect and use audited recover-lock if stale.`);
   }
   if (typeof qiniu.readContent !== "function") throw new Error("Qiniu content read-back operation is unavailable");
-  const previousChannelContent = await qiniu.readContent(plan.channelManifest.key);
+  const preLock = initialization ? await proveBootstrapAbsence(initialization, { qiniu, fetchImpl, now }) : null;
+  const previousChannelContent = initialization ? null : await qiniu.readContent(plan.channelManifest.key);
   const observedPreviousChannelDigest = previousChannelContent === null
     ? null
     : metadataForBuffer(previousChannelContent, plan.channelManifest.key).sha256;
@@ -176,7 +192,7 @@ export async function promoteChannel(plan, evidence, {
     platform: plan.platform,
     actor,
     acquiredAt: now().toISOString(),
-    expectedPreviousChannelDigest: observedPreviousChannelDigest,
+    ...(initialization ? { nonce: randomUUID(), expectedAbsent: initialization, preLock } : { expectedPreviousChannelDigest: observedPreviousChannelDigest }),
     candidateDigest: plan.manifest.sha256,
   };
   const lockContent = `${JSON.stringify(lockPayload)}\n`;
@@ -195,16 +211,21 @@ export async function promoteChannel(plan, evidence, {
       lockOwnershipLost = true;
       throw new Error(`Promotion lock ownership changed before channel overwrite: ${lockKey}`);
     }
-    const currentChannelContent = await qiniu.readContent(plan.channelManifest.key);
+    const postLock = initialization ? await proveBootstrapAbsence(initialization, { qiniu, fetchImpl, now }) : null;
+    const currentChannelContent = initialization ? null : await qiniu.readContent(plan.channelManifest.key);
     const currentChannelDigest = currentChannelContent === null
       ? null
       : metadataForBuffer(currentChannelContent, plan.channelManifest.key).sha256;
     if (currentChannelDigest !== observedPreviousChannelDigest) {
       throw new Error(`Channel manifest changed after lock acquisition; refusing overwrite: ${plan.channelManifest.key}`);
     }
+    if (initialization && !exactRemote(await qiniu.stat(lockKey), lockMetadata)) {
+      lockOwnershipLost = true;
+      throw new Error("Promotion lock ownership changed during bootstrap absence verification");
+    }
     onEvent({ type: "channel-upload", key: plan.channelManifest.key });
     channelMutated = true;
-    await qiniu.uploadContent(plan.channelManifest.key, plan.manifest.content, plan.manifest.mime, { overwrite: true });
+    await qiniu.uploadContent(plan.channelManifest.key, plan.manifest.content, plan.manifest.mime, { overwrite: !initialization });
     const channelRemote = await qiniu.stat(plan.channelManifest.key);
     if (!exactRemote(channelRemote, plan.manifest)) {
       throw new Error(`Qiniu stat mismatch for promoted channel manifest ${plan.channelManifest.key}`);
@@ -226,8 +247,10 @@ export async function promoteChannel(plan, evidence, {
         observedMutableCacheControl = { status: value === null ? "absent" : "observed", value };
         return response;
       };
-      const readBackResult = await readBack(plan.channelManifest.url, plan.manifest.sha256, { fetchImpl: standingPolicy ? observeFetch : fetchImpl, expectedSize: plan.manifest.size });
-      const result = { ...policyEvidence, ...(standingPolicy ? { observedMutableCacheControl, olderVersionCacheRisk: true } : {}), lockKey, channelKey: plan.channelManifest.key, channelObject: { size: channelRemote.size, etag: channelRemote.etag, verified: true }, readBack: readBackResult, lock: lockPayload, notarizationException, preCanaryException, metadataException };
+      const readBackResult = await readBack(plan.channelManifest.url, plan.manifest.sha256, { fetchImpl: standingPolicy ? observeFetch : fetchImpl, expectedSize: plan.manifest.size, origin: plan.origin });
+      const mutableCdn = plan.origin === RELEASE_CDN_ORIGIN ? await verifyCdnObject({ ...plan.manifest, ...plan.channelManifest }, { fetchImpl: observeFetch, origin: plan.origin }) : null;
+      if (mutableCdn) await verifyQiniuObjects([...plan.objects, plan.manifest], { qiniu });
+      const result = { ...policyEvidence, ...(standingPolicy ? { observedMutableCacheControl, olderVersionCacheRisk: true } : {}), ...(mutableCdn ? { mutableCdn, immutableReadBack } : {}), ...(initialization ? { bootstrap: { ...initialization, preLock, postLock, insertOnly: true } } : {}), lockKey, channelKey: plan.channelManifest.key, channelObject: { size: channelRemote.size, etag: channelRemote.etag, verified: true }, readBack: readBackResult, lock: lockPayload, notarizationException, preCanaryException, metadataException };
       await onPromotionVerified(result);
       channelVerified = true;
       return result;
@@ -251,7 +274,7 @@ export async function promoteChannel(plan, evidence, {
     onEvent({ type: "cdn-refresh", url: plan.channelManifest.url });
     await refresh([plan.channelManifest.url]);
     onEvent({ type: "channel-readback", url: plan.channelManifest.url });
-    const readBackResult = await readBack(plan.channelManifest.url, plan.manifest.sha256, { fetchImpl, expectedSize: plan.manifest.size });
+    const readBackResult = await readBack(plan.channelManifest.url, plan.manifest.sha256, { fetchImpl, expectedSize: plan.manifest.size, origin: plan.origin });
     const result = { lockKey, channelKey: plan.channelManifest.key, cacheControl, readBack: readBackResult, lock: lockPayload, notarizationException, preCanaryException };
     await onPromotionVerified(result);
     channelVerified = true;

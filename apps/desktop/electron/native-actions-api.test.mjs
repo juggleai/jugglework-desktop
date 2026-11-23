@@ -11,6 +11,7 @@ function harness(timeoutMs = 1_000) {
   const ipcMain = new EventEmitter();
   const api = createNativeActionsApi({ getWindow: () => window, timeoutMs });
   api.registerIpc(ipcMain);
+  /** @param {object} message @param {object} [sender] @param {object} [senderFrame] */
   const reply = (message, sender = webContents, senderFrame = mainFrame) =>
     ipcMain.emit("jugglework:native-actions:response", { sender, senderFrame }, message);
   return { api, sent, reply, webContents };
@@ -30,17 +31,17 @@ test("answers from a subframe or another window are ignored", async () => {
   const requestId = sent[0].value.requestId;
   reply({ requestId, ok: true, result: "forged" }, webContents, {});
   reply({ requestId, ok: true, result: "forged" }, {}, webContents.mainFrame);
-  await assert.rejects(pending, (error) => error.code === "native_action_timeout");
+  await assert.rejects(pending, { code: "native_action_timeout" });
 });
 
 test("a structured renderer failure keeps its code", async () => {
   const { api, sent, reply } = harness();
   const pending = api.request({ op: "product_tasks.list", scope: {}, params: {} });
   reply({ requestId: sent[0].value.requestId, ok: false, code: "native_actions_scope_changed", error: "账号或组织已切换" });
-  await assert.rejects(pending, (error) => error.code === "native_actions_scope_changed" && /切换/.test(error.message));
+  await assert.rejects(pending, { code: "native_actions_scope_changed", message: /切换/ });
 });
 
 test("no main window means unavailable, not a hang", async () => {
   const api = createNativeActionsApi({ getWindow: () => null });
-  await assert.rejects(api.request({ op: "contacts.search", scope: {}, params: {} }), (error) => error.code === "native_actions_unavailable");
+  await assert.rejects(api.request({ op: "contacts.search", scope: {}, params: {} }), { code: "native_actions_unavailable" });
 });

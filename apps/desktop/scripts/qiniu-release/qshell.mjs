@@ -81,6 +81,15 @@ export function createQshellAdapter({
   }
 
   return {
+    bucket,
+
+    async assertObjectAbsent(key) {
+      const result = await invoke(["stat", bucket, key]);
+      const detail = `${result.stdout}\n${result.stderr}`.trim();
+      const missing = `[E]  Status Failed, [${bucket}:${key}], Error:status object [${bucket}:${key}] status error:no such file or directory`;
+      if (result.status !== 1 || detail !== missing) throw new Error(`Authenticated qshell stat did not prove object absence for ${key}`);
+    },
+
     async prepareCacheControl() {
       requireMetadataClient();
     },

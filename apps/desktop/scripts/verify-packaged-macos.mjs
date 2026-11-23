@@ -29,6 +29,7 @@ const { verifyMacBunSignature } = require("./macos-bun-signature.cjs");
 const EXPECTED_APP_ID = "com.juggleai.jugglework";
 const EXPECTED_TEAM_ID = "H7PDHSK3C7";
 const EXPECTED_MAC_UPDATE_FEED = "https://downloads.jugglechat.cn/jugglework/releases/stable/mac";
+const NEW_MAC_UPDATE_FEED = "https://downloads.jugglework.cn/jugglework/releases/stable/mac";
 const LEGACY_ACTIVE_UPDATE_ORIGIN = "github.com/juggleai/jugglework-desktop/releases";
 const LOCAL_VERIFICATION_SCHEMA = "com.juggleai.jugglework.macos-local-verification";
 
@@ -162,7 +163,7 @@ export function assertPackagedUpdaterText(label, text) {
   }
 }
 
-export function verifyPackagedUpdaterConfiguration(appPath) {
+export function verifyPackagedUpdaterConfiguration(appPath, { migrated = false } = {}) {
   const resourcesPath = path.join(appPath, "Contents", "Resources");
   const updateConfigPath = path.join(resourcesPath, "app-update.yml");
   if (!existsSync(updateConfigPath)) fail(`Packaged app-update.yml not found: ${updateConfigPath}`);
@@ -172,8 +173,9 @@ export function verifyPackagedUpdaterConfiguration(appPath) {
     fail("app-update.yml must use the generic provider");
   }
   const configuredUrl = updateConfig.match(/^url:\s*(.+?)\s*$/m)?.[1]?.replace(/^['"]|['"]$/g, "");
-  if (configuredUrl !== EXPECTED_MAC_UPDATE_FEED) {
-    fail(`Expected macOS updater feed ${EXPECTED_MAC_UPDATE_FEED}, found ${configuredUrl || "<missing>"}`);
+  const expectedFeed = migrated ? NEW_MAC_UPDATE_FEED : EXPECTED_MAC_UPDATE_FEED;
+  if (configuredUrl !== expectedFeed) {
+    fail(`Expected macOS updater feed ${expectedFeed}, found ${configuredUrl || "<missing>"}`);
   }
 
   const asarPath = path.join(resourcesPath, "app.asar");
@@ -182,6 +184,11 @@ export function verifyPackagedUpdaterConfiguration(appPath) {
     .map((entry) => extractFile(asarPath, entry).toString("utf8"))
     .join("\n");
   assertPackagedUpdaterText("compiled Electron updater code", updaterSource);
+  if (migrated) {
+    const feedSource = extractFile(asarPath, "dist/runtime/desktop-update-feed.js").toString("utf8");
+    assertPackagedUpdaterText("compiled Electron feed resolver", feedSource);
+    if (!feedSource.includes(new URL(NEW_MAC_UPDATE_FEED).origin)) fail("Packaged runtime feed resolver is missing the new macOS update origin");
+  }
   if (!/allowDowngrade\s*=\s*false/.test(updaterSource)) {
     fail("compiled updater code must explicitly disable downgrade");
   }
@@ -390,13 +397,13 @@ function findSingleApp(directory) {
   return apps[0];
 }
 
-function verifyReleaseBundle(appPath, { expectedArch, expectedVersion }) {
+function verifyReleaseBundle(appPath, { expectedArch, expectedVersion, migrated }) {
   const metadata = verifyBundleMetadata(appPath, expectedVersion);
   const signature = verifyCodeSignature(appPath);
   const architecture = verifyMachOArchitectures(appPath, expectedArch);
   const toonFactory = verifyMacToonFactoryBundle(appPath, expectedArch);
   if (metadata.bundleIdentifier !== signature.identifier) fail("Bundle metadata and signed identifier disagree");
-  return { architecture, metadata, signature, toonFactory };
+  return { architecture, metadata, signature, toonFactory, ...(migrated ? { updater: verifyPackagedUpdaterConfiguration(appPath, { migrated }) } : {}) };
 }
 
 export function verifyZipBundle(zipPath, expected) {
@@ -571,11 +578,13 @@ export async function main() {
   const dmgNotarizationReceiptPath = readArg("--dmg-notarization-receipt");
   const architecture = verifyMachOArchitectures(appPath, requestedArch);
   const metadata = verifyBundleMetadata(appPath, version || null);
-  const updater = verifyPackagedUpdaterConfiguration(appPath);
+  const migrated = /^\d+\.\d+\.\d+$/.test(metadata.bundleVersion) && requestedArch === "arm64"
+    && metadata.bundleVersion.localeCompare("1.2.41", "en", { numeric: true }) >= 0;
+  const updater = verifyPackagedUpdaterConfiguration(appPath, { migrated });
   const signature = verifyCodeSignature(appPath);
   const toonFactory = verifyMacToonFactoryBundle(appPath, requestedArch);
   const trust = verifyAppleTrust(appPath);
-  const expectedContainer = { expectedArch: requestedArch, expectedVersion: version || null };
+  const expectedContainer = { expectedArch: requestedArch, expectedVersion: version || null, migrated };
   const zip = zipPath ? verifyZipBundle(zipPath, expectedContainer) : null;
   const dmg = dmgPath ? verifyDmgBundle(dmgPath, expectedContainer) : null;
   const dmgTrust = dmgPath ? verifyDmgTrust(dmgPath) : null;
@@ -610,6 +619,7 @@ export async function main() {
         dmgNotarizationReceipt,
       })
     : null;
+  if (localVerification && migrated) localVerification.packagedUpdater = { app: updater, zip: zip.updater, dmg: dmg.updater };
   const tray = verifyMacTrayResources(appPath);
   const opencodePlugins = verifyOpenCodePluginBundles(
     path.join(appPath, "Contents", "Resources", "opencode-plugins"),

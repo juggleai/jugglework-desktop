@@ -5,7 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parse as parseYaml } from "yaml";
 
-import { artifactKey, channelManifestKey, DEFAULT_BUCKET, publicUrl, versionManifestKey } from "./constants.mjs";
+import { artifactKey, channelManifestKey, LEGACY_BUCKET, publicUrl, versionManifestKey } from "./constants.mjs";
 import { assertNoSecrets, assertPromotionEvidence, assertRecordedPromotion, replaceEvidence, withEvidenceResults, writeEvidence } from "./evidence.mjs";
 import { normalizeArtifacts, validateMacManifest } from "./manifest.mjs";
 import { inspectArtifact, isCanonicalSha512, metadataForBuffer } from "./metadata.mjs";
@@ -485,12 +485,13 @@ export async function main({ argv = process.argv.slice(2), environment = process
   assertContinuationInputs(context);
   const candidate = await loadCandidate({ root, environment: context });
   if (argv[0] === "--validate-only") return;
+  if (!verificationOnly) throw new Error("Legacy continuation is read-only; use the new release route for promotion");
   if (!environment.RUNNER_TEMP) throw new Error("RUNNER_TEMP is required");
   // The workflow creates this private directory before invoking the continuation.
   const directory = path.join(environment.RUNNER_TEMP, "qiniu-promotion-continuation");
   await continueRelease({ ...candidate, directory, verificationOnly,
     actor: `github-${environment.GITHUB_RUN_ID}-${environment.GITHUB_RUN_ATTEMPT}`,
-    qiniu: adapter({ bucket: DEFAULT_BUCKET }),
+    qiniu: adapter({ bucket: LEGACY_BUCKET }),
   });
 }
 

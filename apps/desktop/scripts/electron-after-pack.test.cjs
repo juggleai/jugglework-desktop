@@ -265,20 +265,24 @@ test("verifies packaged macOS tray template images", (t) => {
   );
 });
 
-test("writes platform-specific generic packaged update configuration", (t) => {
+test("writes platform-specific generic packaged update configuration", async (t) => {
   const cases = [
-    ["darwin", "mac"],
+    ["darwin", "mac", 1, "1.2.41"],
+    ["darwin", "mac", 3, "1.2.40"],
+    ["darwin", "mac", 3, "1.2.41-alpha.1"],
+    ["darwin", "mac", 3, "1.2.41", "jugglework"],
     ["linux", "linux"],
     ["win32", "windows"],
   ];
-  for (const [platform, segment] of cases) {
+  for (const [platform, segment, arch, version, domain = "jugglechat"] of cases) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), `jugglework-update-config-${platform}-`));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const context = platform === "darwin"
       ? {
           appOutDir: root,
           electronPlatformName: platform,
-          packager: { appInfo: { productFilename: "JuggleWork" } },
+          arch,
+          packager: { appInfo: { productFilename: "JuggleWork", version } },
         }
       : {
           appOutDir: root,
@@ -288,18 +292,18 @@ test("writes platform-specific generic packaged update configuration", (t) => {
     if (platform === "darwin") {
       fs.mkdirSync(path.join(root, "JuggleWork.app", "Contents", "Resources"), { recursive: true });
     }
-    writePackagedUpdateConfiguration(context);
+    await writePackagedUpdateConfiguration(context);
     const resources = platform === "darwin"
       ? path.join(root, "JuggleWork.app", "Contents", "Resources")
       : path.join(root, "resources");
     const content = fs.readFileSync(path.join(resources, "app-update.yml"), "utf8");
     assert.match(content, /^provider: generic$/m);
-    assert.match(content, new RegExp(`url: https://downloads\\.jugglechat\\.cn/jugglework/releases/stable/${segment}`));
+    assert.ok(content.includes(`url: https://downloads.${domain}.cn/jugglework/releases/stable/${segment}\n`));
     assert.doesNotMatch(content, /github\.com/);
   }
 });
 
-test("injects the explicit Windows publisher allowlist without guessing a value", (t) => {
+test("injects the explicit Windows publisher allowlist without guessing a value", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "jugglework-update-publishers-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const context = {
@@ -309,7 +313,7 @@ test("injects the explicit Windows publisher allowlist without guessing a value"
   };
   const publishers = ["CN=Example Publisher, O=Example Corp", "CN=Rotated Publisher"];
 
-  const result = writePackagedUpdateConfiguration(context, {
+  const result = await writePackagedUpdateConfiguration(context, {
     JUGGLEWORK_WINDOWS_PUBLISHER_NAMES: JSON.stringify(publishers),
   });
   const content = fs.readFileSync(path.join(root, "resources", "app-update.yml"), "utf8");
@@ -319,7 +323,7 @@ test("injects the explicit Windows publisher allowlist without guessing a value"
   assert.deepEqual(windowsPublisherNames({ JUGGLEWORK_WINDOWS_PUBLISHER_NAMES: publishers[0] }), [publishers[0]]);
 });
 
-test("omits Windows publisherName for ordinary packaging and rejects an invalid configured allowlist", (t) => {
+test("omits Windows publisherName for ordinary packaging and rejects an invalid configured allowlist", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "jugglework-update-no-publisher-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const context = {
@@ -328,13 +332,13 @@ test("omits Windows publisherName for ordinary packaging and rejects an invalid 
     packager: { appInfo: { productFilename: "JuggleWork" } },
   };
 
-  writePackagedUpdateConfiguration(context, {});
+  await writePackagedUpdateConfiguration(context, {});
   assert.doesNotMatch(fs.readFileSync(path.join(root, "resources", "app-update.yml"), "utf8"), /publisherName/);
-  assert.throws(
+  await assert.rejects(
     () => writePackagedUpdateConfiguration(context, { JUGGLEWORK_WINDOWS_PUBLISHER_NAMES: '["Publisher", ""]' }),
     /must contain one or more non-empty publisher names/,
   );
-  assert.throws(
+  await assert.rejects(
     () => writePackagedUpdateConfiguration(context, { JUGGLEWORK_WINDOWS_PUBLISHER_NAMES: "[]" }),
     /must contain one or more non-empty publisher names/,
   );

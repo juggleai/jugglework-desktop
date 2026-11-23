@@ -520,8 +520,8 @@ test("verify-only requires exact boolean pairing and CLI agreement, retaining le
   }
   await assert.rejects(main({ argv: ["--verify-only"], environment: environment(), ...dependencies }));
   assert.deepEqual(calls, []);
-  await main({ argv: [], environment: { ...environment(), RUNNER_TEMP: "/private/unused" }, ...dependencies });
-  assert.deepEqual(calls.at(-1), ["continue", false]);
+  await assert.rejects(main({ argv: [], environment: { ...environment(), RUNNER_TEMP: "/private/unused" }, ...dependencies }), /Legacy continuation is read-only/);
+  assert.deepEqual(calls.map(([name]) => name), ["load"]);
 });
 
 test("bounded subprocess diagnostics include only fixed binary/flags, exit and allowlisted codes", () => {

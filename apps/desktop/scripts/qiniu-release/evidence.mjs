@@ -3,12 +3,14 @@ import path from "node:path";
 import { STANDING_POLICY_SCOPE, assertStandingPolicy, assertStandingPolicyException, standingPolicyEvidence } from "./standing-policy.mjs";
 
 import {
+  RELEASE_CDN_ORIGIN,
   CDN_ORIGIN,
   assertSemverVersion,
   assertWindowsReleaseVersion,
   compareSemver,
   normalizeReleaseArchitectures,
 } from "./constants.mjs";
+import { assertBootstrap } from "./bootstrap.mjs";
 
 export const EVIDENCE_SCHEMA = "com.juggleai.jugglework.qiniu-release-evidence";
 export const EVIDENCE_SCHEMA_VERSION = 2;
@@ -122,6 +124,15 @@ function assertMacLocalVerification(plan, verification, { stable }) {
     throw new Error("Local verification architectures do not match the release plan");
   }
   timestamp(verification.verifiedAt, "Local verification verifiedAt");
+  if (plan.origin === RELEASE_CDN_ORIGIN) {
+    const feed = new URL("stable/mac", `${RELEASE_CDN_ORIGIN}/jugglework/releases/`).href;
+    for (const variant of ["app", "zip", "dmg"]) {
+      const updater = verification.packagedUpdater?.[variant];
+      if (updater?.provider !== "generic" || updater.url !== feed || updater.monotonic !== true) {
+        throw new Error(`Local verification missing new Stable updater evidence for ${variant}`);
+      }
+    }
+  }
   if (verification.identity?.bundleIdentifier !== EXPECTED_BUNDLE_ID || verification.identity?.teamIdentifier !== EXPECTED_TEAM_ID) {
     throw new Error("Local verification signing identities do not match the required bundle and Team IDs");
   }
@@ -282,7 +293,8 @@ function assertMacCanary(plan, canary) {
   for (const [name, expected] of Object.entries(expectedChecks)) {
     if (canary.checks?.[name] !== expected) throw new Error(`Canary check ${name} is missing or failed`);
   }
-  if (canary.network?.manifestOrigin !== CDN_ORIGIN || canary.network?.artifactOrigin !== CDN_ORIGIN) {
+  const origin = plan.origin ?? CDN_ORIGIN;
+  if (canary.network?.manifestOrigin !== origin || canary.network?.artifactOrigin !== origin) {
     throw new Error("Canary did not verify the required Qiniu CDN origins");
   }
   return canary;
@@ -442,6 +454,28 @@ export function assertRecordedPromotion(plan, evidence) {
   const cacheException = promotion?.cacheException;
   const metadataException = promotion?.metadataException;
   const standing = metadataException?.scope === STANDING_POLICY_SCOPE;
+  if (plan.origin === RELEASE_CDN_ORIGIN && plan.version === "1.2.41" && promotion?.bootstrap === undefined) {
+    throw new Error("Recorded first new Stable promotion requires bootstrap evidence");
+  }
+  if (promotion?.bootstrap !== undefined) {
+    const record = promotion.bootstrap;
+    const coordinates = assertBootstrap(plan, { bootstrap: record?.mode, bucket: record?.bucket,
+      standingPolicy: standing ? STANDING_POLICY_SCOPE : "" });
+    if (plan.origin !== RELEASE_CDN_ORIGIN || record.key !== coordinates.key || record.url !== coordinates.url
+      || record.insertOnly !== true || Object.hasOwn(promotion, "expectedPreviousChannelDigest")
+      || !promotion.lock || Object.hasOwn(promotion.lock, "expectedPreviousChannelDigest")) {
+      throw new Error("Recorded bootstrap does not match the authorized new Stable route");
+    }
+    for (const proof of [record.preLock, record.postLock]) {
+      if (proof?.qiniu !== "object_absent" || proof.httpStatus !== 404) throw new Error("Recorded bootstrap is missing absence proof");
+      timestamp(proof.checkedAt, "Bootstrap absence checkedAt");
+    }
+  }
+  if (standing && plan.origin === RELEASE_CDN_ORIGIN) {
+    const cdn = promotion.mutableCdn;
+    if (cdn?.url !== plan.channelManifest.url || cdn.range !== true || cdn.size !== plan.manifest.size
+      || cdn.sha256 !== plan.manifest.sha256 || cdn.sha512 !== plan.manifest.sha512) throw new Error("Recorded promotion is missing exact mutable CDN verification");
+  }
   if (standing) {
     assertStandingPolicyException(plan, metadataException);
     const expected = standingPolicyEvidence(plan, evidence, { standingPolicy: STANDING_POLICY_SCOPE,

@@ -62,10 +62,13 @@ test("subscription IDs remain private; early unsubscribe cancels Main after invo
 });
 
 test("file windows receive catalog invalidation but cannot publish it", () => {
-  let bridge;
+  /** @type {{ bridge?: { fileWindow: { onProviderCatalogChanged: (callback: () => void) => () => void }, invokeDesktop: (name: string) => unknown } }} */
+  const exposed = {};
   const ipc = new EventEmitter();
   const source = readFileSync(new URL("./file-window-preload.mjs", import.meta.url), "utf8").replace(/^import .* from "electron";$/m, "");
-  vm.runInNewContext(source, { process: { platform: "darwin" }, contextBridge: { exposeInMainWorld(_name, value) { bridge = value; } }, ipcRenderer: ipc });
+  vm.runInNewContext(source, { process: { platform: "darwin" }, contextBridge: { exposeInMainWorld(_name, value) { exposed.bridge = value; } }, ipcRenderer: ipc });
+  const { bridge } = exposed;
+  assert.ok(bridge, "preload exposes its bridge");
   let received = 0;
   const unsubscribe = bridge.fileWindow.onProviderCatalogChanged(() => received++);
   ipc.emit("jugglework:file-window:provider-catalog-changed", {});

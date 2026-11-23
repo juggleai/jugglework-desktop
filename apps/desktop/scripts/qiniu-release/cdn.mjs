@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { CDN_ORIGIN } from "./constants.mjs";
+import { CDN_ORIGIN, RELEASE_CDN_ORIGIN } from "./constants.mjs";
 
 const failures = new WeakMap();
 function cdnError(message, check, status) {
@@ -27,10 +27,10 @@ function requiredContentLength(response, expected, label) {
   }
 }
 
-export async function verifyCdnObject(object, { fetchImpl = globalThis.fetch, onCheck = () => {} } = {}) {
+export async function verifyCdnObject(object, { fetchImpl = globalThis.fetch, onCheck = () => {}, origin = CDN_ORIGIN, immutable = false } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("CDN fetch operation is unavailable");
   const url = new URL(object.url);
-  if (url.protocol !== "https:" || url.origin !== CDN_ORIGIN) throw new Error(`Unapproved CDN URL: ${object.url}`);
+  if (![CDN_ORIGIN, RELEASE_CDN_ORIGIN].includes(origin) || url.origin !== origin) throw new Error(`Unapproved CDN URL: ${object.url}`);
 
   onCheck("head");
   let metadataResponse = await fetchImpl(object.url, { method: "HEAD", redirect: "error" });
@@ -58,6 +58,11 @@ export async function verifyCdnObject(object, { fetchImpl = globalThis.fetch, on
   onCheck("full");
   const full = await fetchImpl(object.url, { method: "GET", redirect: "error" });
   assertResponse(full, `Full GET ${object.key}`);
+  const cacheControl = full.headers.get("cache-control");
+  const maxAge = cacheControl?.match(/(?:^|,)\s*max-age\s*=\s*(\d+)\s*(?:,|$)/i)?.[1];
+  if (immutable && (!maxAge || Number(maxAge) < 86400 || /(?:^|,)\s*(?:no-cache|no-store|private)\b/i.test(cacheControl))) {
+    throw new Error(`CDN immutable Cache-Control is not long-lived for ${object.key}`);
+  }
   requiredContentLength(full, object.size, `CDN full response for ${object.key}`);
   const body = Buffer.from(await full.arrayBuffer());
   const sha512 = createHash("sha512").update(body).digest("base64");
@@ -76,12 +81,14 @@ export async function verifyCdnObject(object, { fetchImpl = globalThis.fetch, on
     sha256,
     sha512,
     checkedAt: new Date().toISOString(),
+    ...(immutable ? { cacheControl } : {}),
   };
 }
 
 export async function readBackDigest(url, expectedSha256, {
   fetchImpl = globalThis.fetch,
   expectedSize,
+  origin = CDN_ORIGIN,
   attempts = 8,
   intervalMs = 1_000,
   sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
@@ -90,7 +97,7 @@ export async function readBackDigest(url, expectedSha256, {
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 60) throw new Error("Read-back attempts must be between 1 and 60");
   if (!Number.isSafeInteger(intervalMs) || intervalMs < 0 || intervalMs > 60_000) throw new Error("Read-back interval must be between 0 and 60000ms");
   const parsed = new URL(url);
-  if (parsed.protocol !== "https:" || parsed.origin !== CDN_ORIGIN) throw new Error(`Unapproved CDN URL: ${url}`);
+  if (![CDN_ORIGIN, RELEASE_CDN_ORIGIN].includes(origin) || parsed.origin !== origin) throw new Error(`Unapproved CDN URL: ${url}`);
   let last = "no response";
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {

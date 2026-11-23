@@ -22,11 +22,11 @@ describe("macOS architecture replacement download", () => {
       arch: "arm64",
       fetchImpl: async (url, options) => {
         requests.push({ url, options });
-        return new Response(manifest, { status: 200 });
+        return new Response(manifest.replaceAll("downloads.jugglechat.cn", "downloads.jugglework.cn").replaceAll("1.2.15", "1.2.41"), { status: 200 });
       },
     });
-    assert.equal(result, "https://downloads.jugglechat.cn/jugglework/releases/v1.2.15/mac/arm64/jugglework-mac-arm64-1.2.15.dmg");
-    assert.equal(requests[0]?.url, "https://downloads.jugglechat.cn/jugglework/releases/stable/mac/latest-mac.yml");
+    assert.equal(result, "https://downloads.jugglework.cn/jugglework/releases/v1.2.41/mac/arm64/jugglework-mac-arm64-1.2.41.dmg");
+    assert.equal(requests[0]?.url, "https://downloads.jugglework.cn/jugglework/releases/stable/mac/latest-mac.yml");
   });
 
   it("returns unavailable for a missing feed or compatible DMG", async () => {

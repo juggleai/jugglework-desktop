@@ -4,6 +4,9 @@ import { parse as parseYaml } from "yaml";
 
 import {
   CHANNEL_MANIFEST_CACHE_CONTROL,
+  CDN_ORIGIN,
+  RELEASE_CDN_ORIGIN,
+  usesNewReleaseOrigin,
   artifactKey,
   assertChannel,
   assertPlatform,
@@ -39,6 +42,9 @@ export async function createReleasePlan({
   assertPlatform(platform);
   if (platform === "windows") assertWindowsReleaseVersion(version);
   const normalizedArchitectures = normalizeReleaseArchitectures(architectures, platform);
+  const origin = usesNewReleaseOrigin({ version, channel, platform, architectures: normalizedArchitectures })
+    ? RELEASE_CDN_ORIGIN : CDN_ORIGIN;
+  const urlFor = (key) => publicUrl(key, origin);
   if (!dist) throw new Error("Distribution directory is required");
   const resolvedDist = path.resolve(dist);
 
@@ -57,7 +63,7 @@ export async function createReleasePlan({
         name,
         path: localPath,
         key,
-        url: publicUrl(key),
+        url: urlFor(key),
         ...metadata,
       });
     }
@@ -77,6 +83,7 @@ export async function createReleasePlan({
     version,
     platform,
     artifacts,
+    origin,
     primaryArch: normalizedArchitectures.includes("universal") ? "universal" : normalizedArchitectures[0],
     releaseDate,
     stagingManifests,
@@ -93,7 +100,7 @@ export async function createReleasePlan({
     type: "manifest",
     path: persistManifest ? manifestPath : null,
     key: manifestKey,
-    url: publicUrl(manifestKey),
+    url: urlFor(manifestKey),
     content: normalized.yaml,
     ...metadataForBuffer(manifestBytes, manifestName),
   };
@@ -102,12 +109,13 @@ export async function createReleasePlan({
     channel,
     platform,
     architectures: normalizedArchitectures,
+    origin,
     dist: resolvedDist,
     objects: normalized.artifacts,
     manifest,
     channelManifest: {
       key: channelManifestKey(channel, platform),
-      url: publicUrl(channelManifestKey(channel, platform)),
+      url: urlFor(channelManifestKey(channel, platform)),
     },
     actions: [
       ...(platform === "windows" ? ["require passed Windows local verification evidence"] : []),
@@ -115,9 +123,11 @@ export async function createReleasePlan({
       `upload immutable ${manifest.key}`,
       `verify CDN ${manifest.url}`,
       `acquire promotion lock for ${channel}/${platform}`,
-      `overwrite channel manifest ${channelManifestKey(channel, platform)}`,
+      origin === RELEASE_CDN_ORIGIN && version === "1.2.41"
+        ? `initialize ${channelManifestKey(channel, platform)} insert-only with explicit bootstrap and verified absence`
+        : `overwrite channel manifest ${channelManifestKey(channel, platform)}`,
       `conditionally set and verify channel Cache-Control ${CHANNEL_MANIFEST_CACHE_CONTROL}`,
-      `refresh CDN ${publicUrl(channelManifestKey(channel, platform))}`,
+      `refresh CDN ${urlFor(channelManifestKey(channel, platform))}`,
       "verify channel digest convergence",
       "release promotion lock",
     ],

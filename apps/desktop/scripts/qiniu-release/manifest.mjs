@@ -55,7 +55,7 @@ function validateMetadata(metadata, label) {
   }
 }
 
-export function normalizeArtifacts({ version, platform = "mac", artifacts }) {
+export function normalizeArtifacts({ version, platform = "mac", artifacts, origin = CDN_ORIGIN }) {
   assertSemverVersion(version);
   assertPlatform(platform);
   if (!Array.isArray(artifacts) || artifacts.length === 0) throw new Error("No release artifacts supplied");
@@ -78,8 +78,8 @@ export function normalizeArtifacts({ version, platform = "mac", artifacts }) {
     const key = artifact.key ?? artifactKey(version, arch, name, platform);
     const expectedKey = artifactKey(version, arch, name, platform);
     if (key !== expectedKey) throw new Error(`Mutable or invalid artifact key: ${key}`);
-    const url = artifact.url ?? publicUrl(key);
-    if (url !== publicUrl(expectedKey)) throw new Error(`Wrong CDN origin or mutable artifact URL: ${url}`);
+    const url = artifact.url ?? publicUrl(key, origin);
+    if (url !== publicUrl(expectedKey, origin)) throw new Error(`Wrong CDN origin or mutable artifact URL: ${url}`);
     return { ...artifact, path: localPath, name, arch, type, key, url };
   });
 
@@ -134,13 +134,13 @@ export function normalizeMacManifest(input) {
   return { manifest, yaml: serializeMacManifest(manifest), artifacts };
 }
 
-export function validateMacManifest({ version, platform, manifest, artifacts, primaryArch }) {
+export function validateMacManifest({ version, platform, manifest, artifacts, primaryArch, origin = CDN_ORIGIN }) {
   assertSemverVersion(version);
   if (assertPlatform(platform) !== "mac") throw new Error(`macOS manifest requires mac platform, received ${platform}`);
   if (!manifest || manifest.version !== version) {
     throw new Error(`Manifest version mismatch: expected ${version}, received ${manifest?.version ?? "<missing>"}`);
   }
-  const normalized = normalizeArtifacts({ version, platform, artifacts });
+  const normalized = normalizeArtifacts({ version, platform, artifacts, origin });
   if (!Array.isArray(manifest.files) || manifest.files.length === 0) throw new Error("Manifest files are missing");
   const expectedFiles = normalized.filter((item) => item.type === "zip" || item.type === "dmg");
   if (manifest.files.length !== expectedFiles.length) throw new Error("Manifest file inventory is incomplete");
@@ -154,7 +154,7 @@ export function validateMacManifest({ version, platform, manifest, artifacts, pr
     } catch {
       throw new Error(`Invalid manifest URL: ${file.url}`);
     }
-    if (parsed.origin !== CDN_ORIGIN || parsed.protocol !== "https:") throw new Error(`Wrong CDN origin: ${file.url}`);
+    if (parsed.origin !== origin || parsed.protocol !== "https:") throw new Error(`Wrong CDN origin: ${file.url}`);
     if (parsed.search || parsed.hash || /\/(stable|alpha)\//.test(parsed.pathname)) {
       throw new Error(`Mutable manifest path: ${file.url}`);
     }

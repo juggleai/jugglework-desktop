@@ -4,6 +4,16 @@ Define a reproducible and auditable release process that publishes immutable des
 
 ## ADDED Requirements
 
+### Requirement: First new Stable feed is initialized only after proven absence
+The macOS arm64 Stable route starting at `1.2.41` SHALL use bucket `jugglework` and HTTPS origin `downloads.jugglework.cn`. Legacy publication routes SHALL remain read-only in the current publisher.
+
+#### Scenario: Approved manual transition to Stable 1.2.41
+- **WHEN** the operator explicitly selects `manual-transition-1.2.41` with the existing standing policy and both independent reasons
+- **THEN** the publisher SHALL prove authenticated Qiniu object absence and the exact public Qiniu HTTP 404 before and after taking the promotion lock, recheck lock ownership, and create the channel object insert-only
+- **AND** an existing object, unexpected error or response, conflicting predecessor digest, lock loss or insert collision SHALL stop promotion
+- **AND** evidence SHALL record both absence checks rather than a predecessor digest, and retain immutable-cache, Qiniu size/ETag, CDN refresh, public Range and full digest verification
+- **AND** the standing policy SHALL waive only its existing canary and mutable Cache-Control actions; other versions SHALL continue to require a real expected predecessor digest
+
 ### Requirement: Stable macOS ARM64 standing policy is explicitly selected per release
 Releases selecting `stable-mac-arm64-standing-policy` version 1 SHALL use legal exact stable macOS ARM64 versions at or above `1.2.35`, independent audited reasons and durable release-bound evidence.
 
@@ -57,7 +67,7 @@ A macOS release SHALL publish an updater ZIP, manual-install DMG, generated bloc
 
 #### Scenario: Manifest references release files
 - **WHEN** the version manifest is finalized
-- **THEN** every URL is an absolute HTTPS URL under `downloads.jugglechat.cn`
+- **THEN** every URL is absolute HTTPS under the release route's exact approved origin (`downloads.jugglework.cn` for macOS arm64 Stable starting at `1.2.41`, legacy origin for historical evidence)
 - **AND** every URL targets the immutable version directory rather than a mutable channel directory
 
 ### Requirement: Publication is ordered and serialized
@@ -332,7 +342,7 @@ A rollout-eligible Windows version SHALL publish Authenticode-signed x64 and arm
 - **AND** the stable Windows channel is not promoted
 
 ### Requirement: Promotion continuation provides read-only staged diagnostics
-The committed macOS continuation SHALL provide read-only `--verify-only` CLI and default-false `verification_only` workflow modes requiring `promote=false`. It SHALL preserve candidate, package trust and immutable/CDN gates and return before promotion without lock access, remote writes or CDN refresh. Normal continuation SHALL retain existing exact-version exceptions and promotion gates.
+The historical macOS continuation SHALL provide read-only `--verify-only` CLI and default-false `verification_only` workflow modes requiring `promote=false`. It SHALL preserve candidate, package trust and immutable/CDN gates and return before promotion without lock access, remote writes or CDN refresh. It SHALL reject attempts to promote through the legacy route. Historical exception and promotion evidence remains valid only within its recorded scope.
 
 #### Scenario: Exact macOS ARM64 1.2.33 continuation
 - **WHEN** a trusted dev promotion-only dispatch selects version 1.2.33

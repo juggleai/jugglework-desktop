@@ -429,7 +429,7 @@ describe("updater IPC hardening", () => {
             : "latest-linux.yml";
       assert.equal(
         result.manifestUrl,
-        `https://downloads.jugglechat.cn/jugglework/releases/stable/${platformPath}/${manifestName}`,
+        `https://downloads.${process.platform === "darwin" && process.arch === "arm64" ? "jugglework" : "jugglechat"}.cn/jugglework/releases/stable/${platformPath}/${manifestName}`,
       );
       assert.match(result.reason, new RegExp(result.manifestUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     } finally {

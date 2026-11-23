@@ -142,9 +142,16 @@ function packageBundledOfficeResources(context) {
   });
 }
 
-function writePackagedUpdateConfiguration(context, environment = process.env) {
+async function writePackagedUpdateConfiguration(context, environment = process.env) {
   const resourcesPath = resolvePackagedResourcesPath(context);
-  const url = updateFeedByPlatform[context.electronPlatformName];
+  // Static builder config is shared with Intel. Select the final signed config by package target.
+  let url = updateFeedByPlatform[context.electronPlatformName];
+  if (context.electronPlatformName === "darwin" && normalizeArch(context.arch) === "arm64") {
+    const { isNewMacStableVersion, resolveDesktopUpdateFeed } = await import("../dist/runtime/desktop-update-feed.js");
+    if (isNewMacStableVersion(context.packager.appInfo.version)) {
+      url = resolveDesktopUpdateFeed({ platform: "mac", arch: "arm64", channel: "stable" }).feedUrl;
+    }
+  }
   if (!resourcesPath || !url) {
     throw new Error(`Cannot resolve packaged updater configuration for ${context.electronPlatformName || "unknown platform"}`);
   }
@@ -386,7 +393,7 @@ async function runAfterPack(context, dependencies = {}) {
   await verifyUiControlMcpRuntime(context);
   verifyMacTrayResources(context);
   verifyRenderer(context);
-  writeUpdateConfiguration(context);
+  await writeUpdateConfiguration(context);
   packageOfficeResources(context);
 
   const triple = targetTriple(context.electronPlatformName, context.arch);

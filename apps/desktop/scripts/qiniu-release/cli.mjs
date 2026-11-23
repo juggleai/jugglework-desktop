@@ -5,6 +5,8 @@ import { pathToFileURL } from "node:url";
 
 import {
   DEFAULT_BUCKET,
+  LEGACY_BUCKET,
+  usesNewReleaseOrigin,
   assertPlatform,
   assertReleaseVersion,
   assertWindowsReleaseVersion,
@@ -26,6 +28,7 @@ import { createReleasePlan, printablePlan } from "./plan.mjs";
 import { createQshellAdapter } from "./qshell.mjs";
 import { promoteChannel, recoverPromotionLock, uploadVersion, verifyCdn } from "./workflow.mjs";
 import { assertStandingPolicy } from "./standing-policy.mjs";
+import { assertBootstrap } from "./bootstrap.mjs";
 
 const COMMANDS = new Set([
   "plan",
@@ -41,7 +44,7 @@ const COMMANDS = new Set([
 const OPTIONS = new Set([
   "version", "channel", "platform", "arch", "dist", "evidence", "bucket", "releaseDate", "actor", "reason",
   "audit", "commit", "localVerification", "canary", "notarizationExceptionReason", "preCanaryExceptionReason", "cacheExceptionReason", "metadataExceptionReason",
-  "standingPolicy", "expectedPreviousChannelDigest",
+  "standingPolicy", "expectedPreviousChannelDigest", "bootstrap",
 ]);
 
 export function parseArguments(argv) {
@@ -76,6 +79,13 @@ export function parseArguments(argv) {
   if (options.platform === "windows") assertWindowsReleaseVersion(options.version);
   options.architectures = normalizeReleaseArchitectures(architectures, options.platform);
   if (options.standingPolicy) assertStandingPolicy(options, options);
+  const migrated = usesNewReleaseOrigin(options);
+  const bucket = migrated ? DEFAULT_BUCKET : LEGACY_BUCKET;
+  if (options.bucket !== undefined && options.bucket !== bucket) throw new Error("Bucket does not match the release route");
+  if (options.bootstrap !== undefined) {
+    if (command !== "promote-channel") throw new Error("Bootstrap is only accepted by promote-channel");
+    assertBootstrap(options, { ...options, bucket });
+  }
   if (command === "build" && commandArgv.length === 0) throw new Error("build requires a command argv after --");
   if (command === "recover-lock" && (!options.audit || !options.reason)) {
     throw new Error("recover-lock requires --reason TEXT and --audit PATH");
@@ -131,7 +141,11 @@ export async function runCli(argv, {
     output(result);
     return result;
   }
-  const qiniu = injectedQiniu ?? createQshellAdapter({ bucket: options.bucket ?? DEFAULT_BUCKET, run });
+  const migrated = usesNewReleaseOrigin(options);
+  if (!migrated && !options.dryRun && ["upload-version", "resume", "promote-channel", "recover-lock"].includes(command)) {
+    throw new Error("Legacy release route is read-only; migrate this target before publishing");
+  }
+  const qiniu = injectedQiniu ?? createQshellAdapter({ bucket: migrated ? DEFAULT_BUCKET : LEGACY_BUCKET, run });
   if (command === "recover-lock") {
     const result = await recoverPromotionLock({
       channel: options.channel,
@@ -170,10 +184,10 @@ export async function runCli(argv, {
     return result;
   }
   if (command === "upload-version" || command === "resume") {
-    const evidence = plan.platform === "windows" ? await loadEvidence(options.evidence, read) : null;
+    const evidence = (plan.platform === "windows" || (migrated && !options.dryRun)) ? await loadEvidence(options.evidence, read) : null;
     if (evidence) {
       assertEvidenceMatchesPlan(plan, evidence);
-      assertLocalVerification(plan, evidence.localVerification, { stable: false });
+      assertLocalVerification(plan, evidence.localVerification, { stable: migrated });
     }
     const checks = await uploadVersion(plan, { qiniu, evidence, resume: command === "resume", dryRun: options.dryRun });
     if (!options.dryRun) {
@@ -202,6 +216,7 @@ export async function runCli(argv, {
   }
   const evidence = await loadEvidence(options.evidence, read);
   if (command === "promote-channel") {
+    if (options.canary) evidence.canary = assertCanary(plan, await loadJson(options.canary, "canary verification", read));
     const result = await promoteChannel(plan, evidence, {
       qiniu,
       refresh: refresh ?? qiniu.refresh?.bind(qiniu),
@@ -215,6 +230,7 @@ export async function runCli(argv, {
       metadataExceptionReason: options.metadataExceptionReason,
       standingPolicy: options.standingPolicy,
       expectedPreviousChannelDigest: options.expectedPreviousChannelDigest,
+      bootstrap: options.bootstrap,
       now,
       onPromotionVerified: options.dryRun ? undefined : async (verified) => {
         const persisted = withEvidenceResults(evidence, {
@@ -229,6 +245,10 @@ export async function runCli(argv, {
             cacheException: verified.cacheException,
             metadataException: verified.metadataException,
             channelObject: verified.channelObject,
+            ...(migrated ? { lockKey: verified.lockKey, lock: verified.lock } : {}),
+            ...(verified.bootstrap ? { bootstrap: verified.bootstrap } : {}),
+            ...(verified.mutableCdn ? { mutableCdn: verified.mutableCdn } : {}),
+            ...(verified.immutableReadBack ? { immutableReadBack: verified.immutableReadBack } : {}),
             ...(verified.releasePolicy ? { observedMutableCacheControl: verified.observedMutableCacheControl, olderVersionCacheRisk: verified.olderVersionCacheRisk } : {}),
             promotedAt: now().toISOString(),
           } },
@@ -245,8 +265,9 @@ export async function runCli(argv, {
 }
 
 export function usage() {
+  const bootstrapUsage = "Manual-transition bootstrap: promote-channel --bootstrap manual-transition-1.2.41 (standing policy and its two reasons still required; mutually exclusive with --expected-previous-channel-digest). Legacy release routes are read-only.\n\n";
   const standingUsage = "Standing policy is opt-in per release: --standing-policy stable-mac-arm64-standing-policy --pre-canary-exception-reason TEXT --metadata-exception-reason TEXT --expected-previous-channel-digest SHA256. Only exact stable/mac/arm64 >=1.2.35, including 1.2.36, is eligible; two independent trimmed reasons >=20 characters are required. Canary is waived only when absent; supplied failed/mismatched evidence is rejected. Only mutable Cache-Control mutation/validation is skipped; notarization, lock/predecessor/race/size/ETag, immutable/full public digests, CDN refresh and public read-back remain required.\n\n";
-  return standingUsage + historicalUsage().replace("Future 1.2.35 is not authorized", "Without explicit standing policy, 1.2.35 and later are not authorized by historical scopes");
+  return bootstrapUsage + standingUsage + historicalUsage().replace("Future 1.2.35 is not authorized", "Without explicit standing policy, 1.2.35 and later are not authorized by historical scopes");
 }
 
 function historicalUsage() {

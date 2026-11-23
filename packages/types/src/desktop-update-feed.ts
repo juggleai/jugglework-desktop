@@ -1,5 +1,12 @@
 export const DESKTOP_UPDATE_ROOT = "https://downloads.jugglechat.cn/jugglework/releases";
 export const DESKTOP_UPDATE_ORIGIN = "https://downloads.jugglechat.cn";
+export const MAC_ARM64_STABLE_UPDATE_ORIGIN = "https://downloads.jugglework.cn";
+
+export function isNewMacStableVersion(version: unknown): boolean {
+  if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/.test(version)) return false;
+  const [major, minor, patch] = version.split(".").map(Number);
+  return major > 1 || (major === 1 && (minor > 2 || (minor === 2 && patch >= 41)));
+}
 
 export type DesktopUpdatePlatform = "mac" | "windows" | "linux";
 export type DesktopUpdateChannel = "stable" | "alpha";
@@ -59,7 +66,10 @@ export function resolveDesktopUpdateFeed(input: {
   const targetVersion = input.targetVersion == null ? null : normalizeStableDesktopUpdateVersion(input.targetVersion);
   if (input.targetVersion != null && !targetVersion) throw new Error("Target update version must use the stable x.y.z format.");
   if (targetVersion && channel !== "stable") throw new Error("Version-specific update feeds are supported only on the stable channel.");
-  const feedUrl = `${DESKTOP_UPDATE_ROOT}/${targetVersion ? `v${targetVersion}` : channel}/${platform}`;
+  const migrated = platform === "mac" && input.arch === "arm64" && channel === "stable"
+    && (!targetVersion || isNewMacStableVersion(targetVersion));
+  const root = migrated ? `${MAC_ARM64_STABLE_UPDATE_ORIGIN}/jugglework/releases` : DESKTOP_UPDATE_ROOT;
+  const feedUrl = `${root}/${targetVersion ? `v${targetVersion}` : channel}/${platform}`;
   const manifestName = desktopUpdateManifestName(platform, input.arch);
   return { platform, channel, targetVersion, feedUrl, manifestName, manifestUrl: `${feedUrl}/${manifestName}` };
 }
@@ -106,9 +116,11 @@ export function parseDesktopUpdateManifest(raw: string): DesktopUpdateManifest {
 
 function resolveManifestFileUrl(value: string, manifestUrl: string) {
   const resolved = new URL(value, manifestUrl);
+  const manifestOrigin = new URL(manifestUrl).origin;
   if (
     resolved.protocol !== "https:"
-    || resolved.origin !== DESKTOP_UPDATE_ORIGIN
+    || ![DESKTOP_UPDATE_ORIGIN, MAC_ARM64_STABLE_UPDATE_ORIGIN].includes(manifestOrigin)
+    || resolved.origin !== manifestOrigin
     || !resolved.pathname.startsWith(DESKTOP_UPDATE_PATH_PREFIX)
   ) {
     throw new Error(`Update artifact uses an unauthorized origin: ${resolved.toString()}`);

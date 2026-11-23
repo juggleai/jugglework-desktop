@@ -9,6 +9,17 @@ import {
 } from "../src/desktop-update-feed.ts";
 
 describe("desktop update feeds", () => {
+  it("moves only macOS arm64 Stable, including future exact targets", () => {
+    const route = { platform: "darwin", arch: "arm64" } as const;
+    assert.equal(new URL(resolveDesktopUpdateFeed(route).feedUrl).hostname, "downloads.jugglework.cn");
+    for (const targetVersion of ["1.2.41", "1.2.42", "1.3.0"]) {
+      assert.equal(resolveDesktopUpdateFeed({ ...route, targetVersion }).feedUrl,
+        `https://downloads.jugglework.cn/jugglework/releases/v${targetVersion}/mac`);
+    }
+    for (const input of [{ ...route, targetVersion: "1.2.40" }, { ...route, channel: "alpha" as const }, { ...route, arch: "x64" }]) {
+      assert.equal(new URL(resolveDesktopUpdateFeed(input).feedUrl).hostname, "downloads.jugglechat.cn");
+    }
+  });
   it("resolves stable, Alpha and exact feeds per platform", () => {
     assert.equal(resolveDesktopUpdateFeed({ platform: "darwin" }).manifestUrl,
       "https://downloads.jugglechat.cn/jugglework/releases/stable/mac/latest-mac.yml");
@@ -70,5 +81,8 @@ sha512: ZIP
       "https://downloads.jugglechat.cn/untrusted/update.dmg",
     ));
     assert.throws(() => selectMacDmgArtifact(badPath, { arch: "arm64", manifestUrl }), /unauthorized origin/);
+    const newManifest = manifestUrl.replace("downloads.jugglechat.cn", "downloads.jugglework.cn");
+    assert.throws(() => selectMacDmgArtifact(parseDesktopUpdateManifest(yaml), { arch: "arm64", manifestUrl: newManifest }), /unauthorized origin/);
+    assert.equal(selectMacDmgArtifact(parseDesktopUpdateManifest(yaml.replaceAll("downloads.jugglechat.cn", "downloads.jugglework.cn")), { arch: "arm64", manifestUrl: newManifest })?.sha512, "ARM");
   });
 });

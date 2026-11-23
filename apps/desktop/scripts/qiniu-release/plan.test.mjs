@@ -97,3 +97,13 @@ test("createReleasePlan retains mac as its default platform", async () => {
     `jugglework-mac-arm64-${VERSION}.dmg.blockmap`,
   ]);
 });
+
+test("1.2.41 Stable arm64 plan points all objects and manifest entries to the exact new origin", async () => {
+  const plan = await createReleasePlan({ version: "1.2.41", channel: "stable", architectures: ["arm64"], dist: "dist",
+    inspect: async (filePath) => metadataForBuffer(filePath, filePath) });
+  for (const object of [...plan.objects, plan.manifest, plan.channelManifest]) {
+    assert.equal(object.url, `https://downloads.jugglework.cn/${object.key}`);
+  }
+  assert.match(plan.manifest.content, /https:\/\/downloads\.jugglework\.cn\/jugglework\/releases\/v1\.2\.41\/mac\/arm64\//);
+  assert.doesNotMatch(plan.manifest.content, /downloads\.jugglechat\.cn/);
+});

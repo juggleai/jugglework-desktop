@@ -66,6 +66,21 @@ test("qshell CDN refresh sends URLs over stdin instead of shell interpolation", 
   assert.equal(calls[0].options.input, "https://downloads.jugglechat.cn/a\nhttps://downloads.jugglechat.cn/b\n");
 });
 
+test("bootstrap absence accepts the exact authenticated object error only", async () => {
+  const bucket = "jugglework";
+  const key = "jugglework/releases/stable/mac/latest-mac.yml";
+  const valid = `[E]  Status Failed, [${bucket}:${key}], Error:status object [${bucket}:${key}] status error:no such file or directory`;
+  for (const [status, stderr, allowed] of [[1, valid, true], [0, valid, false], [1, "631 bucket not found", false],
+    [1, "exec: qshell: no such file or directory", false], [1, valid.replaceAll(bucket, "juggleim"), false], [1, `${valid}\nHTTP 503`, false]]) {
+    const qiniu = createQshellAdapter({ bucket, run: async (_command, args) => {
+      assert.deepEqual(args, ["stat", bucket, key]);
+      return { status, stdout: "", stderr };
+    } });
+    if (allowed) await qiniu.assertObjectAbsent(key);
+    else await assert.rejects(qiniu.assertObjectAbsent(key), /did not prove/);
+  }
+});
+
 test("qshell delegates conditional Cache-Control changes to the management client", async () => {
   const calls = [];
   const qiniu = createQshellAdapter({
