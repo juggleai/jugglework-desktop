@@ -1611,29 +1611,32 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           return false;
         }
       },
-      onForkAtMessage: (messageId: string | null, sessionId: string) => {
-        void (async () => {
-          const targetSessionId = sessionId.trim() || selectedSessionId;
-          if (!targetSessionId) return;
-          try {
-            const forked = await forkSession(opencodeClient, targetSessionId, messageId ?? undefined);
+      onForkAtMessage: async (messageId: string | null, sessionId: string) => {
+        const targetSessionId = sessionId.trim() || selectedSessionId;
+        if (!targetSessionId) return false;
+        const routeContext = activeRouteContextRef.current;
+        try {
+          const forked = await forkSession(opencodeClient, targetSessionId, messageId ?? undefined);
+          rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
+          setSessionsByWorkspaceId((current) => {
+            const next = {
+              ...current,
+              [selectedWorkspaceId]: mergeWorkspaceRouteSession(current[selectedWorkspaceId] ?? [], forked),
+            };
+            sessionsByWorkspaceIdRef.current = next;
+            return next;
+          });
+          if (activeRouteContextRef.current === routeContext) {
             writeLastSessionFor(selectedWorkspaceId, forked.id);
-            rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
-            setSessionsByWorkspaceId((current) => {
-              const next = {
-                ...current,
-                [selectedWorkspaceId]: mergeWorkspaceRouteSession(current[selectedWorkspaceId] ?? [], forked),
-              };
-              sessionsByWorkspaceIdRef.current = next;
-              return next;
-            });
             navigateToWorkspaceSession(selectedWorkspaceId, forked.id);
-            void refreshRouteState();
-          } catch (error) {
-            console.warn("[fork] failed", error);
-            toast.error(t("session.branch_failed"));
           }
-        })();
+          void refreshRouteState();
+          return true;
+        } catch (error) {
+          console.warn("[fork] failed", error);
+          toast.error(t("session.branch_failed"));
+          return false;
+        }
       },
       onChangeModel: (model: ModelRef) => {
         applyModelSelection(model, selectedSessionId);
@@ -1672,6 +1675,10 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     modelVariantLabel,
     modelVariantValue,
     navigate,
+    navigateToWorkspaceSession,
+    refreshRouteState,
+    rememberPendingCreatedSession,
+    setSessionsByWorkspaceId,
     resolveModelForSession,
     resolveAgentForSession,
     opencodeBaseUrl,

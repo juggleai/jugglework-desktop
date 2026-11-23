@@ -49,7 +49,7 @@ export function applyRevertCursor(messages: UIMessage[], revertMessageId: string
   return messages.slice(0, idx);
 }
 
-function isSyntheticMessageId(id: string) {
+export function isSyntheticMessageId(id: string) {
   return id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
 }
 

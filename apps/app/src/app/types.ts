@@ -183,6 +183,7 @@ export type ComposerSubmissionOptions = { claimId?: string } & (
       delivery?: "start";
       /** Stable user-message identity for workflows that observe exact-turn delivery. */
       messageID?: string;
+      editHistory?: { messageId: string; lastMessageId: string };
       intent?: "presentation-creation";
     }
   | { delivery: "steer"; admissionId: string });

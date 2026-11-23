@@ -127,7 +127,7 @@ export interface Capabilities {
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
   hostMarketplacePlugins?: { read: boolean; write: boolean };
-  sessions?: { promptSuggestions?: boolean };
+  sessions?: { promptSuggestions?: boolean; editHistory?: boolean };
 
   approvals: { mode: ApprovalMode; timeoutMs: number };
   sandbox: { enabled: boolean; backend: SandboxBackend };

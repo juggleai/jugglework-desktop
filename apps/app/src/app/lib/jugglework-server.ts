@@ -75,7 +75,7 @@ import {
 } from "@jugglework/types/reviews";
 
 export type JuggleWorkServerCapabilities = {
-  sessions?: { promptSuggestions?: boolean };
+  sessions?: { promptSuggestions?: boolean; editHistory?: boolean };
   skills: { read: boolean; write: boolean; source: "jugglework" | "opencode" };
   plugins: { read: boolean; write: boolean };
   mcp: { read: boolean; write: boolean };
@@ -2846,6 +2846,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       sessionId: string,
       input: {
         origin: JuggleWorkSessionRunOrigin;
+        editHistory?: { messageId: string; lastMessageId: string };
         startCommandCorrelationId: string | null;
         prompt: JuggleWorkSessionPrompt;
         responseLanguage?: ResponseLanguageSignal;

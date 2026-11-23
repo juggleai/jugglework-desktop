@@ -36,6 +36,7 @@ function auth(token: string) {
 }
 
 function startMockOpencode(input?: {
+  historyEdit?: { tailChanged?: boolean };
   invalidList?: boolean;
   holdCommand?: Promise<void>;
   holdCreate?: Promise<void>;
@@ -58,9 +59,27 @@ function startMockOpencode(input?: {
         directory: request.headers.get("x-opencode-directory"),
         method: request.method,
       };
-      if (request.method === "POST" || request.method === "PATCH") record.body = await request.json();
+      if (request.method === "POST" || request.method === "PATCH") {
+        const raw = await request.text();
+        record.body = raw ? JSON.parse(raw) : {};
+      }
       requests.push(record);
 
+      if (input?.historyEdit) {
+        if (url.pathname.startsWith("/session/ses_1/message/") && request.method === "DELETE") return Response.json(true);
+        if (url.pathname === "/session/ses_1/prompt_async") return new Response(null, { status: 204 });
+        if (url.pathname === "/session/ses_1/message") {
+          const turns = [
+            { info: { id: "msg_first", sessionID: "ses_1", role: "user" }, parts: [] },
+            { info: { id: "msg_edit", sessionID: "ses_1", role: "user" }, parts: [{ type: "file", url: "file:///example.png", mime: "image/png" }] },
+            { info: { id: "msg_last", sessionID: "ses_1", role: "assistant" }, parts: [] },
+          ];
+          if (url.searchParams.get("limit") === "1" && input.historyEdit.tailChanged) {
+            return Response.json([{ info: { id: "msg_new", sessionID: "ses_1", role: "user" }, parts: [] }]);
+          }
+          return Response.json(url.searchParams.get("limit") === "1" ? turns.slice(-1) : turns);
+        }
+      }
       if (url.pathname === "/config") {
         if (request.method === "PATCH" && typeof record.body === "object" && record.body !== null) {
           config = record.body as Record<string, unknown>;
@@ -132,6 +151,9 @@ function startMockOpencode(input?: {
         });
       }
 
+      if (url.pathname === "/session/ses_1/message/msg_1") {
+        return Response.json({ info: { id: "msg_1", sessionID: "ses_1" }, parts: [] });
+      }
       if (url.pathname === "/session/ses_1/message") {
         const before = url.searchParams.get("before");
         if (before !== null && before === input?.invalidMessageCursor) {
@@ -703,6 +725,15 @@ describe("workspace session read APIs", () => {
     expect(forked.status).toBe(201);
     await expect(forked.json()).resolves.toMatchObject({ item: { id: "ses_forked", parentID: "ses_1" } });
 
+    const forkAt = (messageId: string) => fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions/ses_1/fork`, {
+      method: "POST", headers, body: JSON.stringify({ messageId }),
+    });
+    expect((await forkAt("msg_1")).status).toBe(201);
+    expect((await forkAt("msg_missing")).ok).toBe(false);
+    expect(mock.requests.filter((request) => request.pathname.endsWith("/fork")).map((request) => request.body)).toEqual([
+      {}, { messageID: "msg_1" },
+    ]);
+
     for (const body of [{ title: "Renamed" }, { archived: true }, { archived: false }]) {
       const updated = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions/ses_1`, {
         method: "PATCH", headers, body: JSON.stringify(body),
@@ -721,6 +752,37 @@ describe("workspace session read APIs", () => {
     expect(deleted.status).toBe(200);
     await expect(deleted.json()).resolves.toEqual({ ok: true });
   });
+
+  for (const scenario of ["edit", "busy", "stale", "changed before dispatch"] as const) {
+    test(`same-session history edit: ${scenario}`, async () => {
+      const workspaceRoot = await createWorkspaceRoot();
+      const mock = startMockOpencode({ statuses: scenario === "busy" ? { ses_1: { type: "busy" } } : {}, historyEdit: { tailChanged: scenario === "changed before dispatch" } });
+      const app = await startJuggleWorkServer({ workspaceRoot, opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`, readOnly: false });
+      const result = await fetch(`http://127.0.0.1:${app.server.port}/workspace/ws_1/sessions/ses_1/runs/start`, {
+        method: "POST", headers: { ...auth(app.token), "Content-Type": "application/json" },
+        body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: "cmd_edit",
+          editHistory: { messageId: "msg_edit", lastMessageId: scenario === "stale" ? "msg_first" : "msg_last" },
+          prompt: { parts: [{ type: "text", text: "replacement" }] } }),
+      });
+      const deletions = mock.requests.filter(r => r.method === "DELETE").map(r => r.pathname);
+      const sent = mock.requests.filter(r => r.pathname.endsWith("/prompt_async"));
+      expect(mock.requests.some(r => r.pathname.endsWith("/revert") || r.pathname.endsWith("/abort"))).toBe(false);
+      expect(mock.requests.some(r => r.pathname.endsWith("/fork") || r.method === "PATCH")).toBe(false);
+      if (scenario !== "edit") {
+        expect(result.ok).toBe(false);
+        expect(deletions).toEqual([]);
+        expect(sent).toHaveLength(0);
+        return;
+      }
+      expect(result.status).toBe(202);
+
+      expect(deletions).toEqual(["/session/ses_1/message/msg_last", "/session/ses_1/message/msg_edit"]);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ pathname: "/session/ses_1/prompt_async", body: { parts: [
+        { type: "text", text: "replacement" }, { type: "file", url: "file:///example.png", mime: "image/png" },
+      ] } });
+    });
+  }
 
   test("acknowledges proxied session commands before upstream completion", async () => {
     const workspaceRoot = await createWorkspaceRoot();

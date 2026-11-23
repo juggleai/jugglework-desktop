@@ -2148,7 +2148,7 @@ async function dispatchSessionPromptAsync(
   sessionId: string,
   prompt: Record<string, unknown>,
   requirePersistence = false,
-  beforeDispatch?: () => void,
+  beforeDispatch?: () => void | Promise<void>,
 ): Promise<void> {
   const path = `/session/${encodeURIComponent(sessionId)}/prompt_async`;
   let effectivePrompt = prompt;
@@ -2159,7 +2159,7 @@ async function dispatchSessionPromptAsync(
     const toolIds = Array.isArray(result.data) ? result.data.filter((value): value is string => typeof value === "string") : [];
     effectivePrompt = applyMcpWorkspacePolicyToPrompt(prompt, toolIds, policy.disabledServerNames);
   }
-  beforeDispatch?.();
+  await beforeDispatch?.();
   const response = await loopbackFetch(workspaceOpencodeUrl(config, workspace, path), {
     method: "POST",
     headers: workspaceOpencodeHeaders(config, workspace),
@@ -2600,7 +2600,7 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     mcp: { read: true, write: writeEnabled },
     commands: { read: true, write: writeEnabled },
     config: { read: true, write: writeEnabled },
-    sessions: { promptSuggestions: writeEnabled },
+    sessions: { promptSuggestions: writeEnabled, editHistory: writeEnabled },
     hostMarketplacePlugins: {
       read: true,
       write: writeEnabled && config.managedRuntime === true,

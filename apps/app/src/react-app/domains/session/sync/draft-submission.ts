@@ -120,6 +120,7 @@ export async function submitSessionDraft(input: SessionDraftSubmissionInput) {
             return;
           }
           const request = {
+            ...(submission.delivery !== "steer" && submission.editHistory ? { juggleworkEditHistory: submission.editHistory } : {}),
             sessionID: sessionId, parts, juggleworkOfficeSelections: office, juggleworkCloudDocTurn: cloudDocTurn,
             juggleworkNativeActionScope: liveNativeActionScope(),
             ...(submission.delivery !== "steer" && submission.messageID ? { messageID: submission.messageID } : {}),

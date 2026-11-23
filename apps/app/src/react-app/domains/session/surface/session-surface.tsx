@@ -125,7 +125,7 @@ import {
   transcriptKey as reactTranscriptKey,
 } from "@/react-app/domains/session/sync/session-sync";
 import { useSessionTodos } from "@/react-app/domains/session/sync/use-session-todos";
-import { resolveForkBoundaryId } from "@/react-app/domains/session/sync/transcript-reconcile";
+import { isSyntheticMessageId, resolveForkBoundaryId } from "@/react-app/domains/session/sync/transcript-reconcile";
 import {
   getComposerAttachments,
   getComposerCapabilities,
@@ -284,7 +284,7 @@ export type SessionSurfaceProps = {
   providerConnectedCount?: number;
   onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps" | "plugins" | "providers") => void) | undefined;
   onRevertToMessage?: (messageId: string, sessionId: string) => Promise<boolean>;
-  onForkAtMessage?: (messageId: string | null, sessionId: string) => void;
+  onForkAtMessage?: (messageId: string | null, sessionId: string) => Promise<boolean>;
   onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions, sessionId?: string) => void;
   environmentRuntimeKey?: string | null;
   onApplyEnvironmentChanges?: () => Promise<ApplyEnvironmentChangesResult>;
@@ -694,6 +694,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const queuedRunObservedBusyRef = useRef(false);
   const composerShellRef = useRef<HTMLDivElement>(null);
   const hydratedKeyRef = useRef<string | null>(null);
+  const [historyEdit, setHistoryEdit] = useState<{ sessionId: string; workspaceId: string; messageId: string; lastMessageId: string; text: string } | null>(null);
   const activeSurfaceIdentityRef = useRef(`${props.workspaceId}:${props.sessionId}`);
   const inFlightSendIdentitiesRef = useRef(new Set<string>());
   activeSurfaceIdentityRef.current = `${props.workspaceId}:${props.sessionId}`;
@@ -881,6 +882,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     hydratedKeyRef.current = null;
+    setHistoryEdit(null);
     setSteering(false);
     setError(null);
     setShowDelayedLoading(false);
@@ -2459,19 +2461,33 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const handleForkAtMessage = useCallback((messageId: string) => {
     // OpenCode's fork copies messages strictly before the given id, so pass
     // the next real message to make the branch include the clicked message.
-    props.onForkAtMessage?.(resolveForkBoundaryId(renderedMessages, messageId), props.sessionId);
+    void props.onForkAtMessage?.(resolveForkBoundaryId(renderedMessages, messageId), props.sessionId);
   }, [props.onForkAtMessage, props.sessionId, renderedMessages]);
 
   const handleEditUserMessage = useCallback((messageId: string, text: string) => {
-    if (fileHost) return;
-    void (async () => {
-      // Rewind the session to just before this prompt, then restore the
-      // prompt text into the composer so the user can rewrite and resend it.
-      const reverted = await props.onRevertToMessage?.(messageId, props.sessionId);
-      if (reverted === false) return;
-      await typeComposerText(text);
-    })();
-  }, [fileHost, props.onRevertToMessage, props.sessionId, typeComposerText]);
+    const lastMessage = renderedMessages.findLast((message) => !isSyntheticMessageId(message.id));
+    if (fileHost || chatStreaming || !lastMessage) return;
+    setHistoryEdit({ sessionId: props.sessionId, workspaceId: props.workspaceId, messageId, lastMessageId: lastMessage.id, text });
+  }, [fileHost, chatStreaming, renderedMessages, props.sessionId, props.workspaceId]);
+
+  const submitHistoryEdit = async (text: string) => {
+    if (!historyEdit || historyEdit.sessionId !== props.sessionId || historyEdit.workspaceId !== props.workspaceId || chatStreaming) return false;
+    try {
+      const result = await sendDraft({ mode: "prompt", text, parts: [{ type: "text", text }], attachments: [] }, {
+        delivery: "start", editHistory: { messageId: historyEdit.messageId, lastMessageId: historyEdit.lastMessageId },
+      });
+      return result.outcome === "sent" || result.outcome === "accepted";
+    } catch (error) {
+      // A transport failure may arrive after the edited bubble was removed.
+      // Keep the input recoverable even when the inline editor has unmounted.
+      const composer = useComposerStateStore.getState();
+      composer.appendHistory(historyEdit.sessionId, text);
+      if (!getComposerDraft(composer, historyEdit.sessionId) && !getComposerAttachments(composer, historyEdit.sessionId).length) {
+        composer.setDraft(historyEdit.sessionId, text);
+      }
+      throw error;
+    }
+  };
 
   const sessionScrollTopControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "session.scroll_top",
@@ -2678,6 +2694,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onRevertToUserMessage={handleRevertToUserMessage}
                       onForkAtMessage={handleForkAtMessage}
                       onEditUserMessage={handleEditUserMessage}
+                      editDisabled={chatStreaming || props.taskSubmissionDisabled}
+                      historyEditor={historyEdit?.sessionId === props.sessionId && historyEdit.workspaceId === props.workspaceId ? {
+                        messageId: historyEdit.messageId, initialText: historyEdit.text,
+                        onClose: () => setHistoryEdit((current) => current === historyEdit ? null : current),
+                        onConfirm: submitHistoryEdit,
+                      } : null}
                       onMcpReconnect={handleMcpReconnect}
                       onMcpReopenAuthorization={handleMcpReopenAuthorization}
                       onMcpRetry={handleMcpRetry}

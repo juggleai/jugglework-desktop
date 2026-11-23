@@ -209,6 +209,28 @@ describe("mounted JuggleWork session mutations", () => {
     });
   });
 
+  test("only submits an edited turn to a workspace service that advertises history editing", async () => {
+    let supported = false;
+    const calls = mockFetch(call => {
+      if (call.url.endsWith("/capabilities")) return jsonResponse({ sessions: supported ? { editHistory: true } : {} });
+      if (call.url.endsWith("/runs/start")) return jsonResponse({ disposition: "started", run: activeRun("run-edited") });
+      throw new Error("Unexpected request");
+    });
+    const prompt = {
+      sessionID: "session-1", parts: [{ type: "text" as const, text: "replacement" }],
+      juggleworkEditHistory: { messageId: "msg-edited", lastMessageId: "msg-tail" },
+    };
+    const client = mountedClient();
+    const old = await client.session.promptAsync(prompt);
+    expect(old.error).toBeDefined();
+    expect(calls.filter(call => call.method === "POST")).toHaveLength(0);
+    supported = true;
+    expect((await client.session.promptAsync(prompt)).error).toBeUndefined();
+    expect(calls.filter(call => call.method === "POST").map(call => call.body)).toEqual([
+      expect.objectContaining({ editHistory: prompt.juggleworkEditHistory, prompt: { parts: prompt.parts } }),
+    ]);
+  });
+
   test("routes an explicit local steer through the busy-session steer contract", async () => {
     const calls = mockFetch((call) => {
       if (call.url.endsWith("/workspace/workspace-1/sessions/session-1/runs/start")) {

@@ -12,7 +12,17 @@ import type {
 } from "@/components/tools/error-attribution"
 import * as React from "react"
 
-interface MessageListContextValue {
+interface HistoryEditProps {
+  editDisabled?: boolean;
+  historyEditor?: {
+    messageId: string;
+    initialText: string;
+    onConfirm: (text: string) => Promise<boolean>;
+    onClose: () => void;
+  } | null;
+}
+
+interface MessageListContextValue extends HistoryEditProps {
   historyActionsEnabled: boolean
   cloudDocsBusy: boolean
   client: JuggleWorkServerClient | null
@@ -38,7 +48,7 @@ interface MessageListContextValue {
 
 const MessageListContext = React.createContext<MessageListContextValue | null>(null)
 
-interface MessageListProviderProps {
+interface MessageListProviderProps extends HistoryEditProps {
   historyActionsEnabled?: boolean
   /** 会话在提交、执行或重试期间禁止撤销云文档。 */
   cloudDocsBusy?: boolean
@@ -72,6 +82,7 @@ export interface DispatchAction {
 
 export function MessageListProvider({
   historyActionsEnabled = true,
+  editDisabled, historyEditor,
   cloudDocsBusy = false,
   children,
   client = null,
@@ -95,6 +106,7 @@ export function MessageListProvider({
   const value = React.useMemo(
     () => ({
       historyActionsEnabled,
+      editDisabled, historyEditor,
       cloudDocsBusy,
       client,
       workspaceId,
@@ -115,6 +127,7 @@ export function MessageListProvider({
     }),
     [
       historyActionsEnabled,
+      editDisabled, historyEditor,
       cloudDocsBusy,
       client,
       workspaceId,

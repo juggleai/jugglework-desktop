@@ -131,6 +131,7 @@ import {
   type ComposerCapabilityKind,
 } from "@/react-app/domains/session/surface/composer/capability-tags"
 import { currentLocale, t } from "@/i18n"
+import { HistoryMessageEditor } from "@/react-app/domains/session/surface/history-message-editor"
 import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, formatTaskDuration, getTaskTiming, splitAssistantTaskMessages, mergeAssistantProcessItems, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, isTaskStoppedMessage, wasTaskStopped, loadingTaskUserMessageIndex } from "./utils"
 import {
   getSessionCompactionFromMessage,
@@ -833,7 +834,7 @@ function renderUserTextWithSkillChips(text: string, highlightQuery: string | und
 
 const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
-    const { historyActionsEnabled, onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery } = useMessageList()
+    const { historyActionsEnabled, onRevertToUserMessage, onForkAtMessage, onEditUserMessage, editDisabled, historyEditor, highlightQuery } = useMessageList()
     const deliveries = useFileDeliveries()
     const officeHistory = deliveries?.data?.turns.find((turn) => turn.turnId === message.id)?.officeSelection
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
@@ -851,6 +852,12 @@ const UserMessage = React.memo(
         data-message-id={message.id}
         data-message-role={message.role}
       >
+        {historyEditor?.messageId === message.id ? (
+          <div className="flex w-full max-w-[46rem] flex-col items-center gap-3">
+            <MessageTimestamp message={message} className="text-[13px]" />
+            <HistoryMessageEditor key={message.id} {...historyEditor} disabled={editDisabled} />
+          </div>
+        ) : (
         <ContextMenu>
           <ContextMenuTrigger
             // Override Trigger's select-none so user bubbles stay copyable.
@@ -915,7 +922,7 @@ const UserMessage = React.memo(
                           variant="ghost"
                           size="icon-xs"
                           aria-label={t("session.edit_message_label")}
-                          disabled={!historyActionsEnabled}
+                          disabled={!historyActionsEnabled || editDisabled}
                           onClick={() => onEditUserMessage(message.id, messageText)}
                         >
                           <Pencil />
@@ -951,7 +958,7 @@ const UserMessage = React.memo(
           />
           <ContextMenuContent className="w-56">
             {messageText ? (
-              <ContextMenuItem disabled={!historyActionsEnabled} onClick={() => onEditUserMessage(message.id, messageText)}>
+              <ContextMenuItem disabled={!historyActionsEnabled || editDisabled} onClick={() => onEditUserMessage(message.id, messageText)}>
                 <Pencil className="size-4" />
                 {t("session.edit_message_label")}
               </ContextMenuItem>
@@ -972,6 +979,7 @@ const UserMessage = React.memo(
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
+        )}
       </Message>
     )
   }

@@ -262,12 +262,12 @@ test("server advertises additive capability and wires authenticated readOnly rou
   cleanups.push(() => server.stop());
   const base = `http://127.0.0.1:${server.port}`;
   const headers = { Authorization: `Bearer ${f.config.token}` };
-  expect((await (await fetch(`${base}/capabilities`, { headers })).json()).sessions).toEqual({ promptSuggestions: false });
+  expect((await (await fetch(`${base}/capabilities`, { headers })).json()).sessions).toEqual({ promptSuggestions: false, editHistory: false });
   const url = `${base}/workspace/ws/sessions/ses/prompt-suggestions`;
   expect((await fetch(url, { method: "POST", body: "{}" })).status).toBe(401);
   expect((await fetch(url, { method: "POST", body: "{}", headers })).status).toBe(403);
   f.config.readOnly = false;
-  expect((await (await fetch(`${base}/capabilities`, { headers })).json()).sessions).toEqual({ promptSuggestions: true });
+  expect((await (await fetch(`${base}/capabilities`, { headers })).json()).sessions).toEqual({ promptSuggestions: true, editHistory: true });
   expect((await fetch(url, { method: "POST", body: "{}", headers })).status).toBe(400);
   f.state.source = "unknown";
   f.config.logRequests = true;

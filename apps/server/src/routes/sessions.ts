@@ -79,7 +79,7 @@ interface RegisterSessionRoutesOptions {
     workspace: WorkspaceInfo,
     sessionId: string,
     prompt: Record<string, unknown>,
-    beforeDispatch?: () => void,
+    beforeDispatch?: () => void | Promise<void>,
   ) => Promise<void>;
   dispatchSessionAbort: (config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) => Promise<boolean>;
   sessionMutations: SessionMutationCoordinator;
@@ -186,10 +186,12 @@ const remotePromptBodySchema = z.object({
   if (Buffer.byteLength(JSON.stringify(prompt.parts), "utf8") > 28 * 1024 * 1024) context.addIssue({ code: "custom", message: "prompt is too large" });
   if (prompt.variant !== undefined && !prompt.model) context.addIssue({ code: "custom", path: ["variant"], message: "variant requires an explicit model" });
 });
+const editHistorySchema = z.object({ messageId: runIdentifierSchema, lastMessageId: runIdentifierSchema }).strict();
 const startRunBodySchema = z.discriminatedUnion("origin", [
   z.object({
     origin: z.literal("local-renderer"),
     startCommandCorrelationId: runIdentifierSchema.nullable(),
+    editHistory: editHistorySchema.optional(),
     prompt: promptBodySchema,
     responseLanguage: responseLanguageSignalSchema.optional(),
     whenBusy: z.enum(["reject", "steer"]).default("reject"),
@@ -1069,6 +1071,16 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
     const body = parseRunBody(forkSessionBodySchema, await readJsonBody(ctx.request));
     const opencode = createWorkspaceOpencodeClient(config, workspace);
+    // OpenCode forks the entire history when it cannot find the supplied boundary.
+    if (body.messageId) {
+      const boundary = unwrapOpencodeResult(
+        await opencode.session.message({ sessionID: sessionId, messageID: body.messageId }),
+        `/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(body.messageId)}`,
+      );
+      if (boundary?.info.sessionID !== sessionId || boundary.info.id !== body.messageId) {
+        throw new ApiError(404, "message_not_found", "Fork boundary message not found");
+      }
+    }
     const item = buildSession(unwrapOpencodeResult(
       await opencode.session.fork({ sessionID: sessionId, messageID: body.messageId }),
       `/session/${encodeURIComponent(sessionId)}/fork`,
@@ -1123,6 +1135,46 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     return jsonResponse({ disposition: "enqueued", admissionId: body.id }, 202);
   });
 
+  async function prepareHistoryEdit(workspace: WorkspaceInfo, sessionId: string, edit: z.infer<typeof editHistorySchema>, prompt: Record<string, unknown>) {
+    const engine = createWorkspaceOpencodeClient(config, workspace);
+    const session = await readWorkspaceSession(workspace, sessionId);
+    const path = `/session/${encodeURIComponent(sessionId)}/message`;
+    const historyChanged = () => new ApiError(409, "history_changed", "会话记录已更新，请重新打开要编辑的消息。");
+    if (session.revert) throw historyChanged();
+    if (!Array.isArray(prompt.parts) || !prompt.parts.some(part => isRecord(part) && part.type === "text" && typeof part.text === "string" && part.text.trim())) {
+      throw new ApiError(400, "invalid_payload", "Edited text is required");
+    }
+    const suffix: string[] = [];
+    let before: string | undefined;
+    while (true) {
+      const page = await engine.session.messages({ sessionID: sessionId, limit: 64, before });
+      const messages = unwrapOpencodeResult(page, path);
+      if (!before && messages.at(-1)?.info.id !== edit.lastMessageId) throw historyChanged();
+      const boundary = messages.findIndex(({ info }) => info.id === edit.messageId);
+      for (let i = messages.length - 1; i >= Math.max(0, boundary); i--) suffix.push(messages[i].info.id);
+      if (boundary >= 0) {
+        const message = messages[boundary];
+        if (message.info.role !== "user" || message.info.sessionID !== sessionId) throw historyChanged();
+        for (const part of message.parts) {
+          if (part.type === "file") prompt.parts.push({ type: "file", url: part.url, mime: part.mime, filename: part.filename });
+          if (part.type === "agent") prompt.parts.push({ type: "agent", name: part.name });
+        }
+        break;
+      }
+      const cursor = page.response.headers.get("x-next-cursor");
+      if (!cursor || cursor === before || !messages.length) throw historyChanged();
+      before = cursor;
+    }
+    return async () => {
+      // Recheck the edit boundary immediately before removing the conversation tail.
+      const latest = unwrapOpencodeResult(await engine.session.messages({ sessionID: sessionId, limit: 1 }), path);
+      if (latest.at(-1)?.info.id !== edit.lastMessageId) throw historyChanged();
+      for (const messageID of suffix) {
+        unwrapOpencodeResult(await engine.session.deleteMessage({ sessionID: sessionId, messageID }), path);
+      }
+    };
+  }
+
   async function startSessionRun(
     ctx: RequestContext,
     input: {
@@ -1130,6 +1182,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
       origin: SessionMutationOrigin;
       startCommandCorrelationId: string | null;
       prompt: Record<string, unknown>;
+      editHistory?: z.infer<typeof editHistorySchema>;
       responseLanguage?: {
         detected?: ResponseLanguage;
         fallback: ResponseLanguage;
@@ -1140,6 +1193,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
+    if (input.editHistory && (input.origin !== "local-renderer" || (input.whenBusy ?? "reject") !== "reject")) {
+      throw new ApiError(400, "invalid_payload", "An edited turn must start in an idle session");
+    }
     const responseLanguage = promptResponseLanguage(input);
     const remoteVariant = input.origin === "remote-control" && typeof input.prompt.variant === "string" ? input.prompt.variant : undefined;
     if (remoteVariant !== undefined && workspace.workspaceType !== "local") {
@@ -1344,12 +1400,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
       }
       try {
         const beforeDispatch = await prepareSubmission();
+        const edit = input.editHistory ? await prepareHistoryEdit(workspace, input.sessionId, input.editHistory, input.prompt) : null;
         await dispatchSessionPromptAsync(
           config,
           workspace,
           input.sessionId,
           selectedResponseLanguage ? withResponseLanguageSystem(input.prompt, selectedResponseLanguage) : input.prompt,
-          beforeDispatch,
+          edit ? async () => { beforeDispatch?.(); await edit(); beforeDispatch?.(); } : beforeDispatch,
         );
       } catch (error) {
         languageMutation?.rollback();

@@ -10,6 +10,7 @@ import {
 } from "@opencode-ai/sdk/v2/client";
 import type { ResponseLanguage } from "@jugglework/types/response-language";
 
+import { t } from "@/i18n";
 import { desktopFetch } from "./desktop";
 import { sessionIntentTransport } from "./session-create-intent";
 import {
@@ -32,6 +33,7 @@ type PromptAsyncParameters = Parameters<ReturnType<typeof createOpencodeClient>[
   juggleworkNativeActionScope?: { baseUrl: string; userId: string; organizationId: string } | null;
   juggleworkOfficeSelections?: { officeSelectionRefs?: string[]; officeInstructions?: import("@jugglework/types/office").OfficeSelectionInstruction[] };
   reasoning_effort?: string;
+  juggleworkEditHistory?: { messageId: string; lastMessageId: string };
   juggleworkDelivery?: "steer";
   juggleworkAdmissionId?: string;
   juggleworkDetectedResponseLanguage?: ResponseLanguage;
@@ -814,11 +816,13 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       juggleworkDetectedResponseLanguage,
       juggleworkDefaultResponseLanguage,
       juggleworkOfficeSelections,
+      juggleworkEditHistory,
       juggleworkCloudDocTurn,
       juggleworkNativeActionScope,
       model: selectedModel,
       ...body
     } = parameters;
+    if (juggleworkEditHistory && !juggleworkMount) return Promise.reject(new Error("Message editing requires a workspace connection."));
     if (juggleworkOfficeSelections?.officeSelectionRefs?.length && (!juggleworkMount || !juggleworkSessionClient)) {
       return Promise.reject(new Error("选区编辑需要本机文档会话，请重新打开文档后发送"));
     }
@@ -828,8 +832,18 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     if (juggleworkMount && juggleworkSessionClient) {
       const url = `${juggleworkMount.baseUrl}/workspace/${encodeURIComponent(juggleworkMount.workspaceId)}/sessions/${encodeURIComponent(sessionID)}/runs/start`;
       return wrapJuggleWorkMutation(url, async () => {
+        if (juggleworkEditHistory) {
+          const capabilities = await juggleworkSessionClient.capabilities();
+          const supported = capabilities.sessions?.editHistory;
+          if (supported !== true) {
+            throw new JuggleWorkServerError(409, "history_edit_unavailable", t(
+              supported === false ? "session.history_edit_read_only" : "session.history_edit_needs_update",
+            ));
+          }
+        }
         const result = await juggleworkSessionClient.startSessionRun(juggleworkMount.workspaceId, sessionID, {
           origin: "local-renderer",
+          ...(juggleworkEditHistory ? { editHistory: juggleworkEditHistory } : {}),
           startCommandCorrelationId: juggleworkAdmissionId ?? commandCorrelationId(),
           prompt: {
             ...(selectedModel ? { model: selectedModel } : {}), ...body, ...juggleworkOfficeSelections, cloudDocTurn: juggleworkCloudDocTurn,
