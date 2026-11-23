@@ -74,6 +74,7 @@ function startMockOpencode() {
   const heldPrompts = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldMessageReads = new Map<string, ReturnType<typeof deferred<void>>>();
   const failedMessageReads = new Set<string>();
+  const missingMessageReads = new Set<string>();
   const messageReads: string[] = [];
   const heldMessageIds = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldAborts = new Map<string, ReturnType<typeof deferred<void>>>();
@@ -105,6 +106,7 @@ function startMockOpencode() {
       const messageMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
       if (request.method === "GET" && messageMatch) {
         const sessionId = decodeURIComponent(messageMatch[1]!);
+        if (missingMessageReads.has(sessionId)) return Response.json({ code: "not_found" }, { status: 404 });
         if (failedMessageReads.has(sessionId)) {
           messageReads.push(sessionId);
           return Response.json({ name: "MessageReadFailure" }, { status: 503 });
@@ -115,6 +117,15 @@ function startMockOpencode() {
         messageReads.push(sessionId);
         await held?.promise;
         return Response.json(snapshot);
+      }
+      if (request.method === "POST" && messageMatch) {
+        const sessionId = decodeURIComponent(messageMatch[1]!);
+        const body = await request.json() as { messageID: string; noReply: boolean };
+        if (!body.noReply) return new Response(null, { status: 400 });
+        const message = { info: { id: body.messageID, role: "user", sessionID: sessionId }, parts: [] };
+        await heldPrompts.get(sessionId)?.promise;
+        messages.set(sessionId, [message]);
+        return Response.json(message);
       }
       const directMessageMatch = url.pathname.match(/^\/session\/([^/]+)\/message\/([^/]+)$/);
       if (request.method === "GET" && directMessageMatch) {
@@ -257,6 +268,7 @@ function startMockOpencode() {
     heldPrompts,
     heldMessageReads,
     failedMessageReads,
+    missingMessageReads,
     messageReads,
     heldMessageIds,
     heldAborts,
@@ -376,6 +388,7 @@ describe("authoritative session mutation APIs", () => {
 
     const deleted = await fetch(`${harness.base}/workspace/ws_1/sessions/${sessionId}`, { method: "DELETE", headers: harness.collaboratorHeaders });
     expect(deleted.status).toBe(200);
+    expect(harness.server.hasActiveSessionRuns!()).toBe(false);
     engine.sessions.set(sessionId, { id: sessionId, title: "Recreated", directory: harness.config.workspaces[0]!.path, time: { created: 2, updated: 2 } });
     expect((await (await requestPreference("GET")).json()).item).toMatchObject({ revision: 0, mode: "auto", model: null });
   });
@@ -1764,6 +1777,51 @@ describe("authoritative session mutation APIs", () => {
     await expect(secondResponse.json()).resolves.toMatchObject({ code: "session_busy" });
     expect(engine.prompts.map((item) => item.sessionId)).toEqual(["ses_self_heal"]);
     expect(engine.statusRequests.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("noReply finishes once the engine saves the user turn", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_quiet_save";
+    const held = deferred<void>();
+    engine.heldPrompts.set(sessionId, held);
+    const request = fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: "cmd_quit_test", prompt: { noReply: true, parts: [{ type: "text", text: "Save only" }] } }),
+    });
+    try {
+      await waitUntil(() => harness.server.hasActiveSessionRuns!());
+      expect(await harness.server.reconcileActiveSessionRuns!()).toHaveLength(1);
+    } finally { held.resolve(); }
+    const response = await request;
+    expect(response.status).toBe(202);
+    const { run } = await response.json();
+    expect(engine.messages.get(sessionId)?.[0]?.info.role).toBe("user");
+    expect(harness.server.hasActiveSessionRuns!()).toBe(false);
+    const terminals = await fetch(`${harness.base}/workspace/ws_1/session-run-terminals`, { headers: harness.collaboratorHeaders });
+    expect((await terminals.json()).items).toMatchObject([{ runId: run.runId, terminalReason: "completed" }]);
+  });
+
+  test("quit reconciliation releases a missing session only after the engine confirms deletion and idle", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_orphan";
+    engine.sessions.set(sessionId, { id: sessionId, title: "Quit regression", time: { created: 1, updated: 1 } });
+    const response = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: "cmd_quit_test", prompt: { parts: [{ type: "text", text: "Run" }] } }),
+    });
+    expect(response.status).toBe(202);
+    const { run } = await response.json();
+    engine.missingMessageReads.add(sessionId);
+    expect(await harness.server.reconcileActiveSessionRuns!()).toHaveLength(1);
+    engine.sessions.delete(sessionId);
+    engine.statuses.set(sessionId, { type: "busy" });
+    expect(await harness.server.reconcileActiveSessionRuns!()).toHaveLength(1);
+    engine.statuses.delete(sessionId);
+    expect(await harness.server.reconcileActiveSessionRuns!()).toEqual([]);
+    const terminals = await fetch(`${harness.base}/workspace/ws_1/session-run-terminals`, { headers: harness.collaboratorHeaders });
+    expect((await terminals.json()).items).toMatchObject([{ runId: run.runId, terminalReason: "aborted" }]);
   });
 
   test("active-run reads retain an accepted run without a final assistant", async () => {

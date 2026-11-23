@@ -2150,7 +2150,10 @@ async function dispatchSessionPromptAsync(
   requirePersistence = false,
   beforeDispatch?: () => void | Promise<void>,
 ): Promise<void> {
-  const path = `/session/${encodeURIComponent(sessionId)}/prompt_async`;
+  // A noReply turn has no assistant event. The synchronous endpoint returns
+  // the persisted user message, which is its terminal acknowledgement.
+  const noReply = prompt.noReply === true;
+  const path = `/session/${encodeURIComponent(sessionId)}/${noReply ? "message" : "prompt_async"}`;
   let effectivePrompt = prompt;
   const policy = await readMcpWorkspaceToolPolicy(config, workspace.id);
   if (policy.disabledServerNames.length) {
@@ -2172,7 +2175,14 @@ async function dispatchSessionPromptAsync(
       path,
     });
   }
-  if (requirePersistence) {
+  if (noReply) {
+    const message: unknown = await response.json().catch(() => null);
+    if (!isRecord(message) || !isRecord(message.info) || message.info.role !== "user"
+      || message.info.sessionID !== sessionId || typeof message.info.id !== "string"
+      || (typeof effectivePrompt.messageID === "string" && message.info.id !== effectivePrompt.messageID)) {
+      throw new ApiError(502, "opencode_prompt_not_persisted", "OpenCode did not confirm the saved user message", { path });
+    }
+  } else if (requirePersistence) {
     await waitForPersistedSessionPrompt(config, workspace, sessionId, effectivePrompt);
   }
 }

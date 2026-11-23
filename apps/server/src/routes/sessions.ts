@@ -595,15 +595,18 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     run: { sessionId: string; startedAt: number },
     signal?: AbortSignal,
   ): Promise<
-    | { available: true; status: "completed" | "failed" | "aborted" | null }
+    | { available: true; status: "completed" | "failed" | "aborted" | null; sessionMissing?: boolean }
     | { available: false; status: null }
   > {
     const opencode = createWorkspaceOpencodeClient(config, workspace);
     try {
-      const messages = unwrapOpencodeResult(
-        await opencode.session.messages({ sessionID: run.sessionId, limit: 10 }, { signal }),
-        "/session/message",
-      );
+      const result = await opencode.session.messages({ sessionID: run.sessionId, limit: 10 }, { signal });
+      if (result.response.status === 404) {
+        // A missing message route alone is not proof that the session was deleted.
+        const session = await opencode.session.get({ sessionID: run.sessionId }, { signal });
+        if (session.response.status === 404) return { available: true, status: "aborted", sessionMissing: true };
+      }
+      const messages = unwrapOpencodeResult(result, "/session/message");
       return { available: true, status: currentRunTerminalStatus(messages, run.startedAt) };
     } catch {
       return { available: false, status: null };
@@ -1231,6 +1234,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
       if (active && (terminal === "failed" || terminal === "aborted")) {
         sessionMutations.observe({ workspaceId: workspace.id, sessionId: input.sessionId, runId: active.runId, status: terminal });
         finalizeClearedRun(workspace.id, input.sessionId, active.runId);
+        if (terminalRead.available && terminalRead.sessionMissing) {
+          throw new ApiError(404, "session_not_found", "Session not found");
+        }
         active = null;
       }
       if (engineStatus === "idle" && active && (active.status === "aborting" || terminal === "completed")) {
@@ -1412,10 +1418,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
         languageMutation?.rollback();
         throw error;
       }
-      return jsonResponse({
-        disposition: "started",
-        run: sessionMutations.acceptStart({ workspaceId: workspace.id, sessionId: input.sessionId, runId: run.runId }) ?? run,
-      }, 202);
+      const identity = { workspaceId: workspace.id, sessionId: input.sessionId, runId: run.runId };
+      const accepted = sessionMutations.acceptStart(identity);
+      if (accepted && input.prompt.noReply === true) {
+        sessionMutations.observe({ ...identity, status: accepted.status === "aborting" ? "aborted" : "completed" });
+        finalizeClearedRun(workspace.id, input.sessionId, run.runId);
+      }
+      return jsonResponse({ disposition: "started", run: accepted ?? run }, 202);
     } catch (error) {
       sessionMutations.rollbackStart({ workspaceId: workspace.id, sessionId: input.sessionId, runId: run.runId });
       throw error;
@@ -1735,11 +1744,16 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     }
 
     const opencode = createWorkspaceOpencodeClient(config, workspace);
-    unwrapOpencodeResult(
+    const active = sessionMutations.getActive(workspace.id, sessionId);
+    const deleted = unwrapOpencodeResult(
       await opencode.session.delete({ sessionID: sessionId }),
       `/session/${encodeURIComponent(sessionId)}`,
     );
 
+    if (deleted === true && active && sessionMutations.getActive(workspace.id, sessionId)?.runId === active.runId) {
+      sessionMutations.observe({ workspaceId: workspace.id, sessionId, runId: active.runId, status: "aborted" });
+      finalizeClearedRun(workspace.id, sessionId, active.runId);
+    }
     try {
       onSessionDeleted?.(workspace.id, sessionId);
     } catch {
