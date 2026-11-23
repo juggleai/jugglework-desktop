@@ -74,6 +74,18 @@ API 依据：[Electron moveAbove](https://www.electronjs.org/docs/latest/api/bas
 
 **证据状态（2026-11-23）：**本机 macOS 上只有便携策略／生命周期测试结果；未启动 Electron 夹具，未在 Windows 编译或运行两个 PowerShell 内嵌 C# 程序。透明窗输入、非激活点击、四边四角热区、遮挡、Z 序及整数缩放映射仍需 Windows 实测；没有新增 Windows 通过结论。
 
+## 独立 Electron 8 像素边缘尺寸探针
+
+在交互式 Windows 会话中将主屏缩放设为 **100%**（建议单屏），从仓库根目录运行：
+
+```powershell
+pnpm --dir apps/desktop exec electron ./scripts/meeting-window-p0-edge-size.cjs
+```
+
+探针在主屏工作区内逐个创建并销毁四个自有小窗，对比当前的 `resizable:false` 和候选 `resizable:true`，各测横条 `240×8` 和竖条 `8×240`。窗口始终鼠标穿透，以 `showInactive()` 显示，不全局置顶，不使用输入钩子。每组输出 `requestedDip`，以及显示前的 `beforeShowDip` 和显示约 200 ms 后的 `afterShowDip`，不含窗口或进程标识。运行完自动退出；退出码 0 表示测量完成，不表示尺寸符合请求。
+
+先前 **100% 缩放下的 `--overlay` Win32 回读**曾观察到：一条边请求厚度 **8 px**，实际回读 **39 px**。这是脱敏的历史观测，不是本探针的结果。新探针只读 Electron `getBounds()`（DIP）；即使薄边仍为 8，也必须用现有 `--overlay` 的 Win32 回读确认物理像素尺寸。此探针也不验证层级或输入行为。
+
 ## 无界面回归测试
 
 从仓库根目录逐文件运行；测试使用真实解析／策略／运行时代码，在 Electron／进程／管道边界提供替身，不启动 Electron 或 WinForms：
@@ -82,6 +94,7 @@ API 依据：[Electron moveAbove](https://www.electronjs.org/docs/latest/api/bas
 node apps/desktop/scripts/meeting-window-p0-native.test.cjs
 node apps/desktop/scripts/meeting-window-p0-overlay.test.cjs
 node apps/desktop/scripts/meeting-window-p0.test.cjs
+node --test apps/desktop/scripts/meeting-window-p0-edge-size.test.cjs
 ```
 
 回归覆盖被动显示与失序撤层、计数挂起时仍继续跟踪，以及实际模拟页面加载挂起时清理已创建的窗口。原生编译、Win32 API 调用及真实输入均不在便携测试覆盖范围内。
