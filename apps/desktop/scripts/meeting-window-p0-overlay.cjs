@@ -35,8 +35,15 @@ function overlayPlan(sample, evidence, screen, baseline) {
   if (!display || display.scaleFactor * 96 !== sample.dpi || !contains(display.bounds, outerDip) ||
       (baseline && display.id !== baseline.displayId)) reject('display');
   const dip = px.map((rect) => screen.screenToDipRect(null, rect));
-  if (!same(screen.dipToScreenRect(null, outerDip), outer) ||
-      !dip.every((rect, i) => box(rect) && same(screen.dipToScreenRect(null, rect), px[i]))) reject('mapping');
+  const mismatches = [outer, ...px].flatMap((rect, i) => {
+    const mapped = i === 0 ? outerDip : dip[i - 1];
+    const roundTripPx = box(mapped) ? screen.dipToScreenRect(null, mapped) : null;
+    return same(roundTripPx, rect) ? [] : [{ role: i === 0 ? 'outer' : roles[i - 1],
+      px: rect, dip: mapped ?? null, roundTripPx: roundTripPx ?? null }];
+  });
+  if (mismatches.length) {
+    throw Object.assign(new Error('overlay-mapping'), { mapping: { dpi: sample.dpi, scaleFactor: display.scaleFactor, mismatches } });
+  }
   if (baseline) {
     const dx = outer.x - baseline.sample.outerPx.x, dy = outer.y - baseline.sample.outerPx.y;
     if (!same(sample.dwmPx, { ...baseline.sample.dwmPx, x: baseline.sample.dwmPx.x + dx, y: baseline.sample.dwmPx.y + dy }) ||
@@ -171,7 +178,13 @@ function createFixtureOverlay({ BrowserWindow, screen, title, emit, fail }) {
       // Telemetry is independent of observe: renderer latency must not hold the
       // launcher's native-sampling processing gate while inputs are enabled.
       if (!telemetryPoll) telemetryPoll = setInterval(sampleInputs, 500);
-    } catch (error) { if (!disposed) abort(error.message?.startsWith('overlay-') ? error.message : 'overlay-runtime'); }
+    } catch (error) {
+      if (disposed) return;
+      if (error.message === 'overlay-mapping' && error.mapping) {
+        emit({ type: 'overlay', stage: 'mapping-mismatch', ...error.mapping });
+      }
+      abort(error.message?.startsWith('overlay-') ? error.message : 'overlay-runtime');
+    }
   }
   return { observe, dispose, identities: () => own.map((l) => ({ ...l })),
     setMode(next) {

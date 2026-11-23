@@ -70,7 +70,7 @@ test('native layer verification requires exact own HWND strings, geometry and no
   }
 });
 
-function runtime(t) {
+function runtime(t, testScreen = screen) {
   const windows = [], records = [], failures = [];
   class Window {
     constructor(options) {
@@ -90,11 +90,32 @@ function runtime(t) {
     isDestroyed() { return this.destroyed; }
     destroy() { this.destroyed = true; }
   }
-  const overlay = createFixtureOverlay({ BrowserWindow: Window, screen, title: `Meeting Window P0 ${'a'.repeat(32)}`,
+  const overlay = createFixtureOverlay({ BrowserWindow: Window, screen: testScreen, title: `Meeting Window P0 ${'a'.repeat(32)}`,
     emit: (r) => records.push(r), fail: (reason) => failures.push(reason) });
   t.after(() => overlay.dispose());
   return { overlay, windows, records, failures };
 }
+
+test('fractional mapping reports each mismatched rectangle and stops before creating layers', async (t) => {
+  // Stand-in for integer DIP conversion, not a model of Electron rounding.
+  const largeDisplay = { ...display, scaleFactor: 1.25 };
+  const scale = (rect, factor) => Object.fromEntries(Object.entries(rect).map(([key, n]) => [key, Math.round(n * factor)]));
+  const { overlay, windows, records, failures } = runtime(t, {
+    getDisplayMatching: () => largeDisplay,
+    screenToDipRect: (_, rect) => scale(rect, 0.8),
+    dipToScreenRect: (_, rect) => scale(rect, 1.25),
+  });
+  const outerPx = { x: 101, y: 106, width: 658, height: 447 };
+  await overlay.observe({ ...sample, dpi: 120, outerPx, dwmPx: { x: 109, y: 106, width: 642, height: 439 } }, {
+    clientPx: { x: 110, y: 144, width: 640, height: 400 }, borderPx: { x: 9, y: 9 }, layers: [],
+  });
+  assert.deepEqual(failures, ['overlay-mapping']);
+  assert.equal(windows.length, 0);
+  assert.deepEqual(records, [{ type: 'overlay', stage: 'mapping-mismatch', dpi: 120, scaleFactor: 1.25,
+    mismatches: [
+      { role: 'outer', px: outerPx, dip: { x: 81, y: 85, width: 526, height: 358 }, roundTripPx: { x: 101, y: 106, width: 658, height: 448 } },
+    ] }]);
+});
 
 test('passive layers await native readback and are removed on the first lost-order sample', async (t) => {
   const { overlay, windows, failures } = runtime(t);
