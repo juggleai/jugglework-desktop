@@ -35,6 +35,7 @@ import {
   type DenUser,
 } from "../../../app/lib/den";
 import { classifyAccountTransition, reconcileDenAccountIdentity } from "./den-account-switch";
+import { createActiveDayRecorder, listenForActiveDay } from "../../../app/lib/active-day";
 import { fenceManagedProviderHost } from "../../../app/lib/managed-provider-scope";
 import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
 import {
@@ -241,6 +242,22 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   // Monotonic token so stale async refreshes can't clobber a newer result.
   const refreshTokenRef = useRef(0);
   const statusRef = useRef<DenAuthStatus>("checking");
+  const activitySession = useRef<{ scope: string; baseUrl: string; token: string } | null>(null);
+  const recordActiveDay = useMemo(() => createActiveDayRecorder(), []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    return listenForActiveDay(document, () => {
+      const session = activitySession.current;
+      if (statusRef.current !== "signed_in" || !session) return;
+      try {
+        void recordActiveDay(session.scope, () => createDenClient(session).recordActiveDay(), window.localStorage, () => {
+          const live = readDenSettings();
+          return session.baseUrl === live.baseUrl && session.token === live.authToken;
+        }).catch(() => undefined);
+      } catch { /* Optional activity reporting must not interrupt input. */ }
+    });
+  }, [recordActiveDay]);
   const lastSignalRetryAtRef = useRef<number | null>(null);
   const signalRetryInFlightRef = useRef(false);
   const lastSessionValidationAtRef = useRef(0);
@@ -249,6 +266,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   const [pendingServerSwitch, setPendingServerSwitch] = useState<PendingServerSwitch | null>(null);
 
   const updateStatus = useCallback((nextStatus: DenAuthStatus) => {
+    if (nextStatus !== "signed_in") activitySession.current = null;
     statusRef.current = nextStatus;
     setStatus(nextStatus);
   }, []);
@@ -496,6 +514,9 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       if (currentRun !== refreshTokenRef.current) return;
 
       setUser(nextUser);
+      activitySession.current = nextUser.id ? {
+        scope: JSON.stringify([settings.baseUrl, nextUser.id]), baseUrl: settings.baseUrl, token,
+      } : null;
       setError(null);
       lastSignalRetryAtRef.current = null;
       updateStatus("signed_in");

@@ -3859,6 +3859,7 @@ type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Respo
 
 type DenRequestOptions = {
   method?: string;
+  referrerPolicy?: ReferrerPolicy;
   token?: string | null;
   body?: unknown;
   timeoutMs?: number;
@@ -3924,6 +3925,7 @@ async function requestJsonRaw<T>(
     url,
     {
       method: options.method ?? "GET",
+      referrerPolicy: options.referrerPolicy,
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
 	  credentials: "include",
@@ -4030,6 +4032,13 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
   const token = options.token?.trim() ?? null;
 
   return {
+    async recordActiveDay(): Promise<void> {
+      // Best effort only. A delayed activity error must not revoke a UI session.
+      const result = await requestJsonRaw(baseUrls, "/v1/activity/active-day", {
+        method: "POST", token, referrerPolicy: "strict-origin",
+      });
+      if (!result.ok) throw new Error(`Active day request failed (${result.status})`);
+    },
     /** 卡片只表达定位；打开前按当前组织复核持久事件及原投递目标。 */
     validateDocsCard: (input: { tenantId: string; contractVersion: 1; eventId: string; pageId: string; commentId?: string; kind: string; occurredAt: string; part: "group" | "direct"; conversationId: string }) =>
       requestJson<{ valid: boolean }>(baseUrls, "/api/v1/docs/notifications/validate", { method: "POST", token, organizationId: input.tenantId, body: input }),
