@@ -43,12 +43,13 @@ async function runElectron() {
   clearTimeout(readyTimer);
   if (readyExpired) return;
   app.on('window-all-closed', () => {});
-  let viewer, child, ink, observer, inkPoll, inkVerified = false, observerDone, stopObserver, occlusionSeen = false, targetMouse = null, inkWidth = 0, inkHeight = 0, inkX = 0, inkY = 0, stripsChild, stripSet, stripsDone, stripsVerified = false, stripClicks = {};
+  let viewer, child, ink, observer, inkPoll, inkVerified = false, observerDone, stopObserver, occlusionSeen = false, targetMouse = null, hotzoneTimer, inkWidth = 0, inkHeight = 0, inkX = 0, inkY = 0, stripsChild, stripSet, stripsDone, stripsVerified = false, stripClicks = {};
   let finishing = false, closed = false, forced = false, passed = false;
   let cleanupTimer, finalTimer, observationTimer, identity, geometry, capturing = false;
   const started = Date.now();
   function disposeInk() {
     clearTimeout(inkPoll);
+    clearTimeout(hotzoneTimer);
     if (ink && !ink.isDestroyed()) ink.destroy();
     if (stripsChild && !stripsChild.stdin.destroyed) stripsChild.stdin.end();
     stopObserver?.();
@@ -79,7 +80,8 @@ async function runElectron() {
   const perfToggle = process.argv.includes('--perf-toggle');
   const perfMs = Number(process.argv[process.argv.indexOf('--perf-ms') + 1]) || 12000;
   const a4Mode = process.argv.includes('--a4-passive') ? 'passive' : process.argv.includes('--a4-draw') ? 'draw' :
-    process.argv.includes('--a4-occluded') ? 'occluded' : process.argv.includes('--a4-strips') ? 'strips' : null;
+    process.argv.includes('--a4-occluded') ? 'occluded' : process.argv.includes('--a4-strips') ? 'strips' :
+      process.argv.includes('--hotzone') ? 'hotzone' : null;
   const targetArgs = [...actionArg('--minimize-after', ['MinimizeMs', '1800']),
     ...actionArg('--resize-after', ['ResizeMs', '1800']),
     ...actionArg('--occlude-after', ['OccludeMs', '1800']),
@@ -183,6 +185,20 @@ async function runElectron() {
         if (finishing) return;
         if (!occlusionSeen) return finish(false, 'ink-occlusion-timeout');
       }
+      if (a4Mode === 'hotzone') {
+        if (!ink) return finish(false, 'a4-needs-ink');
+        ink.setIgnoreMouseEvents(false);
+        const tick = () => {
+          if (finishing || !ink || ink.isDestroyed()) return;
+          const point = screen.getCursorScreenPoint();
+          const inside = point.x >= inkX && point.x < inkX + inkWidth && point.y >= inkY && point.y < inkY + inkHeight;
+          const ring = inside && (point.x - inkX < 24 || inkX + inkWidth - point.x <= 24 ||
+            point.y - inkY < 24 || inkY + inkHeight - point.y <= 24);
+          ink.setIgnoreMouseEvents(ring);
+          hotzoneTimer = setTimeout(tick, 40);
+        };
+        hotzoneTimer = setTimeout(tick, 40);
+      }
       if (a4Mode) {
         if (!ink) return finish(false, 'a4-needs-ink');
         const { a4Verdict } = require('./meeting-window-p0-hybrid-ink.cjs');
@@ -201,7 +217,9 @@ async function runElectron() {
         }
         if (finishing) return;
         const target = targetMouse || { clicks: 0, drags: 0 };
-        const verdict = a4Mode === 'strips'
+        const verdict = a4Mode === 'hotzone'
+          ? require('./meeting-window-p0-hybrid-ink.cjs').hotzoneVerdict(counts, target)
+          : a4Mode === 'strips'
           ? require('./meeting-window-p0-hybrid-ink.cjs').stripInputVerdict(stripClicks, counts, target)
           : a4Verdict(a4Mode, counts, target);
         emit({ stage: 'a4-result', mode: a4Mode, ink: counts, target, valid: verdict.pass, reason: verdict.reason });
@@ -281,7 +299,7 @@ async function runElectron() {
   function startInk() {
     const { parseNativeSample } = require('./meeting-window-p0-native.cjs');
     const { inkPlan, inkVerdict, page } = require('./meeting-window-p0-hybrid-ink.cjs');
-    const target = { ...identity, pid: child.pid, overlay: true, overlayPid: process.pid, passiveInk: true, interactive: a4Mode === 'draw' };
+    const target = { ...identity, pid: child.pid, overlay: true, overlayPid: process.pid, passiveInk: true, interactive: a4Mode === 'draw' || a4Mode === 'hotzone' };
     observer = spawn(powershell, ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', join(__dirname, 'meeting-window-p0-native.ps1')],
       { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
     const nativeLines = createInterface({ input: observer.stdout });

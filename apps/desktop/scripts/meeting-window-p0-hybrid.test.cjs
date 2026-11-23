@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { matchFixtureSource, composeAndVerify, cleanupVerdict } = require('./meeting-window-p0-hybrid.cjs');
-const { inkPlan, inkVerdict, a4Verdict, mappingVerdict, stripInputVerdict } = require('./meeting-window-p0-hybrid-ink.cjs');
+const { inkPlan, inkVerdict, a4Verdict, mappingVerdict, stripInputVerdict, hotzoneVerdict } = require('./meeting-window-p0-hybrid-ink.cjs');
 
 test('passive ink requires stable identity, normal state and exact geometry and order', () => {
   const rect = { x: 20, y: 40, width: 640, height: 400 };
@@ -624,4 +624,11 @@ test('edge strip hot zones accept only strip-owned clicks', () => {
   assert.equal(stripInputVerdict(strips, { clicks: 1, drags: 0 }, zero).reason, 'ink-stole-edge-input');
   assert.equal(stripInputVerdict(null, zero, zero).reason, 'counts');
   assert.equal(stripInputVerdict({ top: -1, bottom: 9 }, zero, zero).reason, 'counts');
+});
+test('same-window hot zone splits edge drags and inner drawing', () => {
+  assert.deepEqual(hotzoneVerdict({ clicks: 3, drags: 3 }, { clicks: 8, drags: 8 }), { pass: true, reason: 'hot-zone-split' });
+  assert.equal(hotzoneVerdict({ clicks: 3, drags: 3 }, { clicks: 7, drags: 7 }).reason, 'edge-drags-missing');
+  assert.equal(hotzoneVerdict({ clicks: 2, drags: 2 }, { clicks: 8, drags: 8 }).reason, 'inner-drags-missing');
+  assert.equal(hotzoneVerdict({ clicks: 9, drags: 9 }, { clicks: 8, drags: 8 }).reason, 'ink-received-edge-drag');
+  assert.equal(hotzoneVerdict(null, { clicks: 1, drags: 1 }).reason, 'counts');
 });

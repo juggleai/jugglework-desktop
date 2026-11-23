@@ -103,4 +103,15 @@ function stripInputVerdict(strips, ink, target) {
   return { pass: true, reason: 'strips-owned-input', total };
 }
 
-module.exports = { inkPlan, inkVerdict, page, a4Verdict, mappingVerdict, stripInputVerdict };
+// Same-window hot zone: the outer ring must reach the target, the inner area
+// must stay owned by the annotation window.
+function hotzoneVerdict(ink, target) {
+  const valid = (v) => v && Number.isSafeInteger(v.clicks) && Number.isSafeInteger(v.drags) && v.clicks >= 0 && v.drags >= 0;
+  if (!valid(ink) || !valid(target)) return { pass: false, reason: 'counts' };
+  if (target.drags < 8) return { pass: false, reason: 'edge-drags-missing' };
+  if (ink.drags < 3) return { pass: false, reason: 'inner-drags-missing' };
+  if (ink.drags > 6) return { pass: false, reason: 'ink-received-edge-drag' };
+  return { pass: true, reason: 'hot-zone-split' };
+}
+
+module.exports = { inkPlan, inkVerdict, page, a4Verdict, mappingVerdict, stripInputVerdict, hotzoneVerdict };
