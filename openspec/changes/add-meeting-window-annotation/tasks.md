@@ -36,6 +36,7 @@
   - [ ] 同窗口光标策略热区实验 BLOCKED：环带内按下能穿透到目标（8 次 mousedown），但拖入内部时整窗穿透切回捕获，目标收不到抬起、墨层收不到按下，双方均无完整拖拽（目标拖拽 0、墨层 0）。逐点热区必须用原生 `WM_NCHITTEST`/`HTTRANSPARENT` 实现，不能用整窗 `setIgnoreMouseEvents` 动态切换。
 - [ ] 0.8 按 P0 结果更新 OpenSpec
   - [x] 记录 macOS 首轮 P0-1、P0-2、P0-4、P0-6 的实测结果及限制
+  - [x] Windows A 阶段夹具侧交接完成：`docs/superpowers/reports/meeting-window-annotation-windows-2026-11-23.md` 汇总 101 项回归、可支持范围、必须拒绝项、可移植夹具与需产品/B 阶段事项。未完成任务保持未勾选；A 不构成产品放行，B 未开始。
 
 ## 1. 原生辅助程序
 
