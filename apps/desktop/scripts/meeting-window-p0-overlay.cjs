@@ -5,6 +5,8 @@ const same = (a, b) => box(a) && box(b) && ['x', 'y', 'width', 'height'].every((
 const contains = (a, b) => box(a) && box(b) && b.x >= a.x && b.y >= a.y &&
   b.x + b.width <= a.x + a.width && b.y + b.height <= a.y + a.height;
 const decimal = (s) => typeof s === 'string' && /^[1-9]\d{0,19}$/.test(s) && BigInt(s) <= 0xffffffffffffffffn;
+const geometryFields = (rect, keys = ['x', 'y', 'width', 'height']) => rect == null ? null :
+  Object.fromEntries(keys.map((key) => [key, Number.isSafeInteger(rect[key]) ? rect[key] : null]));
 
 function overlayPlan(sample, evidence, screen, baseline) {
   const reject = (reason) => { throw new Error(`overlay-${reason}`); };
@@ -15,13 +17,19 @@ function overlayPlan(sample, evidence, screen, baseline) {
   if (baseline && sample.dpi !== baseline.sample.dpi) reject('dpi-change');
   if (sample.state !== 'normal') reject('state');
   const outer = sample.outerPx, client = evidence?.clientPx, border = evidence?.borderPx;
+  const rejectGeometry = (check) => {
+    throw Object.assign(new Error('overlay-geometry'), { geometry: {
+      source: 'target', check, dpi: sample.dpi, outerPx: geometryFields(outer), dwmPx: geometryFields(sample.dwmPx),
+      clientPx: geometryFields(client), borderPx: geometryFields(border, ['x', 'y']),
+    } });
+  };
   if (!box(outer) || !box(sample.dwmPx) || !contains(outer, client) || !border ||
       ![border.x, border.y].every((n) => Number.isSafeInteger(n) && n > 0 && n <= 64) ||
-      outer.width <= border.x * 2 || outer.height <= border.y * 2) reject('geometry');
+      outer.width <= border.x * 2 || outer.height <= border.y * 2) rejectGeometry('bounds-or-border');
   if (baseline && (outer.width !== baseline.sample.outerPx.width || outer.height !== baseline.sample.outerPx.height)) reject('resize');
   // 80 DIP reserved for actual fixture buttons; title and client controls stay native.
   const controls = 80 * sample.dpi / 96;
-  if (!Number.isSafeInteger(controls) || client.height <= controls) reject('geometry');
+  if (!Number.isSafeInteger(controls) || client.height <= controls) rejectGeometry('controls-area');
   const px = [
     { ...client, y: client.y + controls, height: client.height - controls },
     { x: outer.x, y: outer.y, width: outer.width, height: border.y },
@@ -29,7 +37,7 @@ function overlayPlan(sample, evidence, screen, baseline) {
     { x: outer.x, y: outer.y + border.y, width: border.x, height: outer.height - 2 * border.y },
     { x: outer.x + outer.width - border.x, y: outer.y + border.y, width: border.x, height: outer.height - 2 * border.y },
   ];
-  if (!px.every(box)) reject('geometry');
+  if (!px.every(box)) rejectGeometry('planned-bounds');
   const outerDip = screen.screenToDipRect(null, outer);
   const display = screen.getDisplayMatching(outerDip);
   if (!display || display.scaleFactor * 96 !== sample.dpi || !contains(display.bounds, outerDip) ||
@@ -53,7 +61,7 @@ function overlayPlan(sample, evidence, screen, baseline) {
   return { px, dip, displayId: display.id, sample, client, border };
 }
 
-function checkLayers(layers, own, plan) {
+function checkLayers(layers, own, plan, onGeometryMismatch) {
   if (!Array.isArray(layers) || layers.length !== roles.length || own.length !== roles.length) return 'identity';
   for (let i = 0; i < roles.length; i++) {
     const layer = layers[i];
@@ -61,7 +69,11 @@ function checkLayers(layers, own, plan) {
     if (layer.topmost !== false) return 'topmost';
     if (layer.dpi !== plan.sample.dpi) return 'dpi';
     if (layer.visible !== true) return 'visibility';
-    if (!same(layer.outerPx, plan.px[i])) return 'geometry';
+    if (!same(layer.outerPx, plan.px[i])) {
+      onGeometryMismatch?.({ source: 'layer', dpi: plan.sample.dpi, role: roles[i],
+        plannedPx: geometryFields(plan.px[i]), plannedDip: geometryFields(plan.dip[i]), actualPx: geometryFields(layer.outerPx) });
+      return 'geometry';
+    }
   }
   return layers.every((l) => l.adjacent === true) ? 'ok' : 'order';
 }
@@ -162,8 +174,9 @@ function createFixtureOverlay({ BrowserWindow, screen, title, emit, fail }) {
       }
       // On translation the readback describes our last placement, not the
       // new bounds. Verify that old placement (including Z order) before moving.
-      const result = checkLayers(evidence?.layers, own, moved ? previous : plan);
-      if (result !== 'ok') throw new Error(`overlay-${result}`);
+      let geometry;
+      const result = checkLayers(evidence?.layers, own, moved ? previous : plan, (details) => { geometry = details; });
+      if (result !== 'ok') throw Object.assign(new Error(`overlay-${result}`), { geometry });
       if (moved) {
         suspend();
         windows.forEach((win, i) => win.setBounds(plan.dip[i]));
@@ -182,6 +195,10 @@ function createFixtureOverlay({ BrowserWindow, screen, title, emit, fail }) {
       if (disposed) return;
       if (error.message === 'overlay-mapping' && error.mapping) {
         emit({ type: 'overlay', stage: 'mapping-mismatch', ...error.mapping });
+      }
+      if (error.message === 'overlay-geometry' && error.geometry) {
+        dispose();
+        emit({ type: 'overlay', stage: 'geometry-mismatch', ...error.geometry });
       }
       abort(error.message?.startsWith('overlay-') ? error.message : 'overlay-runtime');
     }

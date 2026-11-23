@@ -117,6 +117,31 @@ test('fractional mapping reports each mismatched rectangle and stops before crea
     ] }]);
 });
 
+test('layer geometry failure logs only bounds and role, then removes all layers', async (t) => {
+  const { overlay, windows, records, failures } = runtime(t);
+  await overlay.observe(sample, evidence);
+  const plan = overlayPlan(sample, evidence, screen);
+  const layers = observed(plan, overlay.identities());
+  const actualPx = { ...layers[1].outerPx, height: 12 };
+  layers[1].outerPx = { ...actualPx, hwnd: layers[1].hwnd };
+  await overlay.observe(sample, { ...evidence, layers });
+  assert.deepEqual(records.at(-1), { type: 'overlay', stage: 'geometry-mismatch', source: 'layer',
+    dpi: 96, role: 'top', plannedPx: plan.px[1], plannedDip: plan.dip[1], actualPx });
+  assert.deepEqual(failures, ['overlay-geometry']);
+  assert.ok(windows.every((w) => w.ignored && w.destroyed));
+});
+
+test('invalid target geometry logs the failing check without target identity', async (t) => {
+  const { overlay, windows, records, failures } = runtime(t);
+  const clientPx = { ...evidence.clientPx, x: sample.outerPx.x - 1 };
+  await overlay.observe(sample, { ...evidence, clientPx });
+  assert.deepEqual(records, [{ type: 'overlay', stage: 'geometry-mismatch', source: 'target',
+    check: 'bounds-or-border', dpi: 96, outerPx: sample.outerPx, dwmPx: sample.dwmPx,
+    clientPx, borderPx: evidence.borderPx }]);
+  assert.deepEqual(failures, ['overlay-geometry']);
+  assert.equal(windows.length, 0);
+});
+
 test('passive layers await native readback and are removed on the first lost-order sample', async (t) => {
   const { overlay, windows, failures } = runtime(t);
   await overlay.observe(sample, evidence);
