@@ -33,19 +33,24 @@
 ### Requirement: 单文件用途、范围与期限
 服务端 MUST 校验文件名合法、大小为正且不超过下表上限。图片用途校验扩展名与声明 MIME 一致：`image/png`、`image/jpeg`、`image/webp`、`image/gif` 分别对应 `.png`、`.jpg`/`.jpeg`、`.webp`、`.gif`。
 
-| 用途 | 允许类型 | 大小上限（含） | `organizations/{orgId}/users/{userId}/` 下的前缀 |
+| 用途 | 允许类型 | 大小上限（含） | 对象前缀 |
 |---|---|---|---|
-| `avatar` | 四种图片 | 5 MiB | `avatar/`；不得指定任务 |
-| `task_image` | 四种图片 | 5 MiB | `tasks/{taskId}/task_image/` 或 `draft/task_image/` |
-| `task_attachment` | 任意格式，统一按 `application/octet-stream` 上传；兼容旧客户端的四种图片及 PDF | 20 MiB | `tasks/{taskId}/task_attachment/` 或 `draft/task_attachment/` |
+| `avatar` | 四种图片 | 5 MiB | `avatars/`；不得指定任务 |
+| `task_image` | 四种图片 | 5 MiB | `images/` |
+| `task_attachment` | 任意格式，统一按 `application/octet-stream` 上传；兼容旧客户端的四种图片及 PDF | 20 MiB | `attachments/` |
 
-#### Scenario: 有任务与无任务分别命名
+#### Scenario: 新对象按业务用途命名
 - **WHEN** 合法任务文件通过校验
-- **THEN** 有 `taskId` 时使用已授权任务前缀，无 `taskId` 时使用本人草稿前缀；前缀后为服务端 UUID 加扩展名，不使用原始文件名作为对象名。
+- **THEN** 草稿与已保存任务按相同用途使用同一目录，各自以服务端 UUID 加扩展名命名，不包含组织、用户、任务 ID 或原始文件名。
+
+#### Scenario: 使用短路径更换头像
+- **WHEN** 成员提交 `avatars/` 下的新头像 URL
+- **THEN** 服务端要求签名标签与活动组织、当前用户、下载基址及文件名匹配，拒绝他人的头像和未经签发的短路径；原本人头像 URL 继续兼容，已有对象及引用不迁移。
 
 #### Scenario: 精确 key 的五分钟策略
 - **WHEN** 服务端签发成功
-- **THEN** 返回 `provider=qiniu`、`uploadUrl`、`token`、`key`、`fileUrl`、`expiresAt`。策略限定 `scope=bucket:key`、五分钟期限、`insertOnly=1`、`mimeLimit=contentType`、`fsizeLimit=sizeBytes`。二进制附件使用 `.bin` 对象名及 `detectMime=0`，其他类型使用 `detectMime=1`。
+- **THEN** 返回 `provider=qiniu`、`uploadUrl`、`token`、`key`、`fileUrl`、`expiresAt`。策略限定 `scope=bucket:key`、五分钟期限、`insertOnly=1`、`fsizeLimit=sizeBytes`。
+- **AND** 通用二进制附件使用 `.bin` 对象名和 `detectMime=-1`，省略 `mimeLimit`；头像、正文插图及旧版有类型附件仍使用 `detectMime=1` 和 `mimeLimit=contentType`。
 
 #### Scenario: 不支持的文件
 - **WHEN** 文件为零字节、超过用途上限、图片用途扩展名与 MIME 不符，或请求将非白名单类型用作头像或任务图片
