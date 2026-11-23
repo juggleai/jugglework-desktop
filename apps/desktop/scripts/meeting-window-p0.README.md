@@ -101,7 +101,20 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\apps\d
 Windows PowerShell 5.1 通过内嵌 C# 同步创建五个自有 `WS_POPUP`：一个固定的 **240×240 px** 合成目标和四条 **8 px** 边（上下含角，左右不重叠）。所有窗口全程隐藏、非激活、非置顶；不接受外部 HWND，不采集画面，不拦截输入。`GetWindowRect` 在 PMv2 线程上回读物理矩形，逐项精确比较位置和尺寸；`GetDpiForWindow` 报告每窗 DPI。没有消息循环或等待；同线程销毁已创建的窗口并恢复 DPI 上下文后才输出一行脱敏 JSON，只含合成几何、角色、DPI 和状态，不含窗口或进程标识。
 
 - 退出码 `0`：五个隐藏窗口的 `requestedPx` 与 `actualPx` 全部精确匹配；`2`：测量完成但至少一项不匹配；`1`：探针失败，输出脱敏 `stage`。
-- 本步只验证隐藏窗口的原生几何；Windows 编译和实测待完成。不能据此判断显示后的尺寸、层级、遮挡或输入行为。
+- 据先前回报，主屏 100% 的隐藏测量中，五个窗口均回读 DPI 96，`requestedPx` 与 `actualPx` 全部精确匹配。这是历史结果，不是本次复测；不能据此判断显示后的尺寸、层级、遮挡或输入行为。
+
+## 独立 Win32 可见边缘实验（被动阶段）
+
+在交互式 Windows 10 1703+ 或 Windows 11 会话中，从仓库根目录运行。需要 Node.js 和 Windows PowerShell 5.1；建议使用主屏 100% 的单屏环境。
+
+```powershell
+node apps/desktop/scripts/meeting-window-p0-edge-visible-native.cjs
+```
+
+- 沿用隐藏探针的合成矩形：目标位于 `(64,64)`，大小 `240×240 px`；上下两条 `240×8 px` 含角，左右两条 `8×224 px` 不重叠。窗口始终鼠标穿透、无激活；只创建、显示、排列和销毁本探针窗口。不接收 HWND、不挂钩或注入输入、不采集。
+- `visible-sample` 表示首次读回满足：PMv2、DPI 96、五窗位置和尺寸逐项精确、可见且非置顶、自下而上 `target → top → bottom → left → right` 严格相邻。约每 100 ms 继续校验；读回并非原子，也不证明像素已呈现或未被遮住。可肉眼查看目标和四条边，不需要点击或拖拽。
+- 正常观察约 12 秒；`removed` 和退出码 `0` 表示观察期结束且 helper 报告清理成功。失败、`Ctrl+C` 或父进程断开时通过 EOF 请求清理；原生 helper 对读回不符也主动撤层。无响应则尝试终止 helper，报 `forced-cleanup`；`cleanup-timeout` 表示未确认退出。失败返回 `1`。日志不含句柄或进程标识。
+- 这是独立的原生可见阶段，**没有 Electron ink 或输入启用路径**（始终 `inputEnabled:false`）。不验证混合层级、真实边缘拦截、遮挡输入、跟随或混合 DPI；本次未在 Windows 编译或运行。原 `--overlay`、`--native-only` 和隐藏探针命令不变。
 
 ## 无界面回归测试
 
@@ -112,6 +125,7 @@ node apps/desktop/scripts/meeting-window-p0-native.test.cjs
 node apps/desktop/scripts/meeting-window-p0-overlay.test.cjs
 node apps/desktop/scripts/meeting-window-p0.test.cjs
 node --test apps/desktop/scripts/meeting-window-p0-edge-size.test.cjs
+node --test apps/desktop/scripts/meeting-window-p0-edge-visible-native.test.cjs
 ```
 
 回归覆盖被动显示与失序撤层、计数挂起时仍继续跟踪，以及实际模拟页面加载挂起时清理已创建的窗口。原生编译、Win32 API 调用及真实输入均不在便携测试覆盖范围内。
