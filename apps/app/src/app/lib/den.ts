@@ -4015,15 +4015,18 @@ type FileUploadRequest = {
   contentType: string;
   sizeBytes: number;
   taskId?: string;
+  uploadProtocol?: "put-v1";
 };
 type FileUploadCredentials = {
-  provider: "qiniu";
   uploadUrl: string;
-  token: string;
   key: string;
   fileUrl: string;
   expiresAt: string;
-};
+} & (
+  | { provider: "qiniu"; token: string }
+  | { provider: "aws" | "minio"; method: "PUT"; headers: { "Content-Type": string; "If-None-Match": "*" } }
+  | { provider: "oss"; method: "PUT"; headers: { "Content-Type": string; "x-oss-forbid-overwrite": "true" } }
+);
 
 export function createDenClient(options: { baseUrl: string; token?: string | null }) {
   const baseUrls = resolveDenBaseUrls({
@@ -4114,10 +4117,23 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return user;
     },
 
-    createFileUploadCredentials(organizationId: string, body: FileUploadRequest, options: { signal?: AbortSignal } = {}) {
-      return requestJson<FileUploadCredentials>(baseUrls, `/v1/organizations/${encodeURIComponent(organizationId)}/file-upload-credentials`, {
-        method: "POST", token, organizationId, body, signal: options.signal,
-      });
+    async createFileUploadCredentials(organizationId: string, { uploadProtocol = "put-v1", ...body }: FileUploadRequest, options: { signal?: AbortSignal } = {}) {
+      const path = `/v1/organizations/${encodeURIComponent(organizationId)}/file-upload-credentials`;
+      const request = { method: "POST", token, organizationId, signal: options.signal };
+      try {
+        return await requestJson<FileUploadCredentials>(baseUrls, path, { ...request, body: { ...body, uploadProtocol } });
+      } catch (error) {
+        // The old strict JSON decoder rejects uploadProtocol before issuing a grant.
+        // Its error differs from storage service validation and other 400s.
+        if (!(error instanceof DenApiError) || error.status !== 400 || error.code !== "invalid_request" ||
+            error.message !== "Invalid storage request." || error.details !== undefined) throw error;
+        options.signal?.throwIfAborted();
+        const legacy = await requestJson<FileUploadCredentials>(baseUrls, path, { ...request, body });
+        if (legacy?.provider !== "qiniu") {
+          throw new DenApiError(502, "invalid_file_upload_credentials", "服务器未返回兼容的上传凭据。");
+        }
+        return legacy;
+      }
     },
 
     async updateProfile(input: { name: string; avatarDataUrl?: string; avatarUrl?: string }, options: { signal?: AbortSignal; organizationId?: string } = {}): Promise<{ user: DenUser; im: DenIMLoginBootstrap | null }> {

@@ -45,7 +45,7 @@ beforeEach(async () => {
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: async (url: string, init: RequestInit) => {
     if (url.endsWith("/file-upload-credentials")) {
       calls.push("grant");
-      expect(JSON.parse(String(init.body))).toEqual({ purpose: "avatar", fileName: "face.png", sizeBytes: 5, contentType: "image/png" });
+      expect(JSON.parse(String(init.body))).toEqual({ purpose: "avatar", fileName: "face.png", sizeBytes: 5, contentType: "image/png", uploadProtocol: "put-v1" });
       return Response.json(grant);
     }
     if (url === grant.uploadUrl + "/") { calls.push("upload"); return uploadResponse(); }
