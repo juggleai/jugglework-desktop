@@ -88,6 +88,7 @@ mock.module("../src/components/ui/tabs", () => ({
 }));
 
 const { TaskPage, TaskShellContent } = await import("../src/react-app/domains/tasks/task-page");
+const { TaskAttachmentSection } = await import("../src/react-app/domains/tasks/task-attachment-section");
 const { TaskCommentEditor, TaskDescriptionEditor } = await import("../src/react-app/domains/tasks/task-description-editor");
 const { TaskDateTimeCell } = await import("../src/react-app/domains/tasks/task-date-time-cell");
 const { useUiStateStore } = await import("../src/react-app/shell/ui-state-store");
@@ -1999,15 +2000,112 @@ test("task detail opens the description from its preview and saves and collapses
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
-test("task detail keeps the description in preview without content edit permission", async () => {
-  const detail = result(task(1));
-  detail.permissions.canEditContent = false;
+test("attachment removal persists just the selected occurrence and leaves its card available after a failed save", async () => {
+  const link = '[notes.txt](https://files.test/two "task-file:2")';
+  const prefix = `Example: \`${link}\`\n[notes.txt](https://files.test/one "task-file:01")\nEarlier: ${link}\nBefore `;
+  const suffix = ` after.\n![notes.txt](https://files.test/two "task-file:2")`;
+  let saved = task(7, "Title", prefix + link + suffix);
+  const updates: Array<Parameters<DenClient["updateProductTask"]>[2]> = [];
+  const pending = deferred<DenProductTaskResult>();
+  const client = connectedClient({
+    getProductTask: async () => result(saved),
+    updateProductTask: async (_orgId, _id, patch) => {
+      updates.push(patch);
+      if (updates.length === 1) return pending.promise;
+      saved = { ...saved, description: patch.description!, version: 8 };
+      return result(saved);
+    },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, saved.id)); });
+  await settle();
+  try {
+    const section = () => renderer!.root.findByType(TaskAttachmentSection).props;
+    const remove = () => section().onRemove(section().files[2], 2);
+    let first!: Promise<boolean>;
+    await act(async () => { first = remove(); });
+    expect(section().files).toHaveLength(3);
+    await act(async () => { pending.reject(new Error("Offline")); expect(await first).toBe(false); });
+    expect(section().files).toHaveLength(3);
+    await act(async () => { expect(await remove()).toBe(true); });
+    await settle();
+    const patch = { description: prefix + suffix, expectedVersion: 7, idempotencyKey: expect.any(String) };
+    expect(updates).toEqual([patch, patch]);
+    expect(updates[1].idempotencyKey).not.toBe(updates[0].idempotencyKey);
+    expect(section().files).toHaveLength(2);
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("a conflicted unlink refreshes cards and requires a new selection against the latest description", async () => {
+  const first = '[notes.txt](https://files.test/one "task-file")';
+  const second = '[notes.txt](https://files.test/two "task-file")';
+  let server = task(1, "Title", `Original\n${first}`);
+  const updates: Array<Parameters<DenClient["updateProductTask"]>[2]> = [];
+  const client = connectedClient({
+    getProductTask: async () => result(server),
+    updateProductTask: async (_orgId, _id, patch) => {
+      updates.push(patch);
+      if (updates.length === 1) {
+        server = task(2, "Title", `Remote edit\n${second}\n${first}`);
+        throw new DenApiError(409, "task_version_conflict", "Changed elsewhere", { currentVersion: 2 });
+      }
+      return result({ ...server, description: patch.description!, version: 3 });
+    },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, server.id)); });
+  await settle();
+  try {
+    const section = () => renderer!.root.findByType(TaskAttachmentSection).props;
+    const file = section().files[0];
+    await act(async () => { expect(await section().onRemove(file, 0)).toBe(false); });
+    await settle();
+    expect(section().files).toHaveLength(2);
+    await act(async () => { expect(await section().onRemove(file, 0)).toBe(false); });
+    expect(updates).toHaveLength(1);
+    await act(async () => { expect(await section().onRemove(section().files[1], 1)).toBe(true); });
+    expect(updates[1]).toEqual({ expectedVersion: 2, description: `Remote edit\n${second}`, idempotencyKey: expect.any(String) });
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("attachment removal cannot submit dirty content or bypass a loaded editor conflict", async () => {
+  const link = '[notes.txt](https://files.test/one "task-file:1")';
+  let reads = 0;
+  const updateProductTask = mock(async () => { throw new DenApiError(409, "task_version_conflict", "Changed elsewhere", { currentVersion: 2 }); });
+  const client = connectedClient({ getProductTask: async () => result(task(++reads, "Title", `Original\n${link}`)), updateProductTask });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, "task_one")); });
+  await settle();
+  try {
+    const root = renderer!.root;
+    const remove = () => { const { files, onRemove } = root.findByType(TaskAttachmentSection).props; return onRemove(files[0], 0); };
+    const editor = await openDetailDescription(root);
+    await act(async () => { editor.props.onChange("Unsaved body"); });
+    await act(async () => { expect(await remove()).toBe(false); });
+    expect(editor.props.value).toBe("Unsaved body");
+    expect(updateProductTask).not.toHaveBeenCalled();
+    await act(async () => { leaveDescription(editor); });
+    await settle();
+    await act(async () => { root.findAllByType(Button).find(node => node.props.children === "Load latest")!.props.onClick(); });
+    await settle();
+    await act(async () => { expect(await remove()).toBe(false); });
+    expect(updateProductTask).toHaveBeenCalledTimes(1);
+    expect((await openDetailDescription(root)).props.value).toBe("Unsaved body");
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("task detail keeps the description and attachments read-only with comment permission", async () => {
+  const detail = result(task(1, "Title", '[notes.txt](https://files.test/one "task-file")'));
+  detail.permissions = { ...detail.permissions, canEditContent: false, canEditTime: false, canManageMembers: false, canManageVisibility: false, canComplete: false, canCancel: false, canDelete: false };
   const client = connectedClient({ getProductTask: async () => detail });
   let renderer: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(connectedPage(client, "task_one")); });
   await settle();
   try {
     const root = renderer!.root;
+    expect(root.findByType(TaskCommentEditor)).toBeDefined();
+    expect(root.findByType(TaskAttachmentSection).props.files).toHaveLength(1);
+    expect(root.findByType(TaskAttachmentSection).props.onRemove).toBeUndefined();
     const preview = root.findByProps({ "data-testid": "task-detail-description-preview" });
     if (!preview.props.disabled) await act(async () => { preview.props.onClick?.(); });
     expect(root.findByProps({ "data-testid": "task-detail-description-preview" })).toBeDefined();

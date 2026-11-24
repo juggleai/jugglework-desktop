@@ -96,7 +96,7 @@ export type AttachmentRef = { name: string; url: string; size: number | null };
 const decodeLabel = (s: string) => s.replace(/&#(\d+);/g, (raw, n) => +n <= 0x10ffff ? String.fromCodePoint(+n) : raw);
 // Only explicit, non-image upload references belong to the attachment section.
 // Keep code samples and ordinary links byte-for-byte intact.
-export function splitTaskAttachments(source: string) {
+function extractTaskAttachments(source: string, removeOnly?: number) {
   const files: AttachmentRef[] = [];
   if (!source.includes('"task-file')) return { body: source, files };
   // Skip fenced/indented code before looking at inline code or file links. Consume
@@ -107,10 +107,18 @@ export function splitTaskAttachments(source: string) {
     const url = descriptionAddress(address, true);
     if (!url) return raw;
     files.push({ name: decodeLabel(name), url, size: bytes && Number.isSafeInteger(+bytes) ? +bytes : null });
+    if (removeOnly !== undefined && files.length - 1 !== removeOnly) return raw;
     const after = source[offset + raw.length];
     return after && after !== "\n" ? separator : "";
   });
   return { body, files };
+}
+export function splitTaskAttachments(source: string) {
+  return extractTaskAttachments(source);
+}
+export function withoutTaskAttachment(source: string, index: number) {
+  const { body, files } = extractTaskAttachments(source, index);
+  return files[index] ? body : null;
 }
 export function joinTaskAttachments(body: string, files: readonly AttachmentRef[]) {
   return [body, ...files.map(f => `[${fileLabel(f.name)}](${f.url} "task-file${f.size === null ? "" : `:${f.size}`}")`)].filter(Boolean).join("\n");
