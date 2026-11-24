@@ -371,6 +371,26 @@ describe("remote-control read adapters", () => {
     assert.deepEqual(result.value.modelPreference, { revision: 0, mode: "auto", model: null, updatedAt: 0 });
   });
 
+  it("accepts the server message-page cursor without exposing it in the remote snapshot", async () => {
+    const testHarness = harness({
+      responses: {
+        "/workspace/ws_local/sessions/ses_1/snapshot?limit=200": {
+          ...snapshotBody(),
+          item: {
+            ...snapshotBody().item,
+            messagePage: { olderCursor: "cursor-older", hasOlder: true },
+          },
+        },
+      },
+    });
+
+    const result = await dispatch(testHarness.registry, "session.snapshot", { workspaceId: "ws_local", sessionId: "ses_1" });
+
+    assert.equal(result.ok, true);
+    assert.equal(Object.hasOwn(result.value, "messagePage"), false);
+    desktopRemoteOperationResultSchema.parse({ operation: "session.snapshot", payloadVersion: 1, result: result.value });
+  });
+
   it("keeps sanitized tool titles within the protocol limit when redaction expands", () => {
     const normalized = normalizeRemoteMessagePart({
       id: "prt_expanding_title",
