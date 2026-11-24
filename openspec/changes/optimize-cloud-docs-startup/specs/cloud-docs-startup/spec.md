@@ -1,5 +1,13 @@
 ## ADDED Requirements
 
+### Requirement: Enable startup optimizations by default
+Desktop SHALL enable main-window live restoration and startup warmup by default. Setting `JUGGLEWORK_DOCS_LIVE_RESUME=0` or `JUGGLEWORK_DOCS_STARTUP_WARMUP=0` SHALL disable only that feature on the next process launch.
+
+#### Scenario: Host reloads before claiming a warmup
+- **WHEN** the host reloads before a hidden warmup is claimed
+- **THEN** Desktop cancels and cleans up the warmup using the save barrier
+- **AND** it does not offer that warmup as a live restoration candidate
+
 ### Requirement: Restore a live document after host reload
 Desktop SHALL detach rather than destroy eligible main-window document views during renderer reload, and SHALL reattach only after fresh current-session authorization and exact owner, scope and host-binding validation. A successful restore SHALL NOT bootstrap or create another native document view.
 
@@ -31,6 +39,11 @@ Desktop SHALL use existing isolated caches and at most one non-sensitive recent 
 #### Scenario: User open happens before warmup
 - **WHEN** a user explicitly opens any document before the startup warmup begins
 - **THEN** the pending startup warmup is cancelled and cannot create another full-page instance
+
+#### Scenario: A competing handoff shares the warmup session
+- **WHEN** a non-warmup view is opened with the same native partition and Docs origin as an unclaimed warmup
+- **THEN** the warmup is cancelled and cleared after save confirmation before the new handoff starts
+- **AND** a main-window request waiting for this confirmation expires if its host reloads or closes all cloud document views for an authority change
 
 #### Scenario: Logout or unused warmup
 - **WHEN** identity changes or a warmup remains unused past its limit

@@ -248,17 +248,20 @@ export function CloudDocsPage(props: Props) {
               tenantId: identity.tenantId,
               target: candidate.target,
               presentation: { instanceId: candidate.instanceId, mode: "product" },
-            });
+            }, undefined, candidate.docsOrigin);
             if (!stillCurrent()) return;
             if (grant.tenantId !== identity.tenantId || grant.presentation.instanceId !== candidate.instanceId)
               throw new Error(t("cloud_docs.connection_failed"));
             // TIPS: 先绑定本轮订阅，随后才请求 Main 接管；既有 ready 状态可立刻重发。
             instanceId = candidate.instanceId;
             activeInstance.current = instanceId;
-            const outcome = await bridge.resume({
-              ...grant, ...identity, instanceId, target,
-              startupLaunchMs: performance.now() - started,
-            });
+            // TIPS: Work 更换 Docs 域名后按显式目标重新交接，旧来源只走保存清理。
+            const outcome = candidate.docsOrigin && grant.docsOrigin !== candidate.docsOrigin
+              ? "fallback"
+              : await bridge.resume({
+                ...grant, ...identity, instanceId, target,
+                startupLaunchMs: performance.now() - started,
+              });
             if (!stillCurrent()) {
               if (outcome === "resumed") void bridge.close(instanceId).catch(() => {});
               return;

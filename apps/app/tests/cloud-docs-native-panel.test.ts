@@ -1,6 +1,9 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { createHash, randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 class Contents extends EventEmitter {
   mainFrame = {};
   url = "";
@@ -121,7 +124,7 @@ test("全页刷新接管原生视图，旧宿主操作及跨租户查询被拒�
   };
   const handlers = new Map<string, Function>();
   const events = new Map<string, Function>();
-  const panel = createCloudDocsPanel({ getWindow: () => window, liveResume: true });
+  const panel = createCloudDocsPanel({ getWindow: () => window });
   panel.registerIpc({
     handle: (channel: string, callback: Function) => handlers.set(channel, callback),
     on: (channel: string, callback: Function) => events.set(channel, callback),
@@ -160,7 +163,16 @@ test("全页刷新接管原生视图，旧宿主操作及跨租户查询被拒�
   expect(discover({ ...candidate, target: { kind: "page", pageId: "page" } })).toBeNull();
   expect(discover({ ...candidate, target: { kind: "page", pageId: "page", commentId: "new-comment" } })).toBeNull();
   expect(discover({ ...candidate, hostBinding: oldBinding })).toBeNull();
-  expect(discover(candidate)).toEqual({ instanceId, target: { kind: "page", workspaceId: "scope", pageId: "page" } });
+  expect(discover(candidate)).toEqual({ instanceId, docsOrigin: input.docsOrigin, target: { kind: "page", workspaceId: "scope", pageId: "page" } });
+  const resume = handlers.get("jugglework:docs:resume")!;
+  expect(await resume(host, {
+    ...input, ...candidate, docsOrigin: "https://other-docs.test",
+    bootstrapUrl: "https://other-docs.test/api/jw/session/bootstrap", launchGrant: "moved",
+  })).toBe("fallback");
+  nativeFetch.mockImplementationOnce(async () => new Response(null, { status: 404 }));
+  expect(await resume(host, { ...input, ...candidate, launchGrant: "older-docs" })).toBe("fallback");
+  expect(view.webContents.closed).toBe(false);
+  expect(view.visible).toBe(false);
   nativeFetch.mockImplementationOnce(async (_url, request) => {
     expect(JSON.parse(request.body as string).launchGrant).toBe("fresh");
     expect(request.credentials).toBe("include");
@@ -169,7 +181,6 @@ test("全页刷新接管原生视图，旧宿主操作及跨租户查询被拒�
       contextId: "fixture-context", workspaceId: "scope", pageId: "page",
     });
   });
-  const resume = handlers.get("jugglework:docs:resume")!;
   expect(await resume(host, { ...input, ...candidate, launchGrant: "fresh" })).toBe("resumed");
   expect(view.visible).toBe(false);
   expect(views).toHaveLength(initialCount);
@@ -208,6 +219,99 @@ test("全页刷新接管原生视图，旧宿主操作及跨租户查询被拒�
   expect(view.webContents.closed).toBe(true);
   expect(background.webContents.closed).toBe(false);
   panel.close();
+});
+
+test.each(["主窗口刷新", "刷新期间的后台交接", "切换组织期间的后台交接"])("未认领预热的保存屏障：%s", async (reason) => {
+  const dir = mkdtempSync(join(tmpdir(), "jugglework-docs-prewarm-"));
+  const recentPath = join(dir, "recent.json");
+  const scope = { tenantId: "org", sourceUserId: "user", sourceServerOrigin: "https://work.test" };
+  const docsOrigin = "https://docs.test";
+  writeFileSync(recentPath, JSON.stringify({
+    ...scope, docsOrigin, docId: null, workspaceId: "scope", kind: "home", version: 1, updatedAt: Date.now(),
+  }));
+  const win = {
+    id: 22, webContents: { mainFrame: {}, send: mock(() => {}), getZoomFactor: () => 1 },
+    isDestroyed: () => false, getContentBounds: () => ({ width: 1000, height: 800 }),
+    contentView: { addChildView() {}, removeChildView() {} },
+  };
+  const panel = createCloudDocsPanel({ getWindow: () => win, recentPath });
+  const handlers = new Map<string, Function>(), events = new Map<string, Function>();
+  panel.registerIpc({
+    handle: (channel: string, callback: Function) => handlers.set(channel, callback),
+    on: (channel: string, callback: Function) => events.set(channel, callback),
+  });
+  const host = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
+  const binding = { ...scope, authFingerprint: "1:1", hostBinding: randomUUID() };
+  const reserve = handlers.get("jugglework:docs:warmup-reserve")!;
+  try {
+    const ticket = reserve(host, binding);
+    expect(ticket?.target).toEqual({ kind: "home" });
+    await panel.open({
+      ...binding, ...ticket, bootstrapUrl: `${docsOrigin}/api/jw/session/bootstrap`, launchGrant: "warmup",
+      fullPage: true, retain: true, presentation: { mode: "product" }, warmup: true,
+    }, win);
+    const view = views.at(-1)!;
+    const guest = { sender: view.webContents, senderFrame: view.webContents.mainFrame };
+    view.webContents.url = `${docsOrigin}/workspace/scope/all`;
+    events.get("jugglework:docs:message")!(guest, {
+      contractVersion: 1, type: "docs.ready", instanceId: ticket.instanceId, tenantId: scope.tenantId,
+      workspaceId: "scope", contextId: "warmup-context", capabilities: { resume: 1 },
+    });
+    const acknowledgeSave = (persisted: boolean) => {
+      const save = view.webContents.send.mock.calls.findLast(([channel]) => channel === "jugglework:docs:prepare-close");
+      expect(save).toBeDefined();
+      events.get("jugglework:docs:file-intake")!(guest, { ...(save![1] as object), ok: true, result: { persisted } });
+    };
+
+    if (reason !== "主窗口刷新") {
+      const open = (input: object) => handlers.get("jugglework:docs:open")!(host, input);
+      const background = {
+        ...binding, instanceId: randomUUID(), docsOrigin, bootstrapUrl: `${docsOrigin}/api/jw/session/bootstrap`,
+        launchGrant: "background", presentation: { mode: "product" }, background: true,
+      };
+      const isolated = await open({ ...background, instanceId: randomUUID(), tenantId: "other-org" });
+      expect(view.webContents.send.mock.calls.some(([channel]) => channel === "jugglework:docs:prepare-close")).toBe(false);
+      panel.close(isolated.instanceId);
+
+      const count = views.length;
+      const blocked = open(background);
+      acknowledgeSave(false);
+      await expect(blocked).rejects.toThrow("docs_local_save_pending");
+      expect(view.webContents.closed).toBe(false);
+      expect(views).toHaveLength(count);
+
+      const stale = open(background);
+      let switchScope: Promise<{ closed: boolean }> | undefined;
+      if (reason === "切换组织期间的后台交接") {
+        switchScope = handlers.get("jugglework:docs:close")!(host, undefined, { requireSaved: true }, binding.hostBinding);
+      } else {
+        panel.detachWindow(win);
+      }
+      expect(view.webContents.send.mock.calls.filter(([channel]) => channel === "jugglework:docs:prepare-close")).toHaveLength(2);
+      acknowledgeSave(true);
+      await expect(stale).rejects.toThrow("docs_host_changed");
+      if (switchScope) expect(await switchScope).toEqual({ closed: true });
+      expect(view.webContents.closed).toBe(true);
+      expect(views).toHaveLength(count);
+      const nextBinding = switchScope ? binding.hostBinding : randomUUID();
+      expect(await open({ ...background, hostBinding: nextBinding })).toEqual({ instanceId: background.instanceId });
+      return;
+    }
+
+    panel.detachWindow(win);
+    const newHost = { ...binding, hostBinding: randomUUID(), target: ticket.target };
+    expect(handlers.get("jugglework:docs:resume-candidate")!(host, newHost)).toBeNull();
+    expect(await handlers.get("jugglework:docs:warmup-claim")!(host, newHost)).toBeNull();
+    expect(view.visible).toBe(false);
+    expect(view.webContents.closed).toBe(false);
+
+    acknowledgeSave(true);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(view.webContents.closed).toBe(true);
+  } finally {
+    panel.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("相同 bounds／visibility 去重按 view 保存，相同 geometry 切换仍 claim current，owner 相互独立", async () => {

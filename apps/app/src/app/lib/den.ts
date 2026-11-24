@@ -4046,21 +4046,25 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     /** 卡片只表达定位；打开前按当前组织复核持久事件及原投递目标。 */
     validateDocsCard: (input: { tenantId: string; contractVersion: 1; eventId: string; pageId: string; commentId?: string; kind: string; occurredAt: string; part: "group" | "direct"; conversationId: string }) =>
       requestJson<{ valid: boolean }>(baseUrls, "/api/v1/docs/notifications/validate", { method: "POST", token, organizationId: input.tenantId, body: input }),
-    /** 为当前明确组织申请云文档一次性登录交接。 */
+    /** 为当前明确组织申请云文档一次性登录交接。已有原生会话时由新交接响应提供部署地址，调用方须核对它与保留视图的来源。 */
     launchCloudDocs: async (input: {
       tenantId: string;
       target: { kind: 'home' | 'page' | 'manage'; pageId?: string; workspaceId?: string; commentId?: string };
       presentation: DenDocsLaunch['presentation'];
-    }, signal?: AbortSignal): Promise<DenDocsLaunch> => {
+    }, signal?: AbortSignal, retainedDocsOrigin?: string): Promise<DenDocsLaunch> => {
       const started = performance.now();
-      const config = await requestJson<{ docs?: { enabled: boolean; publicOrigin: string | null } }>(baseUrls, '/api/runtime-config', { signal });
-      if (!config.docs?.enabled || !config.docs.publicOrigin) throw new Error('docs_disabled');
+      let docsOrigin: string | undefined;
+      if (!retainedDocsOrigin) {
+        const config = await requestJson<{ docs?: { enabled: boolean; publicOrigin: string | null } }>(baseUrls, '/api/runtime-config', { signal });
+        if (!config.docs?.enabled || !config.docs.publicOrigin) throw new Error('docs_disabled');
+        docsOrigin = new URL(config.docs.publicOrigin).origin;
+      }
       const configured = performance.now();
       const launch = await requestJson<DenDocsLaunch>(baseUrls, '/api/v1/docs/launch', { method: 'POST', token, body: input, signal });
       return {
         ...launch,
-        docsOrigin: new URL(config.docs.publicOrigin).origin,
-        startupWorkTiming: { runtimeConfigMs: configured - started, launchRequestMs: performance.now() - configured },
+        docsOrigin: docsOrigin ?? new URL(launch.bootstrapUrl).origin,
+        startupWorkTiming: { runtimeConfigMs: retainedDocsOrigin ? 0 : configured - started, launchRequestMs: performance.now() - configured },
       };
     },
     /** 读取已有运行配置中的 Docs 入口，不申请交接凭据。 */

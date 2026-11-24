@@ -57,7 +57,7 @@ export interface CloudDocsBridge {
     presentation?: { instanceId: string; mode: "product" | "manage" };
   }): Promise<{ instanceId: string }>;
   /** 查找同窗口、同账号与租户的实际位置，返回值仅用于申请新 grant。 */
-  resumeCandidate?(input: CloudDocsResumeScope): Promise<{ instanceId: string; target: CloudDocsPageTarget } | null>;
+  resumeCandidate?(input: CloudDocsResumeScope): Promise<{ instanceId: string; docsOrigin?: string; target: CloudDocsPageTarget } | null>;
   /** 使用当前 grant 复核候选，成功后仍由正常 bounds 显示。 */
   resume?(input: CloudDocsResumeScope & {
     instanceId: string;

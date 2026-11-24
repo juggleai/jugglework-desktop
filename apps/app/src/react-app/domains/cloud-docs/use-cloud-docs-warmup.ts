@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { createDenClient, denCredentialFingerprint, readDenSettings } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { useOptionalDenAuth } from "../cloud/den-auth-provider";
+import { rememberCloudDocsOrigin } from "./product-view";
 
 /** 主工作台可交互且身份已确定后，交给 Main 尝试唯一一次云文档预热。 */
 export function useCloudDocsWarmup(eligible: boolean) {
@@ -63,6 +64,7 @@ export function useCloudDocsWarmup(eligible: boolean) {
           ...grant, ...authority, instanceId, warmup: true, fullPage: true, retain: true,
           startupLaunchMs: performance.now() - launchStarted,
         });
+        if (stillCurrent()) rememberCloudDocsOrigin(tenantId, grant.bootstrapUrl);
       } catch {
         cancel();
       }

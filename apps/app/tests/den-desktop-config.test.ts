@@ -38,6 +38,32 @@ describe("Den desktop config client", () => {
     expect(headers[0]?.get("x-jugglework-legacy-org-id")).toBe("org_test");
   });
 
+  test("云文档恢复只申请新交接并返回 Work 当前指定的 Docs 来源", async () => {
+    const requests: string[] = [];
+    const fetchMock: typeof fetch = async (input, init) => {
+      requests.push(`${init?.method} ${new URL(String(input)).pathname}`);
+      if (new URL(String(input)).pathname.endsWith("/runtime-config")) {
+        return Response.json({ docs: { enabled: true, publicOrigin: "https://docs-old.test" } });
+      }
+      return Response.json({ bootstrapUrl: "https://docs-new.test/api/jw/session/bootstrap" });
+    };
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchMock });
+    const client = createDenClient({ baseUrl: "https://den.test", token: "session-token" });
+    const target = {
+      tenantId: "org_test", target: { kind: "home" },
+      presentation: { instanceId: "test-instance", mode: "product" },
+    } as const;
+
+    const resumed = await client.launchCloudDocs(target, undefined, "https://docs-old.test");
+    expect(resumed.docsOrigin).toBe("https://docs-new.test");
+    expect(resumed.startupWorkTiming?.runtimeConfigMs).toBe(0);
+    expect(requests.splice(0)).toEqual(["POST /jwork/api/v1/docs/launch"]);
+
+    const fresh = await client.launchCloudDocs(target);
+    expect(fresh.docsOrigin).toBe("https://docs-old.test");
+    expect(requests).toEqual(["GET /jwork/api/runtime-config", "POST /jwork/api/v1/docs/launch"]);
+  });
+
   test("creates a short-lived Desktop enrollment grant in the active organization", async () => {
     const requests: Array<{ url: string; headers: Headers; body: unknown }> = [];
     const fetchMock: typeof fetch = async (input, init) => {

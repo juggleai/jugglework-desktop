@@ -54,9 +54,10 @@ export function validateCloudDocsLaunch(input) {
 
 /**
  * 独立受限原生视图承载云文档，来源／账号隔离，不复用通用浏览器会话。
+ * 刷新恢复和启动预热默认启用，各自环境变量设为 0 后在下次进程启动时关闭。
  * @param {{getWindow:()=>any,getWindows?:()=>any[],onDocumentChanged?:(window:any,instanceId:string,document:{tenantId:string,workspaceId:string,docId:string,title:string})=>void,onOpenInNewTab?:(request:{sourceInstanceId:string,sourceServerOrigin:string,sourceUserId:string,document:{tenantId:string,workspaceId:string,docId:string,title:string}})=>void,attachments?:{open:(input:any)=>Promise<any>,clearScope:(scope:any)=>Promise<void>,clearContext?:(scope:any,contextId:string)=>Promise<void>}}} options 宿主窗口、受限附件访问与独立标签入口
  */
-export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow()], onDocumentChanged, onOpenInNewTab, attachments, recentPath, liveResume = process.env.JUGGLEWORK_DOCS_LIVE_RESUME === "1", startupWarmup = process.env.JUGGLEWORK_DOCS_STARTUP_WARMUP === "1" }) {
+export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow()], onDocumentChanged, onOpenInNewTab, attachments, recentPath, liveResume = process.env.JUGGLEWORK_DOCS_LIVE_RESUME !== "0", startupWarmup = process.env.JUGGLEWORK_DOCS_STARTUP_WARMUP !== "0" }) {
   const currents = new Map();
   const backgrounds = new Map();
   const retained = new Map();
@@ -118,13 +119,14 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
   /** 宿主主框架重载时先撤销旧绑定，原生草稿和回执继续交由原实例处理。 */
   function detachWindow(window) {
     if (window && startupWarmup) warmup.cancel();
-    if (!liveResume || !window) return;
+    if (!window || (!liveResume && !startupWarmup)) return;
     const binding = hostLifetime(window);
     binding.epoch++;
     if (binding.attached) binding.retired = binding.attached;
     binding.attached = undefined;
     for (const item of items()) {
-      if (item.ownerWindow !== window || !item.hostBinding || item.detached) continue;
+      // TIPS: 未认领预热走自己的取消与保存流程，不能作为刷新时的旧前台实例接管。
+      if (item.ownerWindow !== window || !item.hostBinding || item.detached || item.warmup) continue;
       item.detached = true;
       item.view.setVisible(false);
       item.startup?.cancel();
@@ -166,7 +168,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       input.sourceUserId !== item.input.sourceUserId || input.tenantId !== item.input.tenantId) return null;
     const actual = contentTarget(item);
     if (actual?.workspaceId !== item.readyWorkspaceId || !canResumeCloudDocs(actual, input.target)) return null;
-    return { instanceId: item.input.instanceId, target: cloudDocsResumeTarget(actual) };
+    return { instanceId: item.input.instanceId, docsOrigin: item.origin, target: cloudDocsResumeTarget(actual) };
   }
 
   /** 从受限原生页的实际路由取得当前文档，并按需要核对宿主及来源账号。 */
@@ -250,7 +252,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
   /** 退出或更新前统一等待原生本地保存，任一页面未确认就取消退出。 */
   async function prepareQuit(ownerWindow) {
     const targets = items().filter(item => !ownerWindow || item.ownerWindow === ownerWindow);
-    return (await Promise.all(targets.map(item => prepareClose(item.input.instanceId)))).every(Boolean);
+    return (await Promise.all(targets.map(item => item.warmupCleanup ?? prepareClose(item.input.instanceId)))).every(Boolean);
   }
 
   /** 主窗口销毁只释放自己的视图，独立 File Browser 仍保持打开。 */
@@ -351,16 +353,19 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     if (prewarming && (!startupWarmup || win !== getWindow() || !input.fullPage || input.background ||
       input.presentation?.mode !== "product" || items().length || !warmup.start(input, target.origin)))
       throw new Error("docs_warmup_cancelled");
-    if (!prewarming && input.fullPage && win === getWindow() && startupWarmup) {
-      warmup.exclude();
-      const unused = items().find(item => item.warmup);
-      if (unused && !await discardWarmup(unused.input.instanceId)) throw new Error("docs_local_save_pending");
-    }
-    const fullPage = liveResume && input.fullPage === true && !input.background &&
-      win === getWindow() && input.presentation?.mode === "product" &&
-      /^[a-f0-9-]{36}$/i.test(input.hostBinding ?? "");
-    const binding = fullPage ? hostLifetime(win) : null;
+    const mainHost = !!win && win === getWindow() && /^[a-f0-9-]{36}$/i.test(input.hostBinding ?? "");
+    const fullPage = liveResume && mainHost && input.fullPage === true && !input.background && input.presentation?.mode === "product";
+    const binding = fullPage || (startupWarmup && mainHost) ? hostLifetime(win) : null;
     const epoch = binding?.epoch;
+    if (!prewarming && startupWarmup) {
+      const explicitMainPage = input.fullPage === true && win === getWindow();
+      // TIPS: 同分区、同来源的后台交接也可能换发 Cookie，先让未认领预热完成保存清理。
+      const unused = items().find(item => item.warmup && (explicitMainPage ||
+        (item.target.partition === target.partition && item.origin === target.origin)));
+      if (explicitMainPage || unused) warmup.exclude();
+      if (unused && !await discardWarmup(unused.input.instanceId)) throw new Error("docs_local_save_pending");
+      if (binding && binding.epoch !== epoch) throw new Error("docs_host_changed");
+    }
     const orphan = fullPage ? detachedPage(win) : null;
     if (orphan) {
       // TIPS: 新交接可能更新同源 Cookie，保存屏障覆盖共用该绑定的所有窗口和后台页。
@@ -414,9 +419,9 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       denied: false,
       routeEpoch: 0,
       warmup: prewarming,
-      ...(binding ? { hostBinding: input.hostBinding } : {}),
+      ...(fullPage ? { hostBinding: input.hostBinding } : {}),
     };
-    if (binding) binding.attached = input.hostBinding;
+    if (fullPage) binding.attached = input.hostBinding;
     if (!input.background && win === getWindow() && input.presentation?.mode === "product" && Number.isFinite(input.startupLaunchMs)) {
       item.startup = createCloudDocsStartup({
         instanceId: input.instanceId,
@@ -715,7 +720,10 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     ipcMain.handle("jugglework:docs:close", async (event, instanceId, options, hostBinding) => {
       if (!trusted(event, { instanceId, hostBinding }) || (!instanceId && ownerFor(event) !== getWindow())) throw new Error("Forbidden");
       const owner = ownerFor(event);
-      const epoch = hostLifetimes.get(owner)?.epoch;
+      const binding = hostLifetimes.get(owner);
+      // TIPS: 退出或切换身份时，使等待保存的旧交接失效，避免关闭列表采集后又建出旧页面。
+      if (!instanceId && binding) binding.epoch++;
+      const epoch = binding?.epoch;
       const stillBound = () => hostLifetimes.get(owner)?.epoch === epoch && trusted(event, { instanceId, hostBinding });
       // TIPS: 不带实例的整体关闭发生在切换账号、组织或退出登录时，附件缓存随当前范围清理。
       const scopes = !instanceId ? items().map((item) => item.input) : [];
@@ -731,9 +739,9 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       if (!instanceId) for (const item of targets) item.view.setVisible(false);
       let closed = true;
       for (const item of targets) {
-        const saved = requireSaved || await prepareClose(item.input.instanceId);
-        if (saved && active(item) && stillBound()) close(item.input.instanceId);
-        else closed = false;
+        const saved = requireSaved || await (item.warmupCleanup ?? prepareClose(item.input.instanceId));
+        if (!saved || !stillBound()) closed = false;
+        else if (active(item)) close(item.input.instanceId);
       }
       if (stillBound()) for (const scope of scopes) await attachments?.clearScope(scope).catch(() => undefined);
       return { closed };
