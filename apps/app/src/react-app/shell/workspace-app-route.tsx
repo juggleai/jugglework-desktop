@@ -17,6 +17,7 @@ import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { ToonFactoryPage } from "./toonFactoryPage";
 import { AppsPage } from "./apps-page";
 import { CloudDocsPage } from "../domains/cloud-docs/cloud-docs-page";
+import { useCloudDocsWarmup } from "../domains/cloud-docs/use-cloud-docs-warmup";
 import { ChatPage } from "./chat-page";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
@@ -84,6 +85,7 @@ function WorkspaceAppRouteContent() {
     () => parseWorkspaceAppPath(location.pathname),
     [location.pathname],
   );
+  useCloudDocsWarmup(Boolean(appPath));
   const [retainedSession, setRetainedSession] = useState<RetainedSessionTarget>(() => (
     initialSessionTarget(location.pathname, location.state)
   ));

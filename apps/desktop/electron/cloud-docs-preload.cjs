@@ -92,6 +92,7 @@ window.addEventListener("message", (event) => {
   if (
     ![
       "docs.ready",
+      "docs.content-state",
       "docs.error",
       "docs.session-expired",
       "docs.layout",
@@ -101,6 +102,17 @@ window.addEventListener("message", (event) => {
     ].includes(message?.type)
   )
     return;
+  if (message.type === "docs.content-state" && (
+    typeof message.contextId !== "string" || message.contextId.length > 128 ||
+    typeof message.instanceId !== "string" || message.instanceId.length > 128 ||
+    typeof message.tenantId !== "string" || message.tenantId.length > 128 ||
+    typeof message.workspaceId !== "string" || message.workspaceId.length > 128 ||
+    !["home", "document"].includes(message.targetKind) ||
+    (message.docId !== null && (typeof message.docId !== "string" || message.docId.length > 128)) ||
+    typeof message.observationId !== "string" || message.observationId.length !== 36 ||
+    !["loading", "presentable", "error"].includes(message.state) ||
+    (message.format !== undefined && !["home", "document", "sheet", "presentation"].includes(message.format))
+  )) return;
   ipcRenderer.send("jugglework:docs:message", {
     type: message.type,
     contractVersion: message.contractVersion,
@@ -109,6 +121,17 @@ window.addEventListener("message", (event) => {
     workspaceId: message.workspaceId,
     ...(typeof message.reason === "string" && message.reason.length < 64 ? { reason: message.reason } : {}),
     ...(typeof message.contextId === "string" ? { contextId: message.contextId } : {}),
+    ...(message.type === "docs.ready" ? { capabilities: {
+      ...(message.capabilities?.contentState === 1 ? { contentState: 1 } : {}),
+      ...(message.capabilities?.resume === 1 ? { resume: 1 } : {}),
+    } } : {}),
+    ...(message.type === "docs.content-state" ? {
+      targetKind: message.targetKind,
+      docId: message.docId,
+      observationId: message.observationId,
+      state: message.state,
+      format: message.format,
+    } : {}),
     ...(message.type === "docs.layout" ? { layout: message.layout } : {}),
     ...(message.type === "docs.open-attachment"
       ? { docId: message.docId, blobId: message.blobId, name: message.name, mimeType: message.mimeType, size: message.size }
@@ -122,3 +145,6 @@ window.addEventListener("message", (event) => {
 
 // 关闭前仅请求原生本地持久化状态，不允许执行任意脚本或文件操作。
 ipcRenderer.on("jugglework:docs:prepare-close", (_event, message) => { window.postMessage({ channel: "jugglework-docs-prepare-close-command", message }, window.location.origin); });
+ipcRenderer.on("jugglework:docs:request-content-state", (_event, message) => {
+  window.postMessage({ channel: "jugglework-docs-content-state-command", message }, window.location.origin);
+});

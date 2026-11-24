@@ -4006,6 +4006,7 @@ export type DenDocsLaunch = {
   bootstrapUrl: string;
   docsOrigin: string;
   presentation: { instanceId: string; mode: 'product' | 'manage' };
+  startupWorkTiming?: { runtimeConfigMs: number; launchRequestMs: number };
 };
 
 export type BusinessFilePurpose = "avatar" | "task_image" | "task_attachment";
@@ -4050,11 +4051,17 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       tenantId: string;
       target: { kind: 'home' | 'page' | 'manage'; pageId?: string; workspaceId?: string; commentId?: string };
       presentation: DenDocsLaunch['presentation'];
-    }): Promise<DenDocsLaunch> => {
-      const config = await requestJson<{ docs?: { enabled: boolean; publicOrigin: string | null } }>(baseUrls, '/api/runtime-config');
+    }, signal?: AbortSignal): Promise<DenDocsLaunch> => {
+      const started = performance.now();
+      const config = await requestJson<{ docs?: { enabled: boolean; publicOrigin: string | null } }>(baseUrls, '/api/runtime-config', { signal });
       if (!config.docs?.enabled || !config.docs.publicOrigin) throw new Error('docs_disabled');
-      const launch = await requestJson<DenDocsLaunch>(baseUrls, '/api/v1/docs/launch', { method: 'POST', token, body: input });
-      return { ...launch, docsOrigin: new URL(config.docs.publicOrigin).origin };
+      const configured = performance.now();
+      const launch = await requestJson<DenDocsLaunch>(baseUrls, '/api/v1/docs/launch', { method: 'POST', token, body: input, signal });
+      return {
+        ...launch,
+        docsOrigin: new URL(config.docs.publicOrigin).origin,
+        startupWorkTiming: { runtimeConfigMs: configured - started, launchRequestMs: performance.now() - configured },
+      };
     },
     /** 读取已有运行配置中的 Docs 入口，不申请交接凭据。 */
     docsConfiguration: () => requestJson<{ docs?: { enabled: boolean; publicOrigin: string | null } }>(baseUrls, '/api/runtime-config'),

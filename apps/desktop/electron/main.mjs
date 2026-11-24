@@ -1040,6 +1040,7 @@ const cloudDocAttachments = createCloudDocAttachments({
 });
 const cloudDocsPanel = createCloudDocsPanel({
   getWindow: () => mainWindow,
+  recentPath: path.join(app.getPath("userData"), "cloud-docs-recent.json"),
   getWindows: () => [mainWindow, ...fileWindows.windows()].filter(Boolean),
   onDocumentChanged: (window, instanceId, document) => fileWindows.updateCloudDocument(window, instanceId, document),
   onOpenInNewTab: (request) => {
@@ -3499,12 +3500,15 @@ async function createMainWindow() {
     });
   }
   // TIPS: hash会话跳转也会触发loading，但宿主没有重载；仅跨文档主框架导航才失效未决操作。
+  const docsOwnerWindow = mainWindow;
   mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
     if (isMainFrame && !isInPlace) {
+      cloudDocsPanel.detachWindow(docsOwnerWindow);
       desktopPet?.resetHost();
       desktopNotificationActionRelay.reset(mainWindow?.webContents.id);
     }
   });
+  mainWindow.webContents.on("render-process-gone", () => cloudDocsPanel.detachWindow(docsOwnerWindow));
   if (cachedBrandImage && bootSourceUrl) {
     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
   }
@@ -3549,7 +3553,6 @@ async function createMainWindow() {
   });
 
   const officeComposerContents = mainWindow.webContents;
-  const docsOwnerWindow = mainWindow;
   mainWindow.on("closed", () => {
     windowRecovery.dispose();
     desktopNotificationActionRelay.reset(officeComposerContents.id);

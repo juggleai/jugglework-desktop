@@ -88,8 +88,10 @@ export function CloudDocsPage(props: Props) {
   useEffect(() => {
     const bridge = window.__JUGGLEWORK_ELECTRON__?.cloudDocs;
     const settings = readDenSettings();
-    const instanceId = crypto.randomUUID();
+    const newInstanceId = crypto.randomUUID();
+    let instanceId: string = newInstanceId;
     let disposed = false;
+    let expired = false;
     let ready = false;
     let failed = false;
     activeInstance.current = instanceId;
@@ -117,7 +119,7 @@ export function CloudDocsPage(props: Props) {
     const stillCurrent = () => {
       const current = readDenSettings();
       return (
-        !disposed &&
+        !disposed && !expired &&
         scope ===
           `${current.baseUrl}\0${auth.user?.id}\0${current.activeOrgId}\0${denCredentialFingerprint(current.authToken ?? "")}`
       );
@@ -161,16 +163,17 @@ export function CloudDocsPage(props: Props) {
         bridge.layoutCommand({ instanceId, action: "request-state" });
       }
     };
-    const unsubscribe = bridge.onState((value) => {
+    const applyState: Parameters<typeof bridge.onState>[0] = (value) => {
       if (!stillCurrent() || value.instanceId !== instanceId) return;
       ready = value.status === "ready";
       failed = value.status === "error" || value.status === "unauthorized";
       setState(value.status);
       if (value.status !== "ready") setError(t(value.status === "unauthorized" ? "cloud_docs.no_access" : "cloud_docs.connection_failed"));
-      updateBounds();
       updateAppearance();
+      updateBounds();
       if (ready) bridge.layoutCommand({ instanceId, action: "request-state" });
-    });
+    };
+    const unsubscribe = bridge.onState(applyState);
     const unsubscribeLayout = bridge.onLayout((value) => {
       if (stillCurrent() && value.instanceId === instanceId) setLayout(value.layout);
     });
@@ -199,19 +202,84 @@ export function CloudDocsPage(props: Props) {
     // TIPS: 远端 AFFiNE 首次打开需要下载较大的按需分包；15 秒会在页面即将就绪时误判失败。
     const timeout = window.setTimeout(() => {
       if (stillCurrent() && !ready && !failed) {
+        expired = true;
         setState("error");
         setError(t("cloud_docs.connection_failed"));
-        void bridge.close(instanceId);
+        void bridge.close(instanceId).catch(() => {});
       }
     }, 60_000);
     void (async () => {
       try {
-        const launch = await createDenClient({
+        const client = createDenClient({
           baseUrl: settings.baseUrl,
           token: settings.authToken,
-        }).launchCloudDocs({
+        });
+        const identity = {
+          sourceServerOrigin: settings.baseUrl,
+          sourceUserId: auth.user!.id,
           tenantId: props.tenantId,
-          target: target!,
+        };
+        if (bridge.warmupClaim && bridge.status) {
+          const warmed = await bridge.warmupClaim({
+            ...identity, target, authFingerprint: denCredentialFingerprint(settings.authToken ?? ""),
+          });
+          if (!stillCurrent()) {
+            if (warmed) void bridge.close(warmed).catch(() => {});
+            return;
+          }
+          if (warmed) {
+            instanceId = warmed;
+            activeInstance.current = warmed;
+            const status = await bridge.status(warmed);
+            if (!stillCurrent()) return;
+            applyState({ instanceId: warmed, status: status.status ?? (status.ready ? "ready" : "loading") });
+            return;
+          }
+        }
+        if (bridge.resumeCandidate && bridge.resume) {
+          const candidate = await bridge.resumeCandidate({ ...identity, target });
+          if (!stillCurrent()) return;
+          if (candidate) {
+            const started = performance.now();
+            const grant = await client.launchCloudDocs({
+              tenantId: identity.tenantId,
+              target: candidate.target,
+              presentation: { instanceId: candidate.instanceId, mode: "product" },
+            });
+            if (!stillCurrent()) return;
+            if (grant.tenantId !== identity.tenantId || grant.presentation.instanceId !== candidate.instanceId)
+              throw new Error(t("cloud_docs.connection_failed"));
+            // TIPS: 先绑定本轮订阅，随后才请求 Main 接管；既有 ready 状态可立刻重发。
+            instanceId = candidate.instanceId;
+            activeInstance.current = instanceId;
+            const outcome = await bridge.resume({
+              ...grant, ...identity, instanceId, target,
+              startupLaunchMs: performance.now() - started,
+            });
+            if (!stillCurrent()) {
+              if (outcome === "resumed") void bridge.close(instanceId).catch(() => {});
+              return;
+            }
+            if (outcome === "resumed") {
+              rememberCloudDocsOrigin(identity.tenantId, grant.bootstrapUrl);
+              updateBounds();
+              return;
+            }
+            instanceId = newInstanceId;
+            activeInstance.current = instanceId;
+            if (outcome === "denied") {
+              failed = true;
+              setState("unauthorized");
+              setError(t("cloud_docs.no_access"));
+              return;
+            }
+            if (outcome !== "fallback") throw new Error(t("cloud_docs.connection_failed"));
+          }
+        }
+        const launchStarted = performance.now();
+        const launch = await client.launchCloudDocs({
+          tenantId: identity.tenantId,
+          target,
           presentation: { instanceId, mode: "product" },
         });
         if (!stillCurrent()) return;
@@ -224,18 +292,23 @@ export function CloudDocsPage(props: Props) {
         await bridge.open({
           ...launch,
           instanceId,
-          sourceServerOrigin: settings.baseUrl,
-          sourceUserId: auth.user!.id,
+          ...identity,
           retain: true,
+          fullPage: true,
+          startupLaunchMs: performance.now() - launchStarted,
         });
+        if (!stillCurrent()) {
+          void bridge.close(instanceId).catch(() => {});
+          return;
+        }
         updateBounds();
       } catch (e) {
         if (stillCurrent()) {
+          failed = true;
           setState("error");
-          setError(
-            e instanceof Error ? e.message : t("cloud_docs.connection_failed"),
-          );
-          void bridge.close(instanceId);
+          const message = e instanceof Error ? e.message : t("cloud_docs.connection_failed");
+          setError(message.includes("docs_local_save_pending") ? t("cloud_docs.close_save_pending") : message);
+          void bridge.close(instanceId).catch(() => {});
         }
       }
     })();
@@ -255,7 +328,7 @@ export function CloudDocsPage(props: Props) {
       if (activeInstance.current === instanceId) activeInstance.current = null;
       window.removeEventListener("resize", updateBounds);
       document.removeEventListener("visibilitychange", updateBounds);
-      void bridge.close(instanceId);
+      void bridge.close(instanceId).catch(() => {});
     };
   }, [
     props.tenantId,

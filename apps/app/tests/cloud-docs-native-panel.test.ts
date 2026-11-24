@@ -23,6 +23,58 @@ class Contents extends EventEmitter {
   focus = mock(() => {});
   async capturePage() { return { toDataURL: () => "data:image/png;base64,fixture" }; }
 }
+
+test("正文观测与当前路由关联，未回应不阻止原生展示或保存", async () => {
+  const win = { id: 13, webContents: { mainFrame: {}, send: mock(() => {}), getZoomFactor: () => 1 }, isDestroyed: () => false, getContentBounds: () => ({ width: 1000, height: 800 }), contentView: { addChildView() {}, removeChildView() {} } };
+  const events = new Map<string, Function>();
+  const panel = createCloudDocsPanel({ getWindow: () => win });
+  panel.registerIpc({ handle() {}, on: (name: string, callback: Function) => events.set(name, callback) });
+  const input = {
+    instanceId: randomUUID(), tenantId: "org", sourceUserId: "u",
+    sourceServerOrigin: "https://work.test", docsOrigin: "https://docs.test",
+    bootstrapUrl: "https://docs.test/api/jw/session/bootstrap", launchGrant: "fixture",
+    presentation: { mode: "product" }, startupLaunchMs: 37,
+  };
+  const instanceId = input.instanceId;
+  await panel.open(input, win);
+  const view = views.at(-1)!;
+  const emit = (message: object) => events.get("jugglework:docs:message")!({
+    sender: view.webContents, senderFrame: view.webContents.mainFrame,
+  }, { contractVersion: 1, instanceId, tenantId: "org", workspaceId: "ws", contextId: "ctx", ...message });
+  const requests = () => view.webContents.send.mock.calls
+    .filter(([channel]) => channel === "jugglework:docs:request-content-state")
+    .map(([, request]) => request as { observationId: string; targetKind: string; docId: string | null });
+  view.webContents.url = "https://docs.test/workspace/ws/all?jwInstanceId=internal";
+  emit({ type: "docs.ready", capabilities: { contentState: 1 } });
+  expect(requests()).toHaveLength(1);
+  const show = () => events.get("jugglework:docs:bounds")!(
+    { sender: win.webContents, senderFrame: win.webContents.mainFrame },
+    { instanceId, x: 0, y: 0, width: 800, height: 600, visible: true },
+  );
+  show();
+  expect(view.visible).toBe(true);
+  expect(panel.startupDiagnostics()).toEqual([]);
+  emit({ ...requests()[0], type: "docs.content-state", state: "presentable", format: "sheet" });
+  expect(panel.startupDiagnostics()).toEqual([]);
+  emit({ ...requests()[0], type: "docs.content-state", state: "presentable", format: "home" });
+  expect(panel.startupDiagnostics()).toEqual([{
+    path: "bootstrap", outcome: "presentable", format: "home", launchMs: 37,
+    commandReadyMs: expect.any(Number), firstVisibleMs: expect.any(Number),
+    contentPresentableMs: expect.any(Number), nativeElapsedMs: expect.any(Number),
+  }]);
+  view.webContents.url = "https://docs.test/workspace/ws/next";
+  view.webContents.emit("did-navigate-in-page", {}, view.webContents.url, true);
+  expect(requests()).toHaveLength(2);
+  expect(requests()[1]?.docId).toBe("next");
+  expect(requests()[1]?.observationId).not.toBe(requests()[0]?.observationId);
+  emit({ ...requests()[0], type: "docs.content-state", state: "presentable", format: "home" });
+  const saved = panel.prepareClose(instanceId);
+  const [, close] = view.webContents.send.mock.calls.find(([channel]) => channel === "jugglework:docs:prepare-close")!;
+  events.get("jugglework:docs:file-intake")!({ sender: view.webContents, senderFrame: view.webContents.mainFrame }, { ...(close as object), ok: true, result: { persisted: true } });
+  expect(await saved).toBe(true);
+  expect(panel.startupDiagnostics()).toHaveLength(1);
+  panel.close();
+});
 class NativeView {
   webContents = new Contents();
   visible = false;
@@ -39,6 +91,7 @@ class NativeView {
 const views: NativeView[] = [];
 const clearedOrigins: string[] = [];
 let failStorageCleanup = false;
+const nativeFetch = mock(async (_url: string, _request: RequestInit): Promise<Response> => new Response(null, { status: 404 }));
 mock.module("electron", () => ({
   app: { getPath: () => "/test/Downloads" },
   dialog: { showSaveDialog: async () => ({ canceled: true, filePath: "" }) },
@@ -46,6 +99,7 @@ mock.module("electron", () => ({
   session: {
     fromPartition: () => ({
       setPermissionRequestHandler() {},
+      fetch: nativeFetch,
       async clearStorageData(input: { origin: string }) {
         clearedOrigins.push(input.origin);
         if (failStorageCleanup) throw new Error("storage_cleanup_failed");
@@ -58,6 +112,103 @@ mock.module("electron", () => ({
 const { createCloudDocsPanel } =
   await import("../../desktop/electron/cloud-docs-panel.mjs");
 afterAll(() => mock.restore());
+
+test("全页刷新接管原生视图，旧宿主操作及跨租户查询被拒绝", async () => {
+  const window = {
+    id: 21, webContents: { mainFrame: {}, send: mock(() => {}), getZoomFactor: () => 1 },
+    isDestroyed: () => false, getContentBounds: () => ({ width: 1000, height: 800 }),
+    contentView: { addChildView() {}, removeChildView() {} },
+  };
+  const handlers = new Map<string, Function>();
+  const events = new Map<string, Function>();
+  const panel = createCloudDocsPanel({ getWindow: () => window, liveResume: true });
+  panel.registerIpc({
+    handle: (channel: string, callback: Function) => handlers.set(channel, callback),
+    on: (channel: string, callback: Function) => events.set(channel, callback),
+  });
+  const instanceId = randomUUID(), oldBinding = randomUUID(), newBinding = randomUUID();
+  const input = {
+    instanceId, tenantId: "org", sourceUserId: "user",
+    sourceServerOrigin: "https://work.test", docsOrigin: "https://docs.test",
+    bootstrapUrl: "https://docs.test/api/jw/session/bootstrap", launchGrant: "bootstrap",
+    fullPage: true, retain: true, presentation: { mode: "product" },
+  };
+  await panel.open({ ...input, hostBinding: oldBinding }, window);
+  const initialCount = views.length;
+  const view = views.at(-1)!;
+  const host = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+  const guest = { sender: view.webContents, senderFrame: view.webContents.mainFrame };
+  view.webContents.url = "https://docs.test/workspace/scope/page";
+  events.get("jugglework:docs:message")!(guest, {
+    type: "docs.ready", contractVersion: 1, instanceId, tenantId: "org",
+    workspaceId: "scope", contextId: "fixture-context", capabilities: { resume: 1 },
+  });
+  const show = (hostBinding: string) => events.get("jugglework:docs:bounds")!(host, {
+    instanceId, hostBinding, x: 0, y: 0, width: 800, height: 600, visible: true,
+  });
+  show(oldBinding);
+  expect(view.visible).toBe(true);
+  panel.detachWindow(window);
+  show(oldBinding);
+  expect(view.visible).toBe(false);
+  const candidate = {
+    tenantId: input.tenantId, sourceServerOrigin: input.sourceServerOrigin,
+    sourceUserId: input.sourceUserId, hostBinding: newBinding, target: { kind: "home" },
+  };
+  const discover = (value: object) => handlers.get("jugglework:docs:resume-candidate")!(host, value);
+  expect(discover({ ...candidate, tenantId: "other" })).toBeNull();
+  expect(discover({ ...candidate, target: { kind: "page", pageId: "page" } })).toBeNull();
+  expect(discover({ ...candidate, target: { kind: "page", pageId: "page", commentId: "new-comment" } })).toBeNull();
+  expect(discover({ ...candidate, hostBinding: oldBinding })).toBeNull();
+  expect(discover(candidate)).toEqual({ instanceId, target: { kind: "page", workspaceId: "scope", pageId: "page" } });
+  nativeFetch.mockImplementationOnce(async (_url, request) => {
+    expect(JSON.parse(request.body as string).launchGrant).toBe("fresh");
+    expect(request.credentials).toBe("include");
+    return Response.json({
+      outcome: "resumed", grantState: "consumed", instanceId,
+      contextId: "fixture-context", workspaceId: "scope", pageId: "page",
+    });
+  });
+  const resume = handlers.get("jugglework:docs:resume")!;
+  expect(await resume(host, { ...input, ...candidate, launchGrant: "fresh" })).toBe("resumed");
+  expect(view.visible).toBe(false);
+  expect(views).toHaveLength(initialCount);
+  show(oldBinding);
+  expect(view.visible).toBe(false);
+  await expect(handlers.get("jugglework:docs:close")!(host, instanceId, undefined, oldBinding)).rejects.toThrow("Forbidden");
+  show(newBinding);
+  expect(view.visible).toBe(true);
+  expect(view.webContents.closed).toBe(false);
+
+  // 同分区的其他页面仍可能持有草稿，回落换 Cookie 之前需要它的确认。
+  panel.detachWindow(window);
+  const backgroundId = randomUUID();
+  await panel.open({ ...input, instanceId: backgroundId, fullPage: false, background: true }, window);
+  const background = views.at(-1)!;
+  const backgroundEvent = { sender: background.webContents, senderFrame: background.webContents.mainFrame };
+  events.get("jugglework:docs:message")!(backgroundEvent, {
+    type: "docs.ready", contractVersion: 1, instanceId: backgroundId, tenantId: "org", workspaceId: "scope",
+  });
+  let backgroundSaved = false;
+  for (const [page, sender] of [[view, guest], [background, backgroundEvent]] as const) {
+    page.webContents.send.mockImplementation((channel, request) => {
+      if (channel === "jugglework:docs:prepare-close") queueMicrotask(() => {
+        events.get("jugglework:docs:file-intake")!(sender, {
+          ...(request as object), ok: true, result: { persisted: page === view || backgroundSaved },
+        });
+      });
+    });
+  }
+  const fallback = { ...input, instanceId: randomUUID(), hostBinding: randomUUID(), launchGrant: "fallback" };
+  await expect(panel.open(fallback, window)).rejects.toThrow("docs_local_save_pending");
+  expect(views).toHaveLength(initialCount + 1);
+  expect(view.webContents.closed).toBe(false);
+  backgroundSaved = true;
+  await panel.open(fallback, window);
+  expect(view.webContents.closed).toBe(true);
+  expect(background.webContents.closed).toBe(false);
+  panel.close();
+});
 
 test("相同 bounds／visibility 去重按 view 保存，相同 geometry 切换仍 claim current，owner 相互独立", async () => {
   const owner = (id: number) => ({ id, webContents: { mainFrame: {}, send: mock(() => {}), getZoomFactor: () => 1 }, isDestroyed: () => false, getContentBounds: () => ({ width: 1000, height: 800 }), contentView: { addChildView() {}, removeChildView() {} } });

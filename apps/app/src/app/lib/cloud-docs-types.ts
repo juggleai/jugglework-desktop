@@ -15,12 +15,28 @@ export interface CloudDocsAppearance {
   >;
 }
 
+export type CloudDocsPageTarget =
+  | { kind: "home" }
+  | { kind: "page"; pageId: string; workspaceId?: string; commentId?: string };
+
+/** 供主窗刷新使用的定位与当前源身份，不带授权数据。 */
+export interface CloudDocsResumeScope {
+  sourceServerOrigin: string;
+  sourceUserId: string;
+  tenantId: string;
+  target: CloudDocsPageTarget;
+}
+
+type CloudDocsWorkTiming = { runtimeConfigMs: number; launchRequestMs: number };
+type CloudDocsWarmupScope = Omit<CloudDocsResumeScope, "target"> & { authFingerprint: string };
+
 /** 仅主宿主可调用的原生云文档能力，不向远程页面暴露。 */
 export interface CloudDocsBridge {
   /** 执行 AFFiNE 原生侧栏或搜索展示操作，不涉及文档写入。 */
   layoutCommand(input: { instanceId: string; action: "toggle-left" | "toggle-right" | "search" | "request-state" }): void;
   /** 监听当前实例真实侧栏状态。 */
   onLayout(callback: (value: { instanceId: string; layout: { leftOpen: boolean; leftWidth: number; rightOpen: boolean } }) => void): () => void;
+  /** 打开授权原生视图，可附带 Work 启动接口的本地耗时。 */
   open(input: {
     instanceId: string;
     sourceServerOrigin: string;
@@ -29,14 +45,38 @@ export interface CloudDocsBridge {
     bootstrapUrl: string;
     docsOrigin: string;
     launchGrant: string;
+    startupLaunchMs?: number;
+    startupWorkTiming?: CloudDocsWorkTiming;
+    fullPage?: boolean;
+    warmup?: boolean;
+    authFingerprint?: string;
     /** 后台上传／AI 产品页不替换前台页面，完成后按实例独立释放。 */
     background?: boolean;
     /** 前台页面切换展示区域时保留实例，隐藏期间继续保存，宿主卸载时释放。 */
     retain?: boolean;
     presentation?: { instanceId: string; mode: "product" | "manage" };
   }): Promise<{ instanceId: string }>;
+  /** 查找同窗口、同账号与租户的实际位置，返回值仅用于申请新 grant。 */
+  resumeCandidate?(input: CloudDocsResumeScope): Promise<{ instanceId: string; target: CloudDocsPageTarget } | null>;
+  /** 使用当前 grant 复核候选，成功后仍由正常 bounds 显示。 */
+  resume?(input: CloudDocsResumeScope & {
+    instanceId: string;
+    bootstrapUrl: string;
+    docsOrigin: string;
+    launchGrant: string;
+    startupLaunchMs?: number;
+    startupWorkTiming?: CloudDocsWorkTiming;
+  }): Promise<"resumed" | "fallback" | "retry" | "denied">;
+  /** 获取本进程唯一预热登记。 */
+  warmupReserve?(input: CloudDocsWarmupScope): Promise<{ instanceId: string; docsOrigin: string; target: CloudDocsPageTarget } | null>;
+  /** 等待已登记的同目标预热，并把视图交给显式打开。 */
+  warmupClaim?(input: CloudDocsWarmupScope & { target: CloudDocsPageTarget }): Promise<string | null>;
+  /** 取消指定的未接管预热。 */
+  warmupCancel?(input: { instanceId: string }): Promise<null>;
+  /** 监听 Main 作废的预热登记，以取消当前连接请求。 */
+  onWarmupCancelled?(callback: (instanceId: string) => void): () => void;
   /** 关闭视图。未确认保存时保留页面；切换组织可要求所有视图保存后一起关闭。 */
-  close(instanceId?: string, options?: { requireSaved?: boolean }): Promise<{ closed: boolean }>;
+  close(instanceId?: string, options?: { requireSaved?: boolean; forgetRecent?: boolean }): Promise<{ closed: boolean }>;
   /** 获取当前实例画面，供宿主浮窗覆盖原生视图时保留页面背景。 */
   snapshot(instanceId: string): Promise<string | null>;
   /** 查询已登记实例状态，不重新申请登录交接。 */

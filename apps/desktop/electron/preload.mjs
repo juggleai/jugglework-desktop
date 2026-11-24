@@ -1,4 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { randomUUID } from "node:crypto";
+import { invokeOptionalCloudDocs } from "./cloud-docs-optional-ipc.mjs";
 import { CALENDAR_WINDOW_GESTURE, installCalendarWindowGestures } from "./calendar-window-gestures.mjs";
 
 if (process.platform === "darwin" && process.isMainFrame) {
@@ -19,6 +21,12 @@ const DESKTOP_NOTIFICATION_ACTIONS_NOT_READY_CHANNEL = "jugglework:desktop-notif
 
 let activeJuggleChatSkillHandler = null;
 let desktopNotificationActionListenerCount = 0;
+// TIPS: 原生页可跨宿主文档重载存活。每次 preload 获取独立绑定，旧回调不能接管新宿主。
+const docsHostBinding = randomUUID();
+const bindDocsHost = (input) => ({ ...input, hostBinding: docsHostBinding });
+const optionalDocs = (channel, input, fallback) => invokeOptionalCloudDocs(
+  (name, payload) => ipcRenderer.invoke(name, payload), channel, bindDocsHost(input), fallback,
+);
 
 function setJuggleChatSkillEvent(callback) {
   if (activeJuggleChatSkillHandler) {
@@ -367,29 +375,45 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     respond: (value) => ipcRenderer.send('jugglework:native-actions:response', value),
   },
   cloudDocs: {
-    status: instanceId => ipcRenderer.invoke("jugglework:docs:status", instanceId),
+    status: instanceId => ipcRenderer.invoke("jugglework:docs:status", instanceId, docsHostBinding),
     /** 以一次性凭据进入当前组织的云文档。 */
-    open: (input) => ipcRenderer.invoke('jugglework:docs:open', input),
+    open: (input) => ipcRenderer.invoke('jugglework:docs:open', bindDocsHost(input)),
+    /** 查询同一窗口的刷新恢复候选，不申请访问授权。 */
+    resumeCandidate: (input) => optionalDocs('jugglework:docs:resume-candidate', input, null),
+    /** 使用本次新交接凭据复核并接管存活的原生视图。 */
+    resume: (input) => optionalDocs('jugglework:docs:resume', input, "fallback"),
+    /** 登记单次预热并返回已记录的当前身份目标。 */
+    warmupReserve: (input) => optionalDocs('jugglework:docs:warmup-reserve', input, null),
+    /** 显式打开与相同目标的预热复用一个原生视图。 */
+    warmupClaim: (input) => optionalDocs('jugglework:docs:warmup-claim', input, null),
+    /** 释放这一轮尚未接管的预热。 */
+    warmupCancel: (input) => optionalDocs('jugglework:docs:warmup-cancel', input, null),
+    /** 停止 Main 已作废的预热请求。 */
+    onWarmupCancelled(callback) {
+      const handler = (_event, instanceId) => callback(instanceId);
+      ipcRenderer.on("jugglework:docs:warmup-cancelled", handler);
+      return () => ipcRenderer.removeListener("jugglework:docs:warmup-cancelled", handler);
+    },
     /** 释放指定实例或全部云文档视图。 */
-    close: (instanceId, options) => ipcRenderer.invoke('jugglework:docs:close', instanceId, options),
+    close: (instanceId, options) => ipcRenderer.invoke('jugglework:docs:close', instanceId, options, docsHostBinding),
     /** 宿主浮窗打开时保留云文档画面，不销毁编辑会话。 */
-    snapshot: (instanceId) => ipcRenderer.invoke('jugglework:docs:snapshot', instanceId),
+    snapshot: (instanceId) => ipcRenderer.invoke('jugglework:docs:snapshot', instanceId, docsHostBinding),
     /** 对齐 React 内容区域并在宿主菜单打开时隐藏原生视图。 */
-    setBounds: (input) => ipcRenderer.send('jugglework:docs:bounds', input),
+    setBounds: (input) => ipcRenderer.send('jugglework:docs:bounds', bindDocsHost(input)),
     /** 只向当前云文档传递展示配置。 */
-    setAppearance: (input) => ipcRenderer.send('jugglework:docs:appearance', input),
+    setAppearance: (input) => ipcRenderer.send('jugglework:docs:appearance', bindDocsHost(input)),
     /** 将顶部按钮操作传给当前实例的原生侧栏或搜索。 */
-    layoutCommand: (input) => ipcRenderer.send('jugglework:docs:layout-command', input),
+    layoutCommand: (input) => ipcRenderer.send('jugglework:docs:layout-command', bindDocsHost(input)),
     /** 监听 AFFiNE 原生侧栏状态，包含快捷键和拖动改宽后的结果。 */
     onLayout(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:docs:layout', handler); return () => ipcRenderer.removeListener('jugglework:docs:layout', handler); },
     /** 监听当前原生页面就绪或身份失效。 */
     onState(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:docs:state', handler); return () => ipcRenderer.removeListener('jugglework:docs:state', handler); },
     /** 在当前组织的 product 视图中执行文件上传（lookup／upload）。 */
-    fileIntake: (input) => ipcRenderer.invoke('jugglework:docs:file-intake', input),
+    fileIntake: (input) => ipcRenderer.invoke('jugglework:docs:file-intake', bindDocsHost(input)),
     /** 在当前页面滚动并高亮指定块。 */
-    highlightBlocks: (input) => ipcRenderer.send('jugglework:docs:highlight-blocks', input),
+    highlightBlocks: (input) => ipcRenderer.send('jugglework:docs:highlight-blocks', bindDocsHost(input)),
     /** 在当前组织 product 视图中执行 Docs AI 接口（search／read／edit／create）。 */
-    api: (input) => ipcRenderer.invoke('jugglework:docs:api', input),
+    api: (input) => ipcRenderer.invoke('jugglework:docs:api', bindDocsHost(input)),
     /** 监听本地 Server 经主进程转来的云文档请求。 */
     onApiRequest(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:cloud-docs:api-request', handler); return () => ipcRenderer.removeListener('jugglework:cloud-docs:api-request', handler); },
     /** 返回云文档请求结果。 */

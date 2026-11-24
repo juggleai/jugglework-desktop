@@ -429,7 +429,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     // re-confirm the just-fenced scope during document cleanup.
     clearDenSession();
     await fenceManagedProviderHost().catch(() => undefined);
-    await window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.close();
+    await window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.close(undefined, { forgetRecent: true });
     clearAccountState();
     setAccountBusy(false);
     setPendingServerSwitch(null);
@@ -527,6 +527,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       void fenceManagedProviderHost().catch(() => undefined);
       if (failureStatus === "signed_out") {
         clearDenSession();
+        void window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.close(undefined, { forgetRecent: true }).catch(() => {});
         clearAccountState();
         setAccountBusy(false);
         setPendingServerSwitch(null);
@@ -567,6 +568,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       refreshTokenRef.current += 1;
       void fenceManagedProviderHost().catch(() => undefined);
       clearDenSession();
+      void window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.close(undefined, { forgetRecent: true }).catch(() => {});
       clearAccountState();
       setAccountBusy(false);
       setPendingServerSwitch(null);
@@ -851,8 +853,13 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   );
 }
 
+/** 读取可选的云端登录状态，供可独立挂载的工作台壳层使用。 */
+export function useOptionalDenAuth(): DenAuthStore | undefined {
+  return use(DenAuthContext);
+}
+
 export function useDenAuth(): DenAuthStore {
-  const context = use(DenAuthContext);
+  const context = useOptionalDenAuth();
   if (!context) {
     throw new Error("useDenAuth must be used within a DenAuthProvider");
   }

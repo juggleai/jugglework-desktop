@@ -3,6 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebContentsView, session, shell } from "electron";
 import { createCloudDocsExports } from "./cloud-docs-export.mjs";
+import { cloudDocsContentTarget, createCloudDocsStartup } from "./cloud-docs-startup.mjs";
+import { canResumeCloudDocs, cloudDocsResumeTarget, requestCloudDocsResume } from "./cloud-docs-resume.mjs";
+import { createCloudDocsRecent, createCloudDocsWarmup } from "./cloud-docs-warmup.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 
@@ -53,13 +56,30 @@ export function validateCloudDocsLaunch(input) {
  * 独立受限原生视图承载云文档，来源／账号隔离，不复用通用浏览器会话。
  * @param {{getWindow:()=>any,getWindows?:()=>any[],onDocumentChanged?:(window:any,instanceId:string,document:{tenantId:string,workspaceId:string,docId:string,title:string})=>void,onOpenInNewTab?:(request:{sourceInstanceId:string,sourceServerOrigin:string,sourceUserId:string,document:{tenantId:string,workspaceId:string,docId:string,title:string}})=>void,attachments?:{open:(input:any)=>Promise<any>,clearScope:(scope:any)=>Promise<void>,clearContext?:(scope:any,contextId:string)=>Promise<void>}}} options 宿主窗口、受限附件访问与独立标签入口
  */
-export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow()], onDocumentChanged, onOpenInNewTab, attachments }) {
+export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow()], onDocumentChanged, onOpenInNewTab, attachments, recentPath, liveResume = process.env.JUGGLEWORK_DOCS_LIVE_RESUME === "1", startupWarmup = process.env.JUGGLEWORK_DOCS_STARTUP_WARMUP === "1" }) {
   const currents = new Map();
   const backgrounds = new Map();
   const retained = new Map();
   const intakes = new Map();
   const revocations = new Map();
+  const hostLifetimes = new WeakMap();
   const exports = createCloudDocsExports();
+  const startupSamples = [];
+  const recent = recentPath ? createCloudDocsRecent(recentPath) : null;
+  const warmup = createCloudDocsWarmup({
+    discard(instanceId) {
+      const owner = getWindow();
+      if (owner && !owner.isDestroyed()) owner.webContents.send("jugglework:docs:warmup-cancelled", instanceId);
+      return discardWarmup(instanceId);
+    },
+    ready: warmupReady,
+  });
+  const recordStartup = (sample) => {
+    if (startupSamples.length === 128) startupSamples.shift();
+    startupSamples.push(sample);
+    if (process.env.JUGGLEWORK_DOCS_STARTUP_DIAGNOSTICS === "1")
+      console.info("[cloud-docs-startup]", JSON.stringify(sample));
+  };
   const items = () => [...new Set([...currents.values(), ...retained.values(), ...backgrounds.values()])];
   const active = (item) => !!item && (currents.get(item.ownerWindow.id) === item || retained.get(item.input.instanceId) === item || backgrounds.get(item.input.instanceId) === item);
   const find = (input) => input?.instanceId
@@ -68,6 +88,8 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
   const send = (value) => {
     const item = find(value);
     if (item && value.status) item.lastStatus = value.status;
+    if (item?.warmup && (value.status === "unauthorized" || value.status === "error")) warmup.settled(value.instanceId, false);
+    if (item?.detached || item?.warmup) return;
     const win = item?.ownerWindow ?? getWindow();
     if (win && !win.isDestroyed())
       win.webContents.send("jugglework:docs:state", value);
@@ -76,13 +98,81 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
   const trusted = (event, input) => {
     const owner = ownerFor(event);
     const item = input?.instanceId ? find(input) : null;
-    return !!owner && (input?.instanceId || owner === getWindow()) && (!item || item.ownerWindow === owner);
+    const binding = owner && hostLifetimes.get(owner);
+    if (binding && input?.hostBinding &&
+      (input.hostBinding === binding.retired || (binding.attached && input.hostBinding !== binding.attached))) return false;
+    return !!owner && (input?.instanceId || owner === getWindow()) && (!item || (
+      item.ownerWindow === owner && !item.detached && !item.warmup && (!item.hostBinding || item.hostBinding === input.hostBinding)
+    ));
   };
+
+  function hostLifetime(window) {
+    let binding = hostLifetimes.get(window);
+    if (!binding) {
+      binding = { epoch: 0 };
+      hostLifetimes.set(window, binding);
+    }
+    return binding;
+  }
+
+  /** 宿主主框架重载时先撤销旧绑定，原生草稿和回执继续交由原实例处理。 */
+  function detachWindow(window) {
+    if (window && startupWarmup) warmup.cancel();
+    if (!liveResume || !window) return;
+    const binding = hostLifetime(window);
+    binding.epoch++;
+    if (binding.attached) binding.retired = binding.attached;
+    binding.attached = undefined;
+    for (const item of items()) {
+      if (item.ownerWindow !== window || !item.hostBinding || item.detached) continue;
+      item.detached = true;
+      item.view.setVisible(false);
+      item.startup?.cancel();
+      item.detachTimer = setTimeout(async () => {
+        if (item.detached && active(item) && await prepareClose(item.input.instanceId) && item.detached && active(item))
+          close(item.input.instanceId);
+      }, 120_000);
+      item.detachTimer.unref?.();
+    }
+  }
+
+  function warmupReady(instanceId, scope) {
+    const item = find({ instanceId });
+    if (!item?.warmup || !item.ready || item.denied || item.view.webContents.isDestroyed()) return false;
+    const actual = contentTarget(item);
+    return actual?.workspaceId === scope.workspaceId && actual?.docId === scope.docId &&
+      actual.workspaceId === item.readyWorkspaceId;
+  }
+
+  function discardWarmup(instanceId) {
+    const item = find({ instanceId });
+    if (!item?.warmup) return Promise.resolve(true);
+    // TIPS: 等待期和显式打开可能同时清理同一隐藏页，复用原生保存确认。
+    item.warmupCleanup ??= prepareClose(instanceId).then(saved => {
+      if (saved && active(item) && item.warmup) close(instanceId);
+      return saved;
+    }).catch(() => false).finally(() => { item.warmupCleanup = undefined; });
+    return item.warmupCleanup;
+  }
+
+  function detachedPage(owner) {
+    return items().find(item => item.ownerWindow === owner && item.hostBinding && item.detached);
+  }
+
+  function resumeCandidate(owner, input) {
+    const item = detachedPage(owner);
+    if (!input || !liveResume || !item?.ready || !item.resumeSupported || item.denied ||
+      input.sourceServerOrigin !== item.input.sourceServerOrigin ||
+      input.sourceUserId !== item.input.sourceUserId || input.tenantId !== item.input.tenantId) return null;
+    const actual = contentTarget(item);
+    if (actual?.workspaceId !== item.readyWorkspaceId || !canResumeCloudDocs(actual, input.target)) return null;
+    return { instanceId: item.input.instanceId, target: cloudDocsResumeTarget(actual) };
+  }
 
   /** 从受限原生页的实际路由取得当前文档，并按需要核对宿主及来源账号。 */
   function documentFor(instanceId, ownerWindow, scope) {
     const item = find({ instanceId });
-    if (!item?.ready || item.denied || (ownerWindow && item.ownerWindow !== ownerWindow)) return null;
+    if (!item?.ready || item.denied || item.detached || item.warmup || (ownerWindow && item.ownerWindow !== ownerWindow)) return null;
     if (scope && (scope.sourceServerOrigin !== item.input.sourceServerOrigin ||
       scope.sourceUserId !== item.input.sourceUserId)) return null;
     try {
@@ -91,6 +181,26 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       if (url.origin !== item.origin || !path || ['all','trash','settings','collection','tag','journal','journals','favorites','recent'].includes(path[2])) return null;
       return { tenantId: item.input.tenantId, workspaceId: path[1], docId: path[2], title: String(item.view.webContents.getTitle?.() || '').slice(0, 200) };
     } catch { return null; }
+  }
+
+  function contentTarget(item) {
+    return cloudDocsContentTarget(item.view.webContents.getURL(), item.origin);
+  }
+
+  function rememberPresented(item) {
+    if (!recent || !item.input.fullPage || item.input.background || item.warmup ||
+      item.ownerWindow !== getWindow() || !item.view.getVisible() || !item.ready || item.denied) return;
+    const actual = contentTarget(item);
+    const shown = item.presented;
+    if (!actual || actual.workspaceId !== shown?.workspaceId || actual.docId !== shown?.docId ||
+      shown.contextId !== item.contextId) return;
+    recent.write({ ...item.input, ...actual, docsOrigin: item.origin });
+  }
+
+  function observeContent(item) {
+    if (item.detached) return;
+    const current = contentTarget(item);
+    item.startup?.ready(item.contextId, current?.workspaceId === item.readyWorkspaceId ? current : null, item.contentStateSupported);
   }
 
   /** 原生页内部导航也更新宿主定位，避免 AI 继续把初始标签当成当前文档。 */
@@ -109,6 +219,8 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     }
     const old = find({ instanceId });
     if (!old) return;
+    old.startup?.cancel();
+    clearTimeout(old.detachTimer);
     if (currents.get(old.ownerWindow.id) === old) currents.delete(old.ownerWindow.id);
     backgrounds.delete(instanceId);
     retained.delete(instanceId);
@@ -143,6 +255,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
 
   /** 主窗口销毁只释放自己的视图，独立 File Browser 仍保持打开。 */
   function closeWindow(ownerWindow) {
+    if (ownerWindow === getWindow()) warmup.cancel(false);
     for (const item of items()) if (item.ownerWindow === ownerWindow) close(item.input.instanceId);
   }
 
@@ -160,7 +273,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     const key = `${item.target.partition}\0${item.contextId || item.input.instanceId}`;
     if (revocations.has(key)) return revocations.get(key);
     const targets = items().filter(target => target === item || (item.contextId && target.contextId === item.contextId && target.target.partition === item.target.partition));
-    for (const target of targets) { target.denied = true; target.ready = false; target.view.setVisible(false); }
+    for (const target of targets) { target.startup?.cancel("error"); target.denied = true; target.ready = false; target.view.setVisible(false); }
     const task = (async () => {
       if (item.contextId) await attachments?.clearContext?.({ sourceServerOrigin: item.input.sourceServerOrigin, sourceUserId: item.input.sourceUserId, tenantId: item.input.tenantId }, item.contextId);
       for (const target of targets) if (await prepareClose(target.input.instanceId)) close(target.input.instanceId);
@@ -220,15 +333,44 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     }
     const wasVisible = item.view.getVisible();
     if (wasVisible !== visible) item.view.setVisible(visible);
+    if (visible && !wasVisible) {
+      item.startup?.visible();
+      rememberPresented(item);
+    }
     // TIPS: 隐藏授权或宿主菜单结束后恢复原生页面焦点，触发原生引擎的恢复并接收编辑输入。
     if (visible && !wasVisible) item.view.webContents.focus();
   }
 
   /** 用表单 POST 短时凭据打开目标原生页面；长期源令牌不会进入此模块。 */
   async function open(input, ownerWindow = getWindow()) {
+    const startedAt = performance.now();
     const win = ownerWindow;
     const current = currents.get(win?.id);
     const target = validateCloudDocsLaunch(input);
+    const prewarming = input.warmup === true;
+    if (prewarming && (!startupWarmup || win !== getWindow() || !input.fullPage || input.background ||
+      input.presentation?.mode !== "product" || items().length || !warmup.start(input, target.origin)))
+      throw new Error("docs_warmup_cancelled");
+    if (!prewarming && input.fullPage && win === getWindow() && startupWarmup) {
+      warmup.exclude();
+      const unused = items().find(item => item.warmup);
+      if (unused && !await discardWarmup(unused.input.instanceId)) throw new Error("docs_local_save_pending");
+    }
+    const fullPage = liveResume && input.fullPage === true && !input.background &&
+      win === getWindow() && input.presentation?.mode === "product" &&
+      /^[a-f0-9-]{36}$/i.test(input.hostBinding ?? "");
+    const binding = fullPage ? hostLifetime(win) : null;
+    const epoch = binding?.epoch;
+    const orphan = fullPage ? detachedPage(win) : null;
+    if (orphan) {
+      // TIPS: 新交接可能更新同源 Cookie，保存屏障覆盖共用该绑定的所有窗口和后台页。
+      const affected = items().filter(item => item === orphan ||
+        (item.target.partition === target.partition && item.origin === target.origin));
+      if (!(await Promise.all(affected.map(item => prepareClose(item.input.instanceId)))).every(Boolean))
+        throw new Error("docs_local_save_pending");
+      if (binding.epoch !== epoch || !orphan.detached || !active(orphan)) throw new Error("docs_host_changed");
+      close(orphan.input.instanceId);
+    }
     // TIPS: 上传和 AI 的后台产品页不替换可见页面，结束时也只释放自己的实例。
     const previous = find({ instanceId: input.instanceId });
     if (previous) {
@@ -245,6 +387,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     }
     if (!win || win.isDestroyed())
       throw new Error("Desktop window unavailable");
+    if (binding && binding.epoch !== epoch) throw new Error("docs_host_changed");
     const nativeSession = session.fromPartition(target.partition);
     nativeSession.setPermissionRequestHandler((_wc, _permission, callback) =>
       callback(false),
@@ -269,7 +412,22 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       origin: target.origin,
       ready: false,
       denied: false,
+      routeEpoch: 0,
+      warmup: prewarming,
+      ...(binding ? { hostBinding: input.hostBinding } : {}),
     };
+    if (binding) binding.attached = input.hostBinding;
+    if (!input.background && win === getWindow() && input.presentation?.mode === "product" && Number.isFinite(input.startupLaunchMs)) {
+      item.startup = createCloudDocsStartup({
+        instanceId: input.instanceId,
+        launchMs: input.startupLaunchMs,
+        path: prewarming ? "warmup" : "bootstrap",
+        workTiming: input.startupWorkTiming,
+        startedAt,
+        record: recordStartup,
+        send: request => view.webContents.send("jugglework:docs:request-content-state", request),
+      });
+    }
     if (input.background === true) backgrounds.set(input.instanceId, item);
     else {
       // TIPS: 保留型标签可能在后台完成首次加载；只有可见范围请求才激活，不能抢走用户后来选中的页面。
@@ -288,7 +446,12 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       }
       return { action: "deny" };
     });
-    view.webContents.on("did-navigate-in-page", () => publishDocument(item));
+    view.webContents.on("did-navigate-in-page", (_event, _url, isMainFrame) => {
+      if (isMainFrame === false) return;
+      item.routeEpoch++;
+      publishDocument(item);
+      if (active(item) && item.ready && !item.denied) observeContent(item);
+    });
     view.webContents.on("page-title-updated", () => publishDocument(item));
     view.webContents.on("will-navigate", (event, url) => {
       try {
@@ -301,8 +464,11 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     // TIPS: 跨原生 Workspace 整页导航时，等待本次授权就绪，不能显示上一页的缓存。
     view.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
       if (!active(item) || !isMainFrame || isInPlace) return;
+      item.routeEpoch++;
       // TIPS: 当前实例一旦失权，只能由宿主重新创建；迟到导航不能把拒绝态降级成 loading。
       if (item.denied) { view.setVisible(false); return; }
+      // TIPS: bootstrap 的 303 跳转属于同次启动；已就绪页再次整页导航才撤销当前观测。
+      if (item.hasBeenReady) item.startup?.cancel();
       item.ready = false;
       view.setVisible(false);
       send({ instanceId: input.instanceId, status: "loading" });
@@ -310,16 +476,19 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     view.webContents.on(
       "did-fail-load",
       (_event, code, _description, _url, isMainFrame) => {
-        if (active(item) && isMainFrame && code !== -3)
+        if (active(item) && isMainFrame && code !== -3) {
+          item.startup?.cancel("error");
           send({
             instanceId: input.instanceId,
             status: "error",
             message: "云文档暂时无法连接",
           });
+        }
       },
     );
     view.webContents.on("did-navigate", (_event, _url, responseCode) => {
       if (active(item) && [401, 403, 404].includes(responseCode)) {
+        item.startup?.cancel("error");
         item.ready = false;
         item.denied = true;
         view.setVisible(false);
@@ -328,6 +497,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     });
     view.webContents.on("render-process-gone", () => {
       if (!active(item)) return;
+      item.startup?.cancel("error");
       // TIPS: 崩溃后的 WebContents 不会再发 ready；立即恢复宿主错误页，允许用户显式重建视图。
       item.ready = false;
       item.denied = true;
@@ -352,6 +522,8 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       });
     } catch {
       if (active(item)) {
+        item.startup?.cancel("error");
+        if (item.warmup) warmup.settled(input.instanceId, false);
         close(input.instanceId);
         throw new Error("云文档暂时无法连接");
       }
@@ -361,6 +533,85 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
 
   /** 注册主宿主操作和远程页面的最小只读状态消息。 */
   function registerIpc(ipcMain) {
+    ipcMain.handle("jugglework:docs:warmup-reserve", (event, input) => {
+      if (!startupWarmup || !input || ownerFor(event) !== getWindow() || !trusted(event, input) || items().length) return null;
+      return warmup.reserve(input, recent?.read(input));
+    });
+    ipcMain.handle("jugglework:docs:warmup-claim", async (event, input) => {
+      const owner = ownerFor(event);
+      const valid = () => owner && owner === getWindow() && trusted(event, input);
+      if (!startupWarmup || !input || !valid()) return null;
+      const instanceId = await warmup.claim(input, valid);
+      if (!instanceId) return null;
+      const item = find({ instanceId });
+      if (!item?.warmup || !item.ready || item.denied || !valid()) {
+        void discardWarmup(instanceId);
+        return null;
+      }
+      item.warmup = false;
+      publishDocument(item);
+      return instanceId;
+    });
+    ipcMain.handle("jugglework:docs:warmup-cancel", (event, input) => {
+      if (input?.instanceId && ownerFor(event) === getWindow() && trusted(event, { hostBinding: input.hostBinding }))
+        warmup.cancelBinding(input.hostBinding, input.instanceId);
+      return null;
+    });
+    ipcMain.handle("jugglework:docs:resume-candidate", (event, input) => {
+      const owner = ownerFor(event);
+      return owner && owner === getWindow() && trusted(event, input) ? resumeCandidate(owner, input) : null;
+    });
+    ipcMain.handle("jugglework:docs:resume", async (event, input) => {
+      const owner = ownerFor(event);
+      const binding = owner === getWindow() && owner ? hostLifetime(owner) : null;
+      if (!input || !liveResume || !binding || !trusted(event, { hostBinding: input.hostBinding }) ||
+        !/^[a-f0-9-]{36}$/i.test(input.hostBinding ?? "")) return "retry";
+      const candidate = resumeCandidate(owner, input);
+      const item = candidate && detachedPage(owner);
+      if (!item || candidate.instanceId !== input.instanceId || !item.contextId ||
+        validateCloudDocsLaunch(input).origin !== item.origin) return "fallback";
+      const current = contentTarget(item);
+      const epoch = binding.epoch;
+      const nativeContext = item.contextId;
+      const routeEpoch = item.routeEpoch;
+      const startup = createCloudDocsStartup({
+        path: "resume",
+        launchMs: input.startupLaunchMs,
+        workTiming: input.startupWorkTiming,
+        instanceId: candidate.instanceId,
+        record: recordStartup,
+        send: request => item.view.webContents.send("jugglework:docs:request-content-state", request),
+      });
+      const outcome = await requestCloudDocsResume(item.nativeSession, item.origin, {
+        launchGrant: input.launchGrant,
+        instanceId: candidate.instanceId,
+        expectedContextId: nativeContext,
+        target: { ...candidate.target, workspaceId: current.workspaceId },
+      });
+      if (binding.epoch !== epoch || !active(item) || !item.detached || !item.ready ||
+        item.denied || item.contextId !== nativeContext || item.routeEpoch !== routeEpoch ||
+        !trusted(event, { hostBinding: input.hostBinding })) {
+        startup.cancel();
+        return "retry";
+      }
+      if (outcome === "denied") {
+        startup.cancel("denied");
+        void revoke(item);
+        return "denied";
+      }
+      if (outcome !== "resumed") {
+        startup.cancel(outcome);
+        return outcome;
+      }
+      clearTimeout(item.detachTimer);
+      binding.attached = input.hostBinding;
+      item.hostBinding = input.hostBinding;
+      item.detached = false;
+      item.startup = startup;
+      publishDocument(item);
+      observeContent(item);
+      return "resumed";
+    });
     const exportView = (event) => {
       const item = items().find(value => value.view.webContents === event.sender);
       if (!item || event.senderFrame !== item.view.webContents.mainFrame ||
@@ -450,32 +701,41 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       if (!trusted(event, input) || ownerFor(event) !== getWindow()) throw new Error("Forbidden");
       return open(input, ownerFor(event));
     });
-    ipcMain.handle("jugglework:docs:status", (event, instanceId) => {
-      if (!trusted(event, { instanceId })) throw new Error("Forbidden");
+    ipcMain.handle("jugglework:docs:status", (event, instanceId, hostBinding) => {
+      if (!trusted(event, { instanceId, hostBinding })) throw new Error("Forbidden");
       const item = find({ instanceId }); return { ready: !!item?.ready && !item.denied, status: item?.lastStatus ?? (item ? "loading" : "error"), ...(documentFor(instanceId) ?? { docId: null }) };
     });
-    ipcMain.handle("jugglework:docs:snapshot", async (event, instanceId) => {
-      if (!trusted(event, { instanceId })) throw new Error("Forbidden");
+    ipcMain.handle("jugglework:docs:snapshot", async (event, instanceId, hostBinding) => {
+      if (!trusted(event, { instanceId, hostBinding })) throw new Error("Forbidden");
       const item = find({ instanceId });
       if (!item?.ready || item.denied || item.input.background || item.view.webContents.isDestroyed()) return null;
-      return (await item.view.webContents.capturePage()).toDataURL();
+      const image = await item.view.webContents.capturePage();
+      return active(item) && trusted(event, { instanceId, hostBinding }) && !item.denied ? image.toDataURL() : null;
     });
-    ipcMain.handle("jugglework:docs:close", async (event, instanceId, options) => {
-      if (!trusted(event, { instanceId }) || (!instanceId && ownerFor(event) !== getWindow())) throw new Error("Forbidden");
+    ipcMain.handle("jugglework:docs:close", async (event, instanceId, options, hostBinding) => {
+      if (!trusted(event, { instanceId, hostBinding }) || (!instanceId && ownerFor(event) !== getWindow())) throw new Error("Forbidden");
+      const owner = ownerFor(event);
+      const epoch = hostLifetimes.get(owner)?.epoch;
+      const stillBound = () => hostLifetimes.get(owner)?.epoch === epoch && trusted(event, { instanceId, hostBinding });
       // TIPS: 不带实例的整体关闭发生在切换账号、组织或退出登录时，附件缓存随当前范围清理。
       const scopes = !instanceId ? items().map((item) => item.input) : [];
       const targets = instanceId ? [find({ instanceId })].filter(Boolean) : items();
       const requireSaved = !instanceId && options?.requireSaved === true;
+      if (!instanceId) {
+        warmup.exclude(false);
+        if (options?.forgetRecent === true) recent?.clear();
+      }
       // TIPS: 主动切换组织要先统一确认，失败时保留当前组织及页面供用户重试。
       if (requireSaved && !(await prepareQuit())) return { closed: false };
+      if (!stillBound()) return { closed: false };
       if (!instanceId) for (const item of targets) item.view.setVisible(false);
       let closed = true;
       for (const item of targets) {
         const saved = requireSaved || await prepareClose(item.input.instanceId);
-        if (saved) close(item.input.instanceId);
+        if (saved && active(item) && stillBound()) close(item.input.instanceId);
         else closed = false;
       }
-      for (const scope of scopes) await attachments?.clearScope(scope).catch(() => undefined);
+      if (stillBound()) for (const scope of scopes) await attachments?.clearScope(scope).catch(() => undefined);
       return { closed };
     });
     ipcMain.handle("jugglework:docs:file-intake", (event, input) => {
@@ -483,7 +743,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       const item = find(input);
       const upload = input?.action === "upload";
       if (
-        !item?.ready || item.denied ||
+        !item?.ready || item.denied || item.detached ||
         item.input.presentation?.mode !== "product" ||
         (input?.instanceId
           ? input.instanceId !== item.input.instanceId
@@ -530,7 +790,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       const item = find(input);
       if (
         !item?.ready ||
-        item.denied ||
+        item.denied || item.detached ||
         item.input.presentation?.mode !== "product" ||
         (input?.instanceId
           ? input.instanceId !== item.input.instanceId
@@ -597,7 +857,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
         return;
       if (message.type === "docs.layout") {
         const layout = message.layout;
-        if (!item.ready || item.denied || message.tenantId !== item.input.tenantId ||
+        if (!item.ready || item.denied || item.detached || message.tenantId !== item.input.tenantId ||
           item.input.presentation?.mode !== "product" ||
           typeof layout?.leftOpen !== "boolean" || typeof layout?.rightOpen !== "boolean" ||
           !Number.isFinite(layout.leftWidth) || layout.leftWidth < 248 || layout.leftWidth > 480) return;
@@ -625,7 +885,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
         message.type === "docs.open-attachment" ||
         message.type === "docs.ai-reference"
       ) {
-        if (!item.ready || item.denied || message.tenantId !== item.input.tenantId || item.input.presentation?.mode !== "product") return;
+        if (!item.ready || item.denied || item.detached || item.warmup || message.tenantId !== item.input.tenantId || item.input.presentation?.mode !== "product") return;
         if (message.type === "docs.open-attachment") {
           void attachments
             ?.open({
@@ -669,15 +929,28 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
         // TIPS: 被拒绝的当前页面不能靠迟到的就绪消息重新显示，需重新进入并完成授权。
         if (item.denied) return;
         item.contextId = message.contextId;
+        item.readyWorkspaceId = message.workspaceId;
+        item.contentStateSupported = message.capabilities?.contentState === 1;
+        item.resumeSupported = message.capabilities?.resume === 1;
         item.ready = true;
         item.hasBeenReady = true;
         const document = documentFor(item.input.instanceId);
         if (document) onDocumentChanged?.(item.ownerWindow, item.input.instanceId, document);
         send({ instanceId: message.instanceId, status: "ready", workspaceId: message.workspaceId, docId: document?.docId ?? null, title: document?.title });
+        if (item.warmup) warmup.settled(item.input.instanceId, true);
+        observeContent(item);
+      } else if (message.type === "docs.content-state") {
+        if (!item.ready || item.denied || message.tenantId !== item.input.tenantId) return;
+        const actual = contentTarget(item);
+        if (item.startup?.receive(message, actual)) {
+          item.presented = { ...actual, contextId: item.contextId };
+          rememberPresented(item);
+        }
       } else if (
         message.type === "docs.session-expired" ||
         message.type === "docs.error"
       ) {
+        item.startup?.cancel("error");
         item.ready = false;
         if (message.type === "docs.session-expired") item.denied = true;
         item.view.setVisible(false);
@@ -712,5 +985,8 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
         );
     });
   }
-  return { registerIpc, open, close, closeWindow, closeScope, prepareClose, prepareQuit, documentFor, hasViews: ownerWindow => items().some(item => !ownerWindow || item.ownerWindow === ownerWindow), hide: instanceId => find({ instanceId })?.view.setVisible(false) };
+  return { registerIpc, open, close, closeWindow, closeScope, prepareClose, prepareQuit, documentFor, detachWindow,
+    /** 查询当前进程已完成的匿名启动样本，用于本机性能验收。 */
+    startupDiagnostics: () => startupSamples.map(sample => ({ ...sample })),
+    hasViews: ownerWindow => items().some(item => !ownerWindow || item.ownerWindow === ownerWindow), hide: instanceId => find({ instanceId })?.view.setVisible(false) };
 }
