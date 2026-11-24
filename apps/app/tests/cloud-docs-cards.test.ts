@@ -255,8 +255,14 @@ describe("卡片交接状态机", () => {
       "?pageId=https://other.test",
       "?commentId=x",
       "?pageId=x&commentId=../y",
+      "?workspaceId=x",
+      "?pageId=x&workspaceId=http://other.test",
+      "?pageId=x&workspaceId=a&workspaceId=b",
     ])
       expect(parseCloudDocsTarget(query)).toBeNull();
     expect(parseCloudDocsTarget("")).toEqual({ kind: "home" });
+    expect(parseCloudDocsTarget("?pageId=page_1&workspaceId=workspace_1")).toEqual({
+      kind: "page", pageId: "page_1", workspaceId: "workspace_1",
+    });
   });
 });

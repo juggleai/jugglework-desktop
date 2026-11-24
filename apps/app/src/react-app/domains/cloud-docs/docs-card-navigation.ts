@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../jugglechat/types";
+import type { CloudDocsPageTarget } from "@/app/lib/cloud-docs-types";
 import {
   docsMessageSource,
   type ChatConnectionScope,
@@ -9,29 +10,30 @@ export type DocsAccountScope = Pick<
   ChatConnectionScope,
   "server" | "userId" | "tenantId" | "authFingerprint"
 >;
-export type DocsPageTarget =
-  | { kind: "home" }
-  | { kind: "page"; pageId: string; commentId?: string };
+export type DocsPageTarget = CloudDocsPageTarget;
 const resource = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** 桌面路由只接受原生定位参数，不接受外部 URL、工作区覆盖或可执行动作。 */
+/** 解析原生文档定位，Work 与 Docs 在交接时复核目标工作区及权限。 */
 export function parseCloudDocsTarget(search: string): DocsPageTarget | null {
   const params = new URLSearchParams(search);
   const pageId = params.get("pageId"),
-    commentId = params.get("commentId");
+    commentId = params.get("commentId"),
+    workspaceId = params.get("workspaceId");
   if (
     params.getAll("pageId").length > 1 ||
-    params.getAll("commentId").length > 1
+    params.getAll("commentId").length > 1 ||
+    params.getAll("workspaceId").length > 1
   )
     return null;
-  if (pageId === null && commentId === null) return { kind: "home" };
+  if (pageId === null && commentId === null && workspaceId === null) return { kind: "home" };
   if (
     !pageId ||
     !resource.test(pageId) ||
-    (commentId !== null && !resource.test(commentId))
+    (commentId !== null && !resource.test(commentId)) ||
+    (workspaceId !== null && !resource.test(workspaceId))
   )
     return null;
-  return { kind: "page", pageId, ...(commentId ? { commentId } : {}) };
+  return { kind: "page", pageId, ...(workspaceId ? { workspaceId } : {}), ...(commentId ? { commentId } : {}) };
 }
 
 type Navigation = {
