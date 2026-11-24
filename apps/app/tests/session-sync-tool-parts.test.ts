@@ -1581,6 +1581,50 @@ describe("tool part mapper", () => {
     }
   });
 
+  test("binds an error only when its assistant update supplies the failed message and parent", () => {
+    const workspaceId = "workspace-late-error";
+    const sessionId = "session-late-error";
+    const input = { workspaceId, baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const release = trackWorkspaceSessionSync(input, sessionId);
+    const queryClient = getReactQueryClient();
+    const key = transcriptKey(workspaceId, sessionId);
+    const error = { name: "APIError", data: { message: "Forbidden", statusCode: 403 } };
+    try {
+      queryClient.setQueryData(key, [
+        { id: "old-user", role: "user", parts: [{ type: "text", text: "Deploy" }] },
+        { id: "old-result", role: "assistant", parts: [{ type: "text", text: "Completed" }] },
+        { id: "new-user", role: "user", parts: [{ type: "text", text: "Check access" }] },
+      ]);
+      __applySessionSyncEventForTest(input, { type: "session.error", properties: { sessionID: sessionId, error } } as any);
+      expect(queryClient.getQueryData<UIMessage[]>(key)?.map((message) => message.id))
+        .toEqual(["old-user", "old-result", "new-user"]);
+      expect(useSessionActivityStore.getState().getSessionError(workspaceId, sessionId)).toContain("Forbidden");
+
+      const update = { type: "message.updated", properties: { info: {
+        id: "failed-assistant", role: "assistant", sessionID: sessionId, parentID: "new-user",
+        error, time: { created: 10, completed: 20 },
+      } } } as const;
+      __applySessionSyncEventForTest(input, update as any);
+      __applySessionSyncEventForTest(input, update as any);
+      const messages = queryClient.getQueryData<UIMessage[]>(key)!;
+      expect(messages.map((message) => message.id)).toEqual([
+        "old-user", "old-result", "new-user", "failed-assistant", "session-error:failed-assistant",
+      ]);
+      expect(messages.at(-1)?.metadata).toMatchObject({ opencode: { parentID: "new-user", completed: 20 } });
+      __applySessionSyncEventForTest(input, { type: "message.removed", properties: {
+        sessionID: sessionId, messageID: "failed-assistant",
+      } } as any);
+      expect(queryClient.getQueryData<UIMessage[]>(key)?.map((message) => message.id))
+        .toEqual(["old-user", "old-result", "new-user"]);
+    } finally {
+      release();
+      cleanup();
+      queryClient.removeQueries({ queryKey: key });
+      useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+    }
+  });
+
   test("retry parts remain presentation state and do not count as meaningful progress", () => {
     const workspaceId = "workspace-retry-part";
     const sessionId = "session-retry-part";

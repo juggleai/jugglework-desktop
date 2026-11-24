@@ -44,13 +44,51 @@ export function reconcileTranscriptMessages(input: ReconcileTranscriptInput): UI
  */
 export function applyRevertCursor(messages: UIMessage[], revertMessageId: string | null | undefined): UIMessage[] {
   if (!revertMessageId || messages.length === 0) return messages;
-  const idx = messages.findIndex((message) => message.id === revertMessageId);
+  let idx = messages.findIndex((message) => message.id === revertMessageId);
+  if (idx < 0) {
+    idx = messages.findIndex((message) => message.id === `${SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX}${revertMessageId}`);
+  }
   if (idx < 0) return messages;
   return messages.slice(0, idx);
 }
 
 export function isSyntheticMessageId(id: string) {
   return id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
+}
+
+export function getSessionErrorParentId(message: UIMessage): string | undefined {
+  if (!isSyntheticMessageId(message.id)) return undefined;
+  const parentID = (message.metadata as { opencode?: { parentID?: unknown } } | undefined)?.opencode?.parentID;
+  return typeof parentID === "string" ? parentID : undefined;
+}
+
+/** An error may arrive after a later turn. Place it beside its actual parent. */
+export function placeSessionErrorsWithParent(messages: UIMessage[]): UIMessage[] {
+  if (!messages.some((message) => getSessionErrorParentId(message))) return messages;
+  const parents = new Set(messages.filter((message) => message.role === "user").map((message) => message.id));
+  const errors = new Map<string, UIMessage[]>();
+  let currentParent: string | undefined;
+  const transcript = messages.filter((message) => {
+    if (message.role === "user" && message.parts.length > 0) currentParent = message.id;
+    const parent = getSessionErrorParentId(message);
+    if (!parent || parent === currentParent || !parents.has(parent)) return true;
+    const group = errors.get(parent);
+    if (group) group.push(message);
+    else errors.set(parent, [message]);
+    return false;
+  });
+  if (errors.size === 0) return messages;
+  const result: UIMessage[] = [];
+  currentParent = undefined;
+  for (const message of transcript) {
+    if (message.role === "user" && (message.parts.length > 0 || errors.has(message.id))) {
+      if (currentParent) result.push(...(errors.get(currentParent) ?? []));
+      currentParent = message.id;
+    }
+    result.push(message);
+  }
+  if (currentParent) result.push(...(errors.get(currentParent) ?? []));
+  return result;
 }
 
 /**

@@ -190,6 +190,13 @@ test("全页刷新接管原生视图，旧宿主操作及跨租户查询被拒�
   show(newBinding);
   expect(view.visible).toBe(true);
   expect(view.webContents.closed).toBe(false);
+  const forwardHint = events.get("jugglework:docs:rail-hint")!;
+  const hint = { label: "Calendar", centerY: 120, dark: false };
+  const beforeHint = view.webContents.send.mock.calls.length;
+  forwardHint(host, { instanceId, hostBinding: oldBinding, hint });
+  expect(view.webContents.send).toHaveBeenCalledTimes(beforeHint);
+  forwardHint(host, { instanceId, hostBinding: newBinding, hint });
+  expect(view.webContents.send).toHaveBeenLastCalledWith("jugglework:docs:rail-hint", hint);
 
   // 同分区的其他页面仍可能持有草稿，回落换 Cookie 之前需要它的确认。
   panel.detachWindow(window);
@@ -385,6 +392,17 @@ test("后台或隐藏原生页的 toggle／search 不发命令不抢焦点，当
   expect(a.view.webContents.focus).toHaveBeenCalledTimes(focuses);
   show(a);
   const visibleFocuses = a.view.webContents.focus.mock.calls.length;
+  const railHint = { label: "Calendar", centerY: 120, dark: false };
+  const forwardHint = events.get("jugglework:docs:rail-hint")!;
+  const beforeHint = a.view.webContents.send.mock.calls.length;
+  forwardHint({ ...event, senderFrame: {} }, { instanceId: a.input.instanceId, hint: railHint });
+  forwardHint(event, { instanceId: b.input.instanceId, hint: railHint });
+  expect(a.view.webContents.send.mock.calls).toHaveLength(beforeHint);
+  expect(b.view.webContents.send).not.toHaveBeenCalled();
+  forwardHint(event, { instanceId: a.input.instanceId, hint: railHint });
+  expect(a.view.webContents.send).toHaveBeenLastCalledWith("jugglework:docs:rail-hint", railHint);
+  expect(a.view.webContents.focus).toHaveBeenCalledTimes(visibleFocuses);
+  expect(a.view.getVisible()).toBe(true);
   for (const action of ["toggle-left", "toggle-right", "search"]) command(a, action);
   expect(a.view.webContents.focus).toHaveBeenCalledTimes(visibleFocuses + 3);
   expect(a.view.webContents.send).toHaveBeenLastCalledWith("jugglework:docs:layout-command", { instanceId: a.input.instanceId, action: "search" });

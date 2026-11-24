@@ -1223,7 +1223,7 @@ function MessageGroup({
     return <StandaloneManualCompactionTask state={manualCompaction} />
   }
 
-  const { processItems, summaryItems } = splitAssistantTaskMessages(items, isLiveGroup)
+  const { processItems, summaryItems, errorItems } = splitAssistantTaskMessages(items, isLiveGroup)
   const processDisplayItem = mergeAssistantProcessItems(processItems)
   const processMessages = processItems.map((item) => item.message)
   const hasAuthoredProcessText = processMessages.some((message) =>
@@ -1236,8 +1236,8 @@ function MessageGroup({
         toolActivitySummary,
       )
     : null
-  const renderableItems = getRenderableMessages(summaryItems)
-  const summaryItem = summaryItems.at(-1)
+  const renderableItems = getRenderableMessages(summaryItems.length > 0 ? summaryItems : errorItems)
+  const summaryItem = renderableItems.at(-1)
   const lastTextMessage = summaryItem ? getLastTextPart(summaryItem.message) : null
   // 只要有过程内容就保留折叠器：运行中默认展开，结束后收起但仍可展开。
   // TIPS: 此前的条件是 `processItems.length > 0 && (isLiveGroup || summaryItems.length === 0)`，
@@ -1322,6 +1322,7 @@ function MessageGroup({
         (showProcessDisclosure || showTaskTiming) && (isLiveGroup && processOpen ? "pt-2" : "pt-5"),
       )}>
         {summaryItems.map((item, groupIndex) => renderItem(item, processItems.length + groupIndex, "summary"))}
+        {errorItems.map((item, groupIndex) => renderItem(item, processItems.length + summaryItems.length + groupIndex, "summary"))}
       </div>
       {turnId && <CloudDocsTurnCard client={client} workspaceId={workspaceId} sessionId={sessionId} messageId={turnId} busy={cloudDocsBusy || isStreaming} />}
       {turnId && <NativeActionTurnCards client={client} workspaceId={workspaceId} sessionId={sessionId} turnId={turnId} />}
@@ -1411,7 +1412,13 @@ export function MessageList({ messages, status, activityStatus = "idle", retryAc
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
   const notices = React.useMemo(() => submittedTaskModelNotices(messages), [messages])
   const error = useSessionErrorMessage();
-  const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
+  const hasSessionErrorMessage = React.useMemo(() => {
+    if (!error) return false
+    const latestUser = messages.findLastIndex((message) => message.role === "user")
+    return messages.slice(latestUser + 1).some((message) =>
+      isSessionErrorMessage(message) && getMessagesText([message]) === error.trim(),
+    )
+  }, [error, messages])
   // TIPS: 底部提示展示的是当前真实动作（执行命令 / 写文件 / 工具调用…），
   // 而不是一个恒定的「Thinking…」；推不出具体动作时落到「生成回复中」。
   const liveActionLabel = isStreaming

@@ -38,8 +38,8 @@ import {
   filterProviderList,
 } from "../../../../app/utils/providers";
 import { getReactQueryClient } from "../../../infra/query-client";
-import { cloudGroupCatalogKey, ensureProviderListQuery } from "../../../infra/provider-list-query";
-import { confirmManagedProviderScope, managedProviderConfirmationCurrent, managedProviderEpoch, managedProviderHost, notifyManagedProviderCatalogChanged } from "../../../../app/lib/managed-provider-scope";
+import { cloudGroupCatalogKey, ensureProviderListQuery, removeDeletedProviderFromQueries, restoreRecreatedProvider } from "../../../infra/provider-list-query";
+import { confirmManagedProviderScope, isManagedProviderAuthorityRejected, managedProviderConfirmationCurrent, managedProviderEpoch, managedProviderHost, notifyManagedProviderCatalogChanged } from "../../../../app/lib/managed-provider-scope";
 import type { JuggleWorkServerStoreSnapshot } from "../jugglework-server-store";
 import {
   applyDisabledProviderEntry,
@@ -893,6 +893,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const ensureProjectProviderDisabledState = async (
     providerId: string,
     disabled: boolean,
+    markReloadRequired = () => options.markOpencodeConfigReloadRequired(),
   ) => {
     const resolvedProviderId = providerId.trim();
     if (!resolvedProviderId) {
@@ -936,13 +937,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         workspaceType,
         disabledProviders: nextWrite,
         removeFallbackKeyWhenEmpty: true,
-        markReloadRequired: () => options.markOpencodeConfigReloadRequired(),
+        markReloadRequired,
       });
       // 运行时层只是有效配置的一层，界面状态用合并后的结果，避免其他来源声明的
       // 停用项在刷新前从列表里短暂消失。
       options.setDisabledProviders(nextDisabled);
       if (!result.managedRuntime && result.changed) {
-        options.markOpencodeConfigReloadRequired();
+        markReloadRequired();
       }
       refreshSnapshot();
       emitChange();
@@ -971,7 +972,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     options.setDisabledProviders(nextDisabled);
-    options.markOpencodeConfigReloadRequired();
+    markReloadRequired();
     refreshSnapshot();
     emitChange();
     return true;
@@ -1287,7 +1288,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       client?: { delete?: (options: { url: string }) => Promise<unknown> };
     }).client;
     if (rawClient?.delete) {
-      await rawClient.delete({ url: `/auth/${encodeURIComponent(providerId)}` });
+      const result = await rawClient.delete({ url: `/auth/${encodeURIComponent(providerId)}` });
+      assertNoClientError(result);
       return;
     }
 
@@ -1815,6 +1817,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         await setProviderAuthCredentials(normalized.providerId, { type: "api", key: apiKey });
       }
 
+      restoreRecreatedProvider(options.providerBaseUrl(), normalized.providerId);
       options.markOpencodeConfigReloadRequired({ global: true });
       await refreshProviders({ dispose: true, global: true });
       refreshSnapshot();
@@ -1856,17 +1859,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         ? configFile.content
         : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
       const next = formatConfigWithoutCustomProvider(raw, providerId);
-      if (!configsAreSemanticallyEqual(raw, next)) {
-        await writeProviderConfigFile(scope, next);
-      }
+      if (configsAreSemanticallyEqual(raw, next)) return;
+      if (!(await writeProviderConfigFile(scope, next))) throw new Error(t("providers.not_connected"));
     }
-  };
-
-  const removeCustomProviderConfig = async (providerId: string) => {
-    await removeCustomProviderConfigFrom("global", providerId);
-    // 同时清理旧版本遗留在当前项目中的同名模型组。
-    await removeCustomProviderConfigFrom("project", providerId);
-    await refreshConfiguredLocalProviders();
   };
 
   const assertLocalConfigOwnsProvider = async (providerId: string) => {
@@ -1874,19 +1869,23 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       readGlobalConfigFile(),
       readProjectConfigFile(),
     ]) as Array<{ content?: string } | null>;
-    const isConfiguredLocally = configFiles.some((configFile) => {
+    const [globallyOwned, projectOwned] = configFiles.map((configFile) => {
       const parsed = parse(configFile?.content ?? "") as Record<string, unknown> | undefined;
       const configuredProviders = isRecord(parsed?.provider) ? parsed.provider : {};
       return Object.prototype.hasOwnProperty.call(configuredProviders, providerId);
     });
-    if (!isConfiguredLocally) {
+    if (!globallyOwned && !projectOwned) {
       throw new Error(t("providers.delete_not_workspace_owned"));
     }
+    // Keep a provider definition until the last write, so a failed cleanup
+    // of the other config can be retried through the same ownership check.
+    return globallyOwned ? ["project", "global"] as const : ["global", "project"] as const;
   };
 
   async function deleteProvider(providerId: string) {
     setStateField("providerAuthError", null);
     const resolved = providerId.trim();
+    const providerBaseUrl = options.providerBaseUrl();
     if (!resolved) {
       throw new Error(t("providers.provider_id_required"));
     }
@@ -1902,32 +1901,51 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       throw new Error(t("providers.delete_config_only"));
     }
 
-    try {
-      await assertLocalConfigOwnsProvider(resolved);
+    const runStep = async <T>(
+      step: "check_config" | "credentials" | "disabled_state" | "global_config" | "project_config",
+      action: () => Promise<T>,
+    ): Promise<T> => {
+      const startedAt = performance.now();
+      try {
+        const result = await action();
+        console.info("[provider-delete]", { step, outcome: "completed", durationMs: Math.round(performance.now() - startedAt) });
+        return result;
+      } catch (error) {
+        console.warn("[provider-delete]", { step, outcome: "failed", durationMs: Math.round(performance.now() - startedAt) });
+        throw new Error(t(`providers.delete_step_${step}`, {
+          error: describeProviderError(error, t("providers.delete_failed")),
+        }));
+      }
+    };
+
+    const scopes = await runStep("check_config", () => assertLocalConfigOwnsProvider(resolved));
+    await runStep("credentials", async () => {
       try {
         await removeProviderAuthCredentials(resolved);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error ?? "");
-        if (!/not found|unknown auth|404/i.test(message.toLowerCase())) {
-          throw error;
-        }
+        const missingCredential = error instanceof JuggleWorkServerError
+          ? error.code === "opencode_request_failed" && isRecord(error.details) && error.details.status === 404
+          : /not found|unknown auth|404/i.test(error instanceof Error ? error.message : String(error ?? ""));
+        if (!missingCredential) throw error;
       }
-      await ensureProjectProviderDisabledState(resolved, false);
-      await removeCustomProviderConfig(resolved);
-      options.setDisabledProviders(
-        options.disabledProviders().filter((entry) => entry.trim() !== resolved),
-      );
-      options.markOpencodeConfigReloadRequired({ global: true });
-      await refreshProviders({ dispose: true, global: true });
-      removeProviderFromState(resolved);
-      refreshSnapshot();
-      emitChange();
-      return t("providers.deleted", { provider: resolved });
-    } catch (error) {
-      const message = describeProviderError(error, t("providers.delete_failed"));
-      setStateField("providerAuthError", message);
-      throw error instanceof Error ? error : new Error(message);
+    });
+    await runStep("disabled_state", () => ensureProjectProviderDisabledState(resolved, false, () => {}));
+    for (const scope of scopes) {
+      await runStep(`${scope}_config`, () => removeCustomProviderConfigFrom(scope, resolved));
     }
+    await removeDeletedProviderFromQueries(getReactQueryClient(), providerBaseUrl, resolved);
+    options.setDisabledProviders(
+      options.disabledProviders().filter((entry) => entry.trim() !== resolved),
+    );
+    // Discard inventory reads started before the config was written.
+    ++configuredLocalProvidersLoadVersion;
+    state = {
+      ...state,
+      configuredLocalProviders: state.configuredLocalProviders.filter((provider) => provider.id !== resolved),
+    };
+    removeProviderFromState(resolved);
+    options.markOpencodeConfigReloadRequired({ global: true });
+    return t("providers.deleted", { provider: resolved });
   }
 
   async function connectCloudProviderInternal(
@@ -2579,21 +2597,20 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       getReactQueryClient().setQueryData(catalogKey, []);
       notifyManagedProviderCatalogChanged();
     };
-    // Revoke previous success before any reconciliation that can fail.
+    const fenceRejectedAuthority = async (revision: string, error: unknown) => {
+      if (!managedProviderConfirmationCurrent(epoch) || !isManagedProviderAuthorityRejected(error)) return;
+      const { revision: fenced } = await host.fenceManagedProviderAuthority(revision);
+      if (fenced) hideManagedCatalog();
+    };
     let authorityId: string;
     const { revision } = await host.managedProviderRevision();
     assertCurrentAuthority();
     try {
       authorityId = await confirmManagedProviderScope(host, revision);
     } catch (error) {
-      if (managedProviderConfirmationCurrent(epoch)) {
-        await host.fenceManagedProviderAuthority(revision);
-        hideManagedCatalog();
-      }
+      await fenceRejectedAuthority(revision, error);
       throw error;
     }
-    await host.setManagedProviderReadiness(workspaceId, authorityId, false);
-    hideManagedCatalog();
     assertCurrentAuthority();
 
     let importedProviders: Record<string, CloudImportedProvider>;
@@ -2621,6 +2638,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       currentOwnerId,
     });
     if (ownerAction === "purge") {
+      await host.setManagedProviderReadiness(workspaceId, authorityId, false);
+      hideManagedCatalog();
+      assertCurrentAuthority();
       await purgeWorkspaceCloudState();
       assertCurrentAuthority();
       importedProviders = {};
@@ -2628,9 +2648,25 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (ownerAction !== "keep") {
       writeWorkspaceCloudStateOwner(target.juggleworkWorkspaceId, currentOwnerId);
     }
-    const liveProviders = await refreshCloudOrgProviders({ force: true });
+    const liveProviders = await refreshCloudOrgProviders({ force: true }).catch(async (error) => {
+      assertCurrentAuthority();
+      await fenceRejectedAuthority(authorityId, error);
+      throw error;
+    });
     assertCurrentAuthority();
     const liveProviderMap = new Map(liveProviders.map((provider) => [provider.id, provider]));
+    // Keep a verified, unchanged workspace available during background reads.
+    // Once Den confirms a change to an existing grant, fence before any
+    // inventory read or write so old imports cannot authorize further calls.
+    if (Object.values(importedProviders).some((imported) => {
+      const live = liveProviderMap.get(imported.cloudProviderId);
+      return !live || imported.authorityId !== authorityId ||
+        isCloudProviderOutOfSync(live, imported, settings.activeOrgId);
+    })) {
+      await host.setManagedProviderReadiness(workspaceId, authorityId, false);
+      hideManagedCatalog();
+      assertCurrentAuthority();
+    }
     // The import baseline only says that we *previously* wrote a cloud
     // provider. It is not proof that its runtime config block still exists:
     // a config cleanup or an interrupted migration can leave the baseline
@@ -2794,19 +2830,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return !connected.has(id) || !loaded || provider.models.some((model) => !loaded.models[model.id]);
     })) return false;
     await host.setManagedProviderReadiness(workspaceId, authorityId, true);
-    try {
-      assertCurrentAuthority();
-      if (!await refreshProviders({ force: true })) throw new Error("Managed model catalog refresh failed.");
-      assertCurrentAuthority();
-      getReactQueryClient().setQueryData(catalogKey, liveProviders.map(getCloudManagedProviderId));
-      notifyManagedProviderCatalogChanged();
-      return true;
-    } catch (error) {
-      // The host rejects this write if a newer scope has already taken over.
-      await host.setManagedProviderReadiness(workspaceId, authorityId, false);
-      hideManagedCatalog();
-      throw error;
-    }
+    assertCurrentAuthority();
+    if (!await refreshProviders({ force: true })) throw new Error("Managed model catalog refresh failed.");
+    assertCurrentAuthority();
+    getReactQueryClient().setQueryData(catalogKey, liveProviders.map(getCloudManagedProviderId));
+    notifyManagedProviderCatalogChanged();
+    return true;
   }
 
   let latestCloudProviderSyncSucceeded = false;

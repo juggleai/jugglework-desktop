@@ -62,9 +62,15 @@ export type AiSettingsViewProps = {
   disconnectingProviderId: string | null;
   providerConnectError: string | null;
   providerDisconnectError: string | null;
+  providerDeleteRefresh?: {
+    busy: boolean;
+    failed: boolean;
+    canRetry: boolean;
+    retry: () => Promise<void>;
+  };
   onOpenProviderAuth: () => void | Promise<void>;
   onDisconnectProvider: (providerId: string) => void | Promise<void>;
-  onDeleteProvider: (providerId: string) => boolean | Promise<boolean>;
+  onDeleteProvider: (providerId: string) => boolean | string | Promise<boolean | string>;
   /** 点击本地模型组并打开编辑表单。 */
   onEditLocalProvider: (providerId: string) => void | Promise<void>;
   canDisconnectProvider: (provider: ConnectedProvider) => boolean;
@@ -201,6 +207,7 @@ function OrgProviderRowIdentity({ provider }: { provider: OrgManagedProvider }) 
 
 export function AiSettingsView(props: AiSettingsViewProps) {
   const [deleteCandidate, setDeleteCandidate] = useState<ConnectedProvider | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // TIPS: 两类模型组的所有权不同——本地模型组由用户在本机声明，组织托管模型组由
   // 组织下发。可操作范围也随之不同，混排会让「这一行能做什么」无法预测，因此按来源
@@ -266,7 +273,10 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           {props.canDeleteProvider(provider) ? (
             <Button
               variant="destructive"
-              onClick={() => setDeleteCandidate(provider)}
+              onClick={() => {
+                setDeleteError(null);
+                setDeleteCandidate(provider);
+              }}
               disabled={baseDisabled}
             >
               {rowDeleting ? t("providers.deleting") : t("providers.delete_permanently")}
@@ -322,6 +332,29 @@ export function AiSettingsView(props: AiSettingsViewProps) {
         {props.providerDisconnectError ? (
           <SettingsNotice tone="error">{props.providerDisconnectError}</SettingsNotice>
         ) : null}
+        {props.providerDeleteRefresh ? (
+          <SettingsNotice tone={props.providerDeleteRefresh.failed ? "error" : "neutral"}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span role="status">
+                {t(props.providerDeleteRefresh.busy
+                  ? "providers.delete_refreshing"
+                  : props.providerDeleteRefresh.failed
+                    ? "providers.delete_refresh_failed"
+                    : "providers.delete_refresh_pending")}
+              </span>
+              {props.providerDeleteRefresh.failed ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!props.providerDeleteRefresh.canRetry}
+                  onClick={props.providerDeleteRefresh.retry}
+                >
+                  {t("providers.delete_refresh_retry")}
+                </Button>
+              ) : null}
+            </div>
+          </SettingsNotice>
+        ) : null}
       </LayoutSection>
 
       {/* ---- Organization-managed model groups ---- */}
@@ -364,6 +397,11 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           <div className="rounded-xl border border-red-6 bg-red-2 px-3 py-2 text-xs text-red-11">
             {t("providers.delete_dialog_warning")}
           </div>
+          {deleteError ? (
+            <SettingsNotice tone="error">
+              <span role="alert">{deleteError}</span>
+            </SettingsNotice>
+          ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={Boolean(props.deletingProviderId)}>
               {t("common.cancel")}
@@ -373,8 +411,10 @@ export function AiSettingsView(props: AiSettingsViewProps) {
               disabled={!deleteCandidate || Boolean(props.deletingProviderId)}
               onClick={async () => {
                 if (!deleteCandidate) return;
-                const deleted = await props.onDeleteProvider(deleteCandidate.id);
-                if (deleted) setDeleteCandidate(null);
+                setDeleteError(null);
+                const result = await props.onDeleteProvider(deleteCandidate.id);
+                if (result === true) setDeleteCandidate(null);
+                if (typeof result === "string") setDeleteError(result);
               }}
             >
               {props.deletingProviderId

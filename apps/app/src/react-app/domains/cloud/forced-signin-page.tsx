@@ -155,6 +155,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
       setBaseUrlDraft(persisted.baseUrl);
       clearDenSession({ includeBaseUrls: false });
       setAuthError(null);
+      setSigninFallbackUrl(null);
       setStatusMessage(t("den.status_base_url_updated"));
       void desktopConfig.refresh();
       void denAuth.refresh();

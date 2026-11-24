@@ -76,6 +76,27 @@ describe("deferred engine reload recovery", () => {
     expect(latest!.reload.reloadError).toBe("engine restart failed");
   });
 
+  test("keeps global config changes made during a reload pending", async () => {
+    let completeReload!: (ok: boolean) => void;
+    const reload = new Promise<boolean>((resolve) => { completeReload = resolve; });
+    await act(async () => {
+      view = create(<Probe reload={() => reload} />);
+    });
+    let attempt!: Promise<void>;
+    await act(async () => {
+      attempt = latest!.reloadWorkspaceEngine();
+    });
+    await act(async () => {
+      latest!.markReloadRequired("config", { ...config, scope: "global" });
+      completeReload(true);
+      await attempt;
+    });
+    expect(latest!.reload.reloadBusy).toBe(false);
+    expect(latest!.reload.reloadPending).toBe(true);
+    await act(async () => { await latest!.reloadWorkspaceEngine(); });
+    expect(latest!.reload.reloadPending).toBe(false);
+  });
+
   test("reload errors remain visible without disabling task submission", () => {
     const route = readFileSync(
       new URL("../src/react-app/shell/session-route.tsx", import.meta.url),

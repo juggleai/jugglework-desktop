@@ -87,6 +87,7 @@ export function useSystemState(
   // Unscoped pending work (every pre-existing caller). Any successful reload
   // clears it, exactly as before.
   const [unscopedReloadPending, setReloadPending] = useState(false);
+  const globalReloadRevision = useRef(0);
   const [pendingWorkspaceIds, setPendingWorkspaceIdsState] = useState<string[]>([]);
   // Mirror for synchronous reads inside callbacks (clear/deferred paths).
   const pendingWorkspaceIdsRef = useRef<string[]>([]);
@@ -114,6 +115,7 @@ export function useSystemState(
 
   const markReloadRequired = useCallback(
     (reason: ReloadReason, trigger?: ReloadTrigger, scope?: ReloadScope) => {
+      if (trigger?.scope === "global") globalReloadRevision.current += 1;
       const workspaceId = scope?.workspaceId?.trim() || null;
       if (workspaceId) {
         const current = pendingWorkspaceIdsRef.current;
@@ -199,6 +201,7 @@ export function useSystemState(
     // Captured before awaiting: the selection may change mid-reload, and only
     // the workspace this request targeted is applied by it.
     const reloadedWorkspaceId = options.currentWorkspaceId?.trim() || null;
+    const startedGlobalRevision = globalReloadRevision.current;
     setReloadBusy(true);
     setReloadError(null);
     options.setError(null);
@@ -210,6 +213,9 @@ export function useSystemState(
         setReloadError(t("system.reload_failed"));
         return;
       }
+      // A global config write during the reload may have missed the engine's
+      // config read. Leave the new mark pending for another safe reload.
+      if (globalReloadRevision.current !== startedGlobalRevision) return;
       await options.onReloadComplete?.();
       clearReloadRequired(reloadedWorkspaceId);
     } catch (error) {

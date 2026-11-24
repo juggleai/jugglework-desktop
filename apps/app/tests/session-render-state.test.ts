@@ -4,6 +4,8 @@ import type { JuggleWorkSessionMessage, JuggleWorkSessionMessagesResponse, Juggl
 
 import { captureSessionHistoryEdit, deriveRenderedSessionMessages } from "../src/react-app/domains/session/surface/session-render-state";
 import { createSessionCompactionUIPart, getSessionCompactionFromMessage } from "../src/app/lib/session-compaction";
+import { groupMessages, isMessageGroup, splitAssistantTaskMessages } from "../src/components/chat/utils";
+import { createSessionErrorUIMessage } from "../src/react-app/domains/session/sync/usechat-adapter";
 
 const message = (id: string, text: string): UIMessage => ({
   id,
@@ -47,6 +49,26 @@ describe("session render state", () => {
     const live = [message("answer", "restored answer")];
     const snapshot = { session: { id: "root", revert: { messageID: "answer" } }, messages: [], status: { type: "idle" }, todos: [] } as unknown as JuggleWorkSessionSnapshot;
     expect(deriveRenderedSessionMessages({ snapshot, transcriptState: live, snapshotCurrent: false })).toEqual(live);
+  });
+
+  test("an out-of-order error follows its parent without moving result text into the collapsed process", () => {
+    const note = (id: string): UIMessage => ({ id, role: "user", parts: [{ type: "text", text: id }] });
+    const error = createSessionErrorUIMessage("second-failure", "Forbidden", { parentID: "second" });
+    const rendered = deriveRenderedSessionMessages({ snapshot: null, transcriptState: [
+      note("first"), message("first-result", "Deployed"), note("second"),
+      message("second-result", "Partial result"), note("third"), message("third-result", "New result"), error,
+    ] });
+    expect(rendered.map((item) => item.id)).toEqual([
+      "first", "first-result", "second", "second-result", error.id, "third", "third-result",
+    ]);
+    const groups = groupMessages(rendered, "ready").filter(isMessageGroup);
+    const split = splitAssistantTaskMessages(groups[1]!.messages);
+    expect(split.summaryItems.map(({ message }) => message.id)).toEqual(["second-result"]);
+    expect(split.errorItems.map(({ message }) => message.id)).toEqual([error.id]);
+    expect(split.processItems).toEqual([]);
+
+    const missingParent = groupMessages([note("first"), message("first-result", "Deployed"), error], "ready");
+    expect(missingParent.at(-1)).toMatchObject({ message: { id: error.id } });
   });
   test("removes legacy completion diagnostics before presentation", () => {
     const rendered = deriveRenderedSessionMessages({

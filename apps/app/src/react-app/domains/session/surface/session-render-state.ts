@@ -3,7 +3,7 @@ import type { UIMessage } from "ai";
 import type { JuggleWorkSessionMessagesResponse, JuggleWorkSessionSnapshot } from "../../../../app/lib/jugglework-server";
 import { SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX } from "../../../../app/types";
 import { mergeSnapshotAndLiveMessages } from "../sync/message-merge";
-import { applyRevertCursor } from "../sync/transcript-reconcile";
+import { applyRevertCursor, placeSessionErrorsWithParent } from "../sync/transcript-reconcile";
 import { snapshotToUIMessages } from "../sync/usechat-adapter";
 import { toCompactionPresentationMessage } from "../../../../app/lib/session-compaction";
 import { applyRawMessageRevertCursor, mergeHistoricalSessionMessages } from "../sync/session-history";
@@ -95,9 +95,9 @@ export function deriveContextEstimationMessages(input: {
   // Older clients may have left synthetic completion diagnostics in the live
   // cache. They are structured activity state, not assistant transcript, and
   // would otherwise displace the real final summary during message grouping.
-  return applyRevertCursor(
+  return placeSessionErrorsWithParent(applyRevertCursor(
     messages
       .filter((message) => !message.id.startsWith(SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX)),
     revertMessageId,
-  );
+  ));
 }

@@ -1,6 +1,17 @@
 /** 非 modal 浮层只有实际与文档相交才遮挡；modal 即使内容框不相交也要让出整个原生层。 */
 const modalBackdrops = '[data-slot="dialog-overlay"], [data-slot="alert-dialog-overlay"], [data-slot="sheet-overlay"]';
 
+export function intersectsCloudDocs(element: HTMLElement, host: DOMRect) {
+  const rect = element.getBoundingClientRect();
+  return rect.right > host.left && rect.left < host.right && rect.bottom > host.top && rect.top < host.bottom;
+}
+
+/** Base UI keeps the positioner transparent until its first placement. */
+export function findPositionedRailHint() {
+  return Array.from(document.querySelectorAll<HTMLElement>("[data-app-rail-tooltip][data-open]"))
+    .find((hint) => !hint.hidden && hint.getClientRects().length > 0 && hint.parentElement?.style.opacity !== "0");
+}
+
 export function hasCloudDocsOccluder(host: DOMRect) {
   const overlays = document.querySelectorAll<HTMLElement>([
     '[role="dialog"]', '[role="alertdialog"]', '[aria-modal="true"]',
@@ -14,8 +25,7 @@ export function hasCloudDocsOccluder(host: DOMRect) {
       overlay.hidden || overlay.getClientRects().length === 0) continue;
     // TIPS: BaseUI modal 不保证输出 aria-modal；Backdrop 承担全局阻止背景交互的职责。
     if (overlay.getAttribute("aria-modal") === "true" || overlay.matches(modalBackdrops)) return true;
-    const rect = overlay.getBoundingClientRect();
-    if (rect.right > host.left && rect.left < host.right && rect.bottom > host.top && rect.top < host.bottom) return true;
+    if (intersectsCloudDocs(overlay, host)) return true;
   }
   return false;
 }

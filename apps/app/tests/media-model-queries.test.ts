@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, type QueryKey } from "@tanstack/react-query";
 import type { JuggleWorkServerClient } from "../src/app/lib/jugglework-server";
 import type { ComposerDraft } from "../src/app/types";
 import { invalidateManagedProviderScope, notifyManagedProviderCatalogChanged } from "../src/app/lib/managed-provider-scope";
@@ -150,7 +150,6 @@ describe("media model queries", () => {
       connectCloudProvider: async () => result,
       removeCloudProvider: async () => result,
       disconnectProvider: async () => result,
-      deleteProvider: async () => result,
       refreshProviders: async () => null,
       runCloudProviderSync: async () => undefined,
       runCloudProviderSyncForReadiness: async () => true,
@@ -163,7 +162,6 @@ describe("media model queries", () => {
       () => store.connectCloudProvider("cloud"),
       () => store.removeCloudProvider("cloud"),
       () => store.disconnectProvider("provider"),
-      () => store.deleteProvider("provider"),
       () => store.runCloudProviderSync("app_resume"),
       () => store.runCloudProviderSyncForReadiness("app_resume"),
     ];
@@ -182,6 +180,30 @@ describe("media model queries", () => {
     refreshed.length = 0;
     await store.refreshProviders();
     expect(refreshed).toEqual([]);
+  });
+
+  test("provider deletion completes while media model queries are still refreshing", async () => {
+    let finishRefresh!: () => void;
+    const pendingRefresh = new Promise<void>((resolve) => { finishRefresh = resolve; });
+    const calls: QueryKey[] = [];
+    const queryClient = {
+      cancelQueries: async () => {},
+      invalidateQueries: async ({ queryKey }: { queryKey: QueryKey }) => {
+        calls.push(queryKey);
+        await pendingRefresh;
+      },
+    } as unknown as QueryClient;
+    const store = withProviderMediaModelRefresh({
+      deleteProvider: async () => "deleted",
+    } as never, { queryClient, scope: () => scope });
+
+    try {
+      await expect(store.deleteProvider("provider")).resolves.toBe("deleted");
+      await Promise.resolve();
+      expect(calls).toEqual([imageModelQueryKey(scope), videoModelQueryKey(scope)]);
+    } finally {
+      finishRefresh();
+    }
   });
 
   test("does not refresh for OAuth or cloud-readiness attempts that did not connect", async () => {

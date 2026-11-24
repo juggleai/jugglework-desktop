@@ -29,6 +29,24 @@ export type ConnectedProviderSnapshotChange = {
 
 const connectedProviderSnapshots = new Map<string, ConnectedProviderSnapshot>();
 const connectedProviderSnapshotChanges = new Map<string, ConnectedProviderSnapshotChange>();
+const deletedProvidersByWorkspace = new Map<string, Set<string>>();
+
+function providerListEndpoint(baseUrl?: string | null) {
+  return baseUrl?.trim().replace(/\/+$/, "") ?? "";
+}
+
+function providerListHost(endpoint: string) {
+  return endpoint.replace(/\/workspace\/[^/]+\/opencode$/, "/opencode");
+}
+
+function withoutProviders(value: ProviderListResponse, hidden: Set<string>): ProviderListResponse {
+  return {
+    ...value,
+    all: value.all.filter(({ id }) => !hidden.has(id)),
+    connected: value.connected.filter((id) => !hidden.has(id)),
+    default: Object.fromEntries(Object.entries(value.default ?? {}).filter(([id]) => !hidden.has(id))),
+  };
+}
 
 export function providerListQueryKey(input: {
   baseUrl?: string | null;
@@ -48,6 +66,40 @@ export async function refreshProviderListQueries(queryClient: QueryClient) {
   await queryClient.refetchQueries({ queryKey: PROVIDER_LIST_QUERY_ROOT, type: "active" });
 }
 
+export async function removeDeletedProviderFromQueries(
+  queryClient: QueryClient,
+  baseUrl: string,
+  providerId: string,
+) {
+  const endpoint = providerListEndpoint(baseUrl);
+  if (!endpoint) return;
+  const removed = deletedProvidersByWorkspace.get(endpoint) ?? new Set<string>();
+  removed.add(providerId);
+  deletedProvidersByWorkspace.set(endpoint, removed);
+  const filters = {
+    queryKey: PROVIDER_LIST_QUERY_ROOT,
+    predicate: ({ queryKey }: { queryKey: readonly unknown[] }) =>
+      typeof queryKey[1] === "string" && providerListHost(providerListEndpoint(queryKey[1])) === providerListHost(endpoint),
+  };
+  // A request started before the config write can still carry the deleted entry.
+  await queryClient.cancelQueries(filters);
+  queryClient.setQueriesData<ProviderListResponse>({
+    queryKey: PROVIDER_LIST_QUERY_ROOT,
+    predicate: ({ queryKey }) => typeof queryKey[1] === "string" && providerListEndpoint(queryKey[1]) === endpoint,
+  }, (value) => value && withoutProviders(value, removed));
+  // Other workspaces can still have a project definition for the same ID.
+  void queryClient.invalidateQueries(filters);
+}
+
+export function restoreRecreatedProvider(baseUrl: string, providerId: string) {
+  const host = providerListHost(providerListEndpoint(baseUrl));
+  for (const [endpoint, removed] of deletedProvidersByWorkspace) {
+    if (providerListHost(endpoint) !== host) continue;
+    removed.delete(providerId);
+    if (!removed.size) deletedProvidersByWorkspace.delete(endpoint);
+  }
+}
+
 export async function fetchProviderList(input: {
   client: Client;
   baseUrl?: string | null;
@@ -63,7 +115,17 @@ export async function fetchProviderList(input: {
   const hosted = /\/opencode(?:\/|$)/.test(input.baseUrl ?? "");
   const all = hosted && epoch === managedProviderEpoch() && !managedProviderSwitchPending() ? value.all : value.all.filter((item) => !isManagedProvider(item.id, item));
   const ids = new Set(all.map((item) => item.id));
-  const filtered = { ...value, all, connected: value.connected.filter((id) => ids.has(id)), default: Object.fromEntries(Object.entries(value.default ?? {}).filter(([id]) => ids.has(id))) };
+  let filtered = { ...value, all, connected: value.connected.filter((id) => ids.has(id)), default: Object.fromEntries(Object.entries(value.default ?? {}).filter(([id]) => ids.has(id))) };
+  const endpoint = providerListEndpoint(input.baseUrl);
+  const removed = deletedProvidersByWorkspace.get(endpoint);
+  if (removed?.size) {
+    const stillReported = new Set(value.all.filter(({ id, source }) => source === "config" && removed.has(id)).map(({ id }) => id));
+    if (epoch === managedProviderEpoch()) {
+      if (stillReported.size) deletedProvidersByWorkspace.set(endpoint, stillReported);
+      else deletedProvidersByWorkspace.delete(endpoint);
+    }
+    if (stillReported.size) filtered = withoutProviders(filtered, stillReported);
+  }
   if (epoch === managedProviderEpoch()) recordConnectedProviderSnapshot(input, filtered);
   return filtered;
 }

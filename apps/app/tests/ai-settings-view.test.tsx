@@ -162,3 +162,16 @@ describe("AI settings organization directory presentation", () => {
     expect(html).toContain("1 model");
   });
 });
+
+test("a deleted provider shows its pending refresh and allows retry after failure", () => {
+  const refresh = { busy: false, failed: false, canRetry: true, retry: async () => {} };
+  const pending = renderToStaticMarkup(<AiSettingsView {...viewProps({ providerDeleteRefresh: refresh })} />);
+  expect(pending).toContain("Provider deleted. Waiting for the engine to refresh.");
+  expect(pending).not.toContain("Retry refresh");
+
+  const failed = renderToStaticMarkup(<AiSettingsView {...viewProps({
+    providerDeleteRefresh: { ...refresh, failed: true },
+  })} />);
+  expect(failed).toContain("Provider deleted. Engine refresh failed.");
+  expect(failed).toContain("Retry refresh");
+});

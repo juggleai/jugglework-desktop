@@ -16,6 +16,7 @@ import {
   describeOpencodeSessionError,
   isCompactionContinuePart,
   isMessageAbortedError,
+  sessionErrorMessageId,
   snapshotToUIMessages,
 } from "./usechat-adapter";
 import {
@@ -645,20 +646,6 @@ function permissionNotificationDetail(permission: PermissionRequest | Permission
 function questionNotificationText(question: QuestionRequest) {
   const prompt = question.questions.find((item) => item.question.trim())?.question.trim();
   return prompt ? `Question: ${prompt}` : undefined;
-}
-
-function latestAssistantMessageId(messages: UIMessage[]) {
-  // The snapshot keys each error to its errored assistant message id, so the
-  // live event must resolve to that same id to dedupe on reload. Skipping
-  // synthetic error messages ensures a follow-up error keys off the real
-  // assistant turn rather than overwriting the previous error message.
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (!message || message.role !== "assistant") continue;
-    if (message.id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX)) continue;
-    return message.id;
-  }
-  return null;
 }
 
 function partHasVisibleAssistantOutput(part: Part) {
@@ -1335,8 +1322,11 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
         useSessionActivityStore.getState().setRunStatus(workspaceId, sessionId, idleStatus);
         if (isTrackedSession(entry, sessionId)) {
           queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId), (current = []) => {
-            const latestAssistantIndex = current.findLastIndex((message) => message.role === "assistant");
-            if (latestAssistantIndex < 0) return current;
+            const latestUserIndex = current.findLastIndex((message) => message.role === "user");
+            const latestAssistantIndex = current.findLastIndex((message) =>
+              message.role === "assistant" && !message.id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX),
+            );
+            if (latestAssistantIndex <= latestUserIndex) return current;
             return current.map((message, index) => {
               if (index !== latestAssistantIndex) return message;
               const metadata = message.metadata && typeof message.metadata === "object" ? message.metadata : {};
@@ -1371,20 +1361,8 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       }
       notifyDesktopEvent({ type: "task.failed", sessionId, errorText });
       useSessionActivityStore.getState().setError(workspaceId, sessionId, errorText);
-      if (isTrackedSession(entry, sessionId)) {
-        queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId), (current = []) => {
-          // Key the error to the latest assistant turn so it lands beside the
-          // turn that failed and a later turn's error becomes its own message
-          // instead of overwriting this one. Falls back to the session id when
-          // no assistant turn exists yet (e.g. error before any output).
-          const turnKey = latestAssistantMessageId(current) ?? sessionId;
-          // Note: turnKey matches the snapshot's per-turn key (the errored
-          // assistant message id) so a reload reconciles instead of
-          // duplicating; the sessionId fallback only applies when the run
-          // errored before any assistant message existed.
-          return upsertMessage(current, createSessionErrorUIMessage(turnKey, errorText));
-        });
-      }
+      // This event has no assistant/parent ID. The session-level notice
+      // covers the gap until message.updated or a snapshot can place it.
       settleTerminalSessionStatus(entry, workspaceId, sessionId);
     }
     return;
@@ -1559,7 +1537,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
   if (event.type === "message.updated") {
     const props = (event.properties ?? {}) as {
-      info?: { id?: string; role?: UIMessage["role"] | string; model?: unknown; sessionID?: string; finish?: string; summary?: boolean | { diffs?: unknown[] }; error?: unknown; time?: { created?: number; completed?: number } };
+      info?: { id?: string; role?: UIMessage["role"] | string; model?: unknown; sessionID?: string; parentID?: string; finish?: string; summary?: boolean | { diffs?: unknown[] }; error?: unknown; time?: { created?: number; completed?: number } };
     };
     const info = props.info;
     if (!info?.id || !info.sessionID || (info.role !== "user" && info.role !== "assistant" && info.role !== "system")) {
@@ -1605,6 +1583,15 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       : undefined;
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID), (current = []) => {
       const updated = upsertMessage(current, next);
+      if (info.role === "assistant" && info.error && !stopped) {
+        const error = createSessionErrorUIMessage(messageId, describeOpencodeSessionError(info.error), {
+          created, completed, parentID: info.parentID,
+        });
+        const messages = updated.filter((message) => message.id !== error.id);
+        const assistantIndex = messages.findIndex((message) => message.id === messageId);
+        messages.splice(assistantIndex + 1, 0, error);
+        return messages;
+      }
       if (info.role !== "assistant" || info.summary !== true) {
         return updated;
       }
@@ -1631,6 +1618,8 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     // empty shell. Tombstones clear with session.deleted instead.
     const props = (event.properties ?? {}) as { sessionID?: string; messageID?: string };
     if (!props.sessionID || !props.messageID) return;
+    const messageId = props.messageID;
+    const errorId = sessionErrorMessageId(messageId);
     dropContinuationRuntimeState(entry, props.sessionID, props.messageID);
     if (!isTrackedSession(entry, props.sessionID)) return;
     void queryClient.cancelQueries({ queryKey: sessionHistoryKey(workspaceId, props.sessionID), exact: true });
@@ -1639,7 +1628,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       (current) => removeMessageFromSessionHistory(current, props.messageID!),
     );
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, props.sessionID), (current = []) =>
-      current.filter((message) => message.id !== props.messageID),
+      current.filter((message) => message.id !== messageId && message.id !== errorId),
     );
     queryClient.setQueryData<JuggleWorkSessionSnapshot>(
       snapshotKey(workspaceId, props.sessionID),

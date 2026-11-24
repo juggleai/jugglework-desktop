@@ -56,6 +56,11 @@ Desktop SHALL keep Cloud-managed model discovery and new requests scoped to the 
 - **THEN** Desktop hides those models and its local runtime rejects new use until the active scope and its imports are verified
 - **AND** a pending managed media draft is not sent under a different scope, while already-admitted work keeps its original binding
 
+#### Scenario: Background refresh for a verified workspace
+- **WHEN** provider synchronization refreshes an already verified, unchanged account, organization and workspace
+- **THEN** the existing verified grants remain usable during the refresh
+- **AND** a confirmed authorization rejection or a changed or withdrawn existing grant is fenced before further reconciliation
+
 ### Requirement: Desktop recognizes both managed router generations
 Desktop SHALL recognize `managedIdentity=jwork_router` as the canonical managed routing identity and SHALL recognize the legacy `juggle_router` managed discriminator when the canonical field is absent.
 

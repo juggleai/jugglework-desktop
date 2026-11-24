@@ -9,6 +9,11 @@ Desktop SHALL keep visited cloud document instances alive across normal navigati
 - **THEN** ordinary hints do not hide the document, and the hidden session cannot claim or focus a native document
 - **AND** returning to that session reuses its existing document instance
 
+#### Scenario: Rail hint overlaps the native product page
+- **WHEN** a navigation hint opens to the right of the Rail and intersects the visible cloud document
+- **THEN** the label is visible in full from its first painted frame above the document while the native view remains visible and interactive
+- **AND** closing the hint removes it from the document surface
+
 ### Requirement: Operable native document occlusion
 
 Desktop SHALL preserve operation of intersecting menus and modal dialogs with a document snapshot or explicit themed fallback. Stale asynchronous results SHALL NOT alter a new active source.

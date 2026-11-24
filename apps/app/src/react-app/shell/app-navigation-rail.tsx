@@ -269,11 +269,17 @@ function CloudDocsRailIcon({ active }: { active: boolean }) {
   );
 }
 
-function RailHint({ label, children }: { label: string; children: React.ReactElement }) {
+function RailHint({ label, nativeLabel = label, children }: { label: string; nativeLabel?: string; children: React.ReactElement }) {
   return (
     <Tooltip>
       <TooltipTrigger render={children} />
-      <TooltipContent side="right" sideOffset={8} hideArrow positionerClassName="pointer-events-none z-[80]">
+      <TooltipContent
+        side="right"
+        sideOffset={8}
+        hideArrow
+        positionerClassName="pointer-events-none z-[80]"
+        data-app-rail-tooltip={nativeLabel}
+      >
         {label}
       </TooltipContent>
     </Tooltip>
@@ -1026,7 +1032,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         ) : null}
         <div className="relative flex h-9 w-full items-center justify-center">
         <DropdownMenu open={accountMenuOpen} onOpenChange={(open) => { setAccountMenuOpen(open); if (open) void refreshAccount(); }}>
-          <RailHint label={identity}>
+          <RailHint label={identity} nativeLabel={t("account_menu.open")}>
             <DropdownMenuTrigger
               render={(
                 <button

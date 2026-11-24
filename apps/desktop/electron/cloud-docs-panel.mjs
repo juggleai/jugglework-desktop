@@ -659,6 +659,27 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
         instanceId: input.instanceId, action: input.action,
       });
     });
+    ipcMain.on("jugglework:docs:rail-hint", (event, input) => {
+      const item = find(input);
+      if (!trusted(event, input) || !item?.ready || item.denied ||
+        item.input.presentation?.mode !== "product" ||
+        input?.instanceId !== item.input.instanceId ||
+        item.view.webContents.isDestroyed()) return;
+      const hint = input.hint;
+      if (hint === null) {
+        item.view.webContents.send("jugglework:docs:rail-hint", null);
+        return;
+      }
+      if (currents.get(item.ownerWindow.id) !== item || !item.view.getVisible() ||
+        typeof hint?.label !== "string" || !hint.label || hint.label.length > 200 ||
+        !Number.isFinite(hint.centerY) || typeof hint.dark !== "boolean") return;
+      const scale = item.ownerWindow.webContents.getZoomFactor() / item.view.webContents.getZoomFactor();
+      item.view.webContents.send("jugglework:docs:rail-hint", {
+        label: hint.label,
+        centerY: hint.centerY * scale,
+        dark: hint.dark,
+      });
+    });
     ipcMain.on("jugglework:docs:appearance", (event, input) => {
       const current = find(input);
       if (

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -7,7 +7,7 @@ import { cloudGatewayCredentialEnvName, cloudProviderConfigFingerprint } from "@
 
 import { auditLogPath } from "./audit.js";
 import { readJuggleWorkWorkspaceConfig } from "./jugglework-workspace-config-store.js";
-import { startServer } from "./server.js";
+import { registerTrustedOpencodeProcess, startServer } from "./server.js";
 import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 
@@ -17,15 +17,21 @@ const stops: Array<() => void | Promise<void>> = [];
 const roots: string[] = [];
 
 const previousEnvStore = process.env.JUGGLEWORK_ENV_STORE;
+const previousConfigDir = process.env.OPENCODE_CONFIG_DIR;
+const previousConfigHome = process.env.XDG_CONFIG_HOME;
 
 afterEach(async () => {
   while (stops.length) await stops.pop()?.();
   while (roots.length) await rm(roots.pop()!, { recursive: true, force: true });
   if (previousEnvStore === undefined) delete process.env.JUGGLEWORK_ENV_STORE;
   else process.env.JUGGLEWORK_ENV_STORE = previousEnvStore;
+  if (previousConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+  else process.env.OPENCODE_CONFIG_DIR = previousConfigDir;
+  if (previousConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = previousConfigHome;
 });
 
-async function boot(providerCatalog = { all: [] as Array<{ id: string; models: Record<string, unknown> }>, default: {} as Record<string, string>, connected: [] as string[] }, respond?: (request: Request) => Response | undefined) {
+async function boot(providerCatalog = { all: [] as Array<{ id: string; source?: string; models: Record<string, unknown> }>, default: {} as Record<string, string>, connected: [] as string[] }, respond?: (request: Request) => Response | undefined) {
   const root = await mkdtemp(join(tmpdir(), "jugglework-provider-auth-"));
   roots.push(root);
   // Keep the env store and runtime DB inside the temp root. Without this the
@@ -94,6 +100,41 @@ function hostHeaders() {
 }
 
 describe("workspace provider auth routes", () => {
+  test("hides removed global providers even when the managed engine still reports them", async () => {
+    const removed = { id: "deleted-local", source: "config", models: { chat: {} } };
+    const project = { id: "project-local", source: "config", models: { chat: {} } };
+    const independent = { id: "other-local", source: "config", models: { chat: {} } };
+    const builtin = { id: "builtin", source: "env", models: { chat: {} } };
+    const all = [removed, project, independent, builtin];
+    const catalog = { all, connected: all.map(({ id }) => id), default: Object.fromEntries(all.map(({ id }) => [id, "chat"])) };
+    const engineGlobal = { provider: { [removed.id]: {}, [project.id]: {}, [builtin.id]: {} } };
+    const { base, config, root } = await boot(catalog, (request) =>
+      new URL(request.url).pathname === "/global/config" ? Response.json(engineGlobal) : undefined);
+    const global = join(root, "global");
+    const projectDir = join(root, ".opencode");
+    process.env.OPENCODE_CONFIG_DIR = global;
+    process.env.XDG_CONFIG_HOME = join(root, "xdg");
+    await mkdir(global);
+    await mkdir(projectDir, { recursive: true });
+    await writeFile(join(global, "opencode.jsonc"), JSON.stringify({ provider: { [removed.id]: {} } }));
+    await writeFile(join(projectDir, "opencode.json"), JSON.stringify({ provider: { [project.id]: {} } }));
+    registerTrustedOpencodeProcess(config, { baseUrl: config.workspaces[0]!.baseUrl!, identity: "provider-catalog", isAlive: () => true });
+    const get = async (path: string) => {
+      const response = await fetch(`${base}/workspace/ws_1/opencode${path}`, { headers: { authorization: `Bearer ${CLIENT_TOKEN}` } });
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+
+    expect(await get("/provider")).toEqual(catalog);
+    await writeFile(join(global, "opencode.jsonc"), "{}");
+    const connected = [project.id, independent.id, builtin.id];
+    const defaults = Object.fromEntries(connected.map((id) => [id, "chat"]));
+    expect(await get("/provider")).toEqual({ all: [project, independent, builtin], connected, default: defaults });
+    expect(await get("/config/providers")).toEqual({ providers: [project, independent, builtin], default: defaults });
+    await writeFile(join(global, "opencode.jsonc"), JSON.stringify({ provider: { [removed.id]: {} } }));
+    expect(await get("/provider")).toEqual(catalog);
+  });
+
   test("fences discovery and dispatch through personal → organization → personal, including late sync results", async () => {
     const id = "lpr_fixture";
     const local = { id: "local", models: { own: {} } };

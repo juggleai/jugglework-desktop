@@ -151,7 +151,12 @@ export function withProviderMediaModelRefresh(
     connectCloudProvider: wrap(store.connectCloudProvider),
     removeCloudProvider: wrap(store.removeCloudProvider),
     disconnectProvider: wrap(store.disconnectProvider),
-    deleteProvider: wrap(store.deleteProvider),
+    deleteProvider: async (providerId) => {
+      const capturedScope = mediaModelQueryScope(input.scope());
+      const result = await store.deleteProvider(providerId);
+      void invalidateMediaModelQueries(input.queryClient, capturedScope).catch(input.onRefreshError ?? (() => {}));
+      return result;
+    },
     runCloudProviderSync: wrap(store.runCloudProviderSync),
     runCloudProviderSyncForReadiness: wrap(store.runCloudProviderSyncForReadiness, Boolean),
   };

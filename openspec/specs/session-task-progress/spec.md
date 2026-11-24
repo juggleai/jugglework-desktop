@@ -6,6 +6,15 @@ Provide dependable task-progress presentation for each conversation so users can
 
 ## Requirements
 
+### Requirement: Task errors preserve turn ownership and results
+
+When a live error event lacks a message identifier, Desktop SHALL show it as a transient session notice. An errored assistant message SHALL attach the durable error to its user-message parent and keep result text visible independently of the error card.
+
+#### Scenario: An error arrives out of order during a retry
+- **WHEN** a new attempt fails before its assistant update reaches the transcript, or a failed update arrives after a newer user message
+- **THEN** the durable card appears with the failed attempt once its message and parent are known
+- **AND** the preceding result and its duration remain associated with the preceding task
+
 ### Requirement: Active task progress remains available
 The system SHALL keep a session's non-empty task progress visible while that session has an active run, unless a higher-priority interaction temporarily occupies the same presentation area.
 

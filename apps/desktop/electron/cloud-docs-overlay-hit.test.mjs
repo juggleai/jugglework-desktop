@@ -28,7 +28,10 @@ if (process.versions.electron) {
     const imageUrl = `http://127.0.0.1:${address.port}/pending-image`;
     win = new BrowserWindow({ width: 800, height: 600, show: true, webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false } });
     win.webContents.on("console-message", (_event, level, message) => { if (level >= 3) console.error(message); });
-    const native = new WebContentsView({ webPreferences: { backgroundThrottling: false } });
+    const native = new WebContentsView({ webPreferences: {
+      backgroundThrottling: false,
+      preload: fileURLToPath(new URL("./cloud-docs-preload.cjs", import.meta.url)),
+    } });
     win.contentView.addChildView(native);
     native.setBounds({ x: 0, y: 0, width: 800, height: 600 });
     stage = "native load";
@@ -48,6 +51,58 @@ if (process.versions.electron) {
     stage = "host load";
     await win.loadFile(`${root}/fixture.html`);
     await win.webContents.executeJavaScript("new Promise(resolve => { const poll = () => window.fixture?.open ? resolve(true) : setTimeout(poll, 10); poll(); })");
+    stage = "first Rail hint paints while forwarding is delayed";
+    native.setBounds({ x: 400, y: 0, width: 400, height: 600 });
+    const heldHint = new Promise(resolve => {
+      ipcMain.on("fixture:rail-hint", (event, input) => {
+        if (event.sender !== win.webContents) return;
+        if (input.hint) resolve(input.hint);
+        else native.webContents.send("jugglework:docs:rail-hint", null);
+      });
+    });
+    win.focus();
+    win.webContents.focus();
+    win.webContents.sendInputEvent({ type: "mouseMove", x: 360, y: 140 });
+    await win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+      const deadline = performance.now() + 3000;
+      let positionedFrames = 0;
+      const poll = () => {
+        const hint = document.querySelector('[data-app-rail-tooltip][data-open]');
+        if (hint && getComputedStyle(hint).opacity !== '0') {
+          reject(new Error('the host painted a Rail hint before native delivery'));
+          return;
+        }
+        const box = hint?.getBoundingClientRect();
+        if (box && box.left < 400 && box.right > 400) positionedFrames++;
+        if (positionedFrames >= 3) resolve(true);
+        else if (performance.now() > deadline) reject(new Error('the Rail tooltip did not overlap the native host: ' + JSON.stringify(box)));
+        else requestAnimationFrame(poll);
+      };
+      poll();
+    })`);
+    assert.equal(native.getVisible(), true);
+    assert.equal(await win.webContents.executeJavaScript("fixture.captures"), 0);
+    native.webContents.send("jugglework:docs:rail-hint", await heldHint);
+    await native.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+      const deadline = performance.now() + 3000;
+      const poll = () => {
+        const hint = document.querySelector('[data-jugglework-rail-hint]');
+        const box = hint?.getBoundingClientRect();
+        if (hint && box.width > 40 && box.left >= 0 && box.right <= innerWidth &&
+            hint.shadowRoot === null && getComputedStyle(hint).pointerEvents === 'none') resolve(true);
+        else if (performance.now() > deadline) reject(new Error('full passive Rail hint did not render'));
+        else requestAnimationFrame(poll);
+      };
+      poll();
+    })`);
+    win.webContents.sendInputEvent({ type: "mouseMove", x: 200, y: 140 });
+    await native.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+      const deadline = performance.now() + 3000;
+      const poll = () => !document.querySelector('[data-jugglework-rail-hint]') ? resolve(true)
+        : performance.now() > deadline ? reject(new Error('forwarded Rail tooltip did not close')) : requestAnimationFrame(poll);
+      poll();
+    })`);
+    console.info("PASS: overlapping host tooltip stays transparent through delayed IPC and one full native hint appears");
     for (const mode of ["null", "reject", "null"]) {
       stage = `${mode}: fallback`;
       await win.webContents.executeJavaScript(`fixture.open(${JSON.stringify(mode)})`);
@@ -185,7 +240,7 @@ if (process.versions.electron) {
   void run();
 } else {
   const { test } = await import("node:test");
-  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { mkdtemp, readFile, writeFile, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const path = await import("node:path");
   const { spawnSync } = await import("node:child_process");
@@ -206,6 +261,7 @@ if (process.versions.electron) {
           import { Dialog, DialogContent, DialogTitle, DialogDescription } from './src/components/ui/dialog';
           import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription } from './src/components/ui/alert-dialog';
           import { Sheet, SheetContent, SheetTitle, SheetDescription } from './src/components/ui/sheet';
+          import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './src/components/ui/tooltip';
           const { ipcRenderer } = window.require('electron');
           window.fixture = { clicks: 0, hidden: false, mode: 'null', errors: 0, captures: 0, frames: [], holdFrames: false };
           const raf = window.requestAnimationFrame.bind(window);
@@ -216,12 +272,13 @@ if (process.versions.electron) {
           }));
           window.__JUGGLEWORK_ELECTRON__ = { cloudDocs: {
             setBounds: input => { fixture.hidden = !input.visible; ipcRenderer.send('fixture:bounds', input); },
+            setRailHint: input => ipcRenderer.send('fixture:rail-hint', input),
             snapshot: () => { fixture.captures++; return ipcRenderer.invoke('fixture:snapshot', fixture.mode); },
             status: () => ipcRenderer.invoke('fixture:status'),
           } };
           function Host() {
             const host = React.useRef(null);
-            const bounds = useCloudDocsBounds(host);
+            const bounds = useCloudDocsBounds(host, undefined, { mirrorRailHints: true });
             const [menu, setMenu] = React.useState(false);
             const [kind, setKind] = React.useState('menu');
             fixture.open = (mode, kind = 'menu') => { fixture.mode = mode; flushSync(() => { setKind(kind); setMenu(true); }); };
@@ -235,7 +292,12 @@ if (process.versions.electron) {
             return <><div ref={host} data-host style={{position:'absolute',left:400,top:0,width:400,height:600}}>
               {bounds.snapshot && <img data-snapshot src={bounds.snapshot} onLoad={bounds.loaded} onError={() => { bounds.failed(); fixture.errors++; }} />}
               {bounds.fallback && <CloudDocsPlaceholder />}
-            </div>{menu && kind === 'menu' && <div role="menu" style={{position:'absolute',left:500,top:100,zIndex:50}}>
+            </div>
+            <TooltipProvider><Tooltip>
+              <TooltipTrigger style={{position:'absolute',left:345,top:126,width:32,height:28}}>Rail</TooltipTrigger>
+              <TooltipContent side="right" sideOffset={8} hideArrow data-app-rail-tooltip="Calendar">Calendar</TooltipContent>
+            </Tooltip></TooltipProvider>
+            {menu && kind === 'menu' && <div role="menu" style={{position:'absolute',left:500,top:100,zIndex:50}}>
               <button role="menuitem" style={{width:180,height:50}} onClick={() => fixture.clicks++}>Menu action</button>
             </div>}
             <Dialog open={menu && kind === 'dialog'}><DialogContent showCloseButton={false}><DialogTitle>Dialog</DialogTitle><DialogDescription>Modal fixture</DialogDescription></DialogContent></Dialog>
@@ -247,8 +309,11 @@ if (process.versions.electron) {
         ` },
         bundle: true, platform: "browser", format: "iife", outfile: `${root}/fixture.js`,
       });
+      const appStyles = await readFile(new URL("../../app/src/styles/custom.css", import.meta.url), "utf8");
       await writeFile(`${root}/fixture.html`, `<!doctype html><style>
+        ${appStyles}
         body{margin:0} [data-cloud-docs-placeholder]{position:absolute;inset:0;background:#fafafa;color:#444;display:flex;align-items:center;justify-content:center;pointer-events:none}
+        [data-slot="tooltip-content"]{width:90px;height:28px;background:#333;color:white}
         [data-slot$="-overlay"]{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.3)}
         [data-slot$="-content"]{position:fixed;left:10px;top:10px;width:180px;height:120px;z-index:51;background:white}
       </style><div id="root"></div><script src="fixture.js"></script>`);
@@ -256,6 +321,7 @@ if (process.versions.electron) {
       const result = spawnSync(require("electron"), [fileURLToPath(import.meta.url), root], { env, encoding: "utf8", timeout: 25000 });
       assert.equal(result.error, undefined, `${result.error?.message}\n${result.stdout}\n${result.stderr}`);
       assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      assert.match(result.stdout, /PASS: overlapping host tooltip stays transparent/);
       assert.match(result.stdout, /PASS: null\/reject/);
       console.info(result.stdout.trim());
     } finally { await rm(root, { recursive: true, force: true, maxRetries: 3 }); }

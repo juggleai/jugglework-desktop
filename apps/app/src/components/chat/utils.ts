@@ -1,6 +1,7 @@
 import { isReasoningUIPart, isToolUIPart, type DynamicToolUIPart, type FileUIPart, type ToolUIPart, type UIMessage } from "ai"
 import type { ThreadStatus } from "@/lib/messages"
 import { redactSensitiveReasoning } from "./reasoning-redaction"
+import { getSessionErrorParentId, isSyntheticMessageId } from "@/react-app/domains/session/sync/transcript-reconcile"
 import {
   getSessionCompactionFromMessage,
   getSessionCompactionFromPart,
@@ -43,25 +44,27 @@ export function getLastTextPart(message: UIMessage): UIMessage | null {
 }
 
 export function splitAssistantTaskMessages(items: UIMessageWithIndex[], isLive = false) {
+  const errorItems = items.filter(({ message }) => isSyntheticMessageId(message.id))
+  const outputItems = errorItems.length === 0 ? items : items.filter(({ message }) => !isSyntheticMessageId(message.id))
   // While streaming, don't extract a summary from the last item — the last
   // text part is likely an interim step description whose tool calls are
   // still running, not the final summary. Putting everything in process
   // preserves the correct text→tools ordering.
   if (isLive) {
-    return { processItems: items, summaryItems: [] as UIMessageWithIndex[] }
+    return { processItems: outputItems, summaryItems: [] as UIMessageWithIndex[], errorItems }
   }
 
-  const finalItemIndex = items.findLastIndex((item) =>
+  const finalItemIndex = outputItems.findLastIndex((item) =>
     item.message.parts.some((part) => part.type === "text" && part.text.trim().length > 0),
   )
   if (finalItemIndex === -1) {
-    return { processItems: items, summaryItems: [] as UIMessageWithIndex[] }
+    return { processItems: outputItems, summaryItems: [] as UIMessageWithIndex[], errorItems }
   }
 
   const processItems: UIMessageWithIndex[] = []
   let summaryItem: UIMessageWithIndex | null = null
 
-  items.forEach((item, itemIndex) => {
+  outputItems.forEach((item, itemIndex) => {
     if (itemIndex !== finalItemIndex) {
       processItems.push(item)
       return
@@ -97,6 +100,7 @@ export function splitAssistantTaskMessages(items: UIMessageWithIndex[], isLive =
   return {
     processItems,
     summaryItems: summaryItem ? [summaryItem] : [],
+    errorItems,
   }
 }
 
@@ -232,6 +236,8 @@ export function getTaskTiming(
 
   const taskMessages = messages.slice(userMessageIndex + 1, nextUserIndex)
   const observedTimes = taskMessages.flatMap((message) => {
+    const errorParent = getSessionErrorParentId(message)
+    if (errorParent && errorParent !== userMessage.id) return []
     const completed = getMessageCompleted(message)
     const messageCreated = getMessageCreated(message)
     return [
@@ -347,16 +353,19 @@ function isStandaloneCompaction(
 export function groupMessages(messages: UIMessage[], status: ThreadStatus): MessageListItem[] {
   const items: MessageListItem[] = []
   let index = 0
+  let currentUserId: string | undefined
 
   while (index < messages.length) {
     const message = messages[index]
-    const assistantMessage = asAssistantPresentationMessage(message)
+    const errorParent = getSessionErrorParentId(message)
+    const assistantMessage = errorParent && errorParent !== currentUserId ? null : asAssistantPresentationMessage(message)
 
     if (!assistantMessage) {
       if (isTransparentUserMessage(message)) {
         index++
         continue
       }
+      if (message.role === "user") currentUserId = message.id
       items.push({ index, message })
       index++
       continue
@@ -365,6 +374,8 @@ export function groupMessages(messages: UIMessage[], status: ThreadStatus): Mess
     const assistantMessages: UIMessageWithIndex[] = []
 
     while (index < messages.length) {
+      const errorParent = getSessionErrorParentId(messages[index])
+      if (errorParent && errorParent !== currentUserId) break
       const nextAssistantMessage = asAssistantPresentationMessage(messages[index])
       if (!nextAssistantMessage) {
         // Transparent engine markers (autocontinue prompt) must not end the

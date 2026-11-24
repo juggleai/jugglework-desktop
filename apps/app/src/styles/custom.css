@@ -19,6 +19,16 @@
   color: #fff;
 }
 
+/* A portal opens before it is measured. Keep it transparent until the
+   cloud documents surface can confirm that the host may paint it. */
+[data-cloud-docs-rail-guard] [data-app-rail-tooltip] {
+  animation: none !important;
+}
+
+[data-cloud-docs-rail-guard] [data-app-rail-tooltip]:not([data-cloud-docs-host-hint][data-open]) {
+  opacity: 0 !important;
+}
+
 /* 变更行的背景、行号底色和标记独立于代码 token，着色不覆盖增删提示。 */
 .workspace-diff-row .diff-line-number { color: var(--muted-foreground); border-inline-start: 4px solid transparent; }
 .workspace-diff-row[data-kind="add"] { background: #e6f4e7; color: #1f2328; }

@@ -154,26 +154,24 @@ export function describeOpencodeSessionError(error: unknown, fallback = "Session
   return serialized && serialized !== "{}" ? serialized : fallback;
 }
 
-function sessionErrorMessageId(turnKey: string) {
-  return `${SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX}${turnKey}`;
+export function sessionErrorMessageId(assistantId: string) {
+  return `${SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX}${assistantId}`;
 }
 
 /**
- * Build the synthetic chat message that surfaces a session error.
- *
- * The error is keyed to the *turn* that failed (`turnKey`), not the session.
- * Both the live `session.error` event and the snapshot reload derive the same
- * `turnKey` from the errored assistant message id, so they reconcile to one
- * message instead of duplicating — while a brand new error on a later turn
- * still produces its own message instead of overwriting the previous one.
+ * Both the live assistant update and the persisted snapshot use the failed
+ * assistant's ID and its user-message parent.
  */
-export function createSessionErrorUIMessage(turnKey: string, text: string, options?: { created?: number }): UIMessage {
-  const id = sessionErrorMessageId(turnKey);
-  const created = options?.created;
+export function createSessionErrorUIMessage(
+  assistantId: string,
+  text: string,
+  options?: { created?: number; completed?: number; parentID?: string },
+): UIMessage {
+  const id = sessionErrorMessageId(assistantId);
   return {
     id,
     role: "assistant",
-    ...(typeof created === "number" ? { metadata: { opencode: { created } } } : {}),
+    ...(options ? { metadata: { opencode: options } } : {}),
     parts: [{
       type: "text",
       text,
@@ -376,13 +374,7 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
       ],
     };
 
-    // Surface a failed turn as its own synthetic error message keyed by the
-    // errored assistant message id. The live `session.error` event keys its
-    // message off the latest assistant turn the same way, so the two
-    // reconcile to one message instead of duplicating — while a later turn's
-    // error still gets its own message. An empty assistant carcass for the
-    // errored turn is dropped so the error reads as that turn's outcome.
-    if (!error || stopped) {
+    if (message.info.role !== "assistant" || !error || stopped) {
       // OpenCode persists compaction boundaries as otherwise-empty user
       // messages. Their mode has already been transferred to the following
       // summary above; retaining the empty message here would split one
@@ -395,7 +387,11 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
       return [uiMessage];
     }
 
-    const errorMessage = createSessionErrorUIMessage(message.info.id, describeOpencodeSessionError(error), { created });
+    const errorMessage = createSessionErrorUIMessage(message.info.id, describeOpencodeSessionError(error), {
+      created,
+      completed,
+      parentID: message.info.parentID,
+    });
     return uiMessage.parts.length > 0 ? [uiMessage, errorMessage] : [errorMessage];
   });
 }

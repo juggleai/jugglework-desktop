@@ -26,6 +26,8 @@ const ORG_KEY = "jugglework.den.activeOrgId";
 const DEN_BASE_URL = "https://cloud.startup.test";
 const ORG_ID = "org_startup_fixture";
 const TOKEN = "fixture-session-token";
+let managedHost: JuggleWorkServerClient | null = null;
+let syncDenClient: Pick<ReturnType<typeof actualDen.createDenClient>, "getSession" | "listOrgs" | "listOrgLlmProviders"> | null = null;
 mock.module("../src/app/lib/den", () => ({
   ...actualDen,
   readDenSettings: (): DenSettings => ({
@@ -34,7 +36,15 @@ mock.module("../src/app/lib/den", () => ({
     activeOrgId: window.localStorage.getItem(ORG_KEY),
   }),
   readDenUserId: () => "user_startup_fixture",
-  createDenClient: () => { throw new Error("Startup tests must not contact Den"); },
+  createDenClient: () => {
+    if (!syncDenClient) throw new Error("Startup tests must not contact Den");
+    return { baseUrls: actualDen.resolveDenBaseUrls(DEN_BASE_URL), ...syncDenClient };
+  },
+}));
+const actualScope = { ...await import("../src/app/lib/managed-provider-scope") };
+mock.module("../src/app/lib/managed-provider-scope", () => ({
+  ...actualScope,
+  managedProviderHost: async () => managedHost,
 }));
 const { createProviderAuthStore } = await import("../src/react-app/domains/connections/provider-auth/store");
 type Store = ReturnType<typeof createProviderAuthStore>;
@@ -107,6 +117,8 @@ afterEach(async () => {
   await nextTurn();
   stores = [];
   gates = [];
+  managedHost = null;
+  syncDenClient = null;
   const networkCalls = network.mock.calls.length;
   network.mockRestore();
   if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
@@ -117,6 +129,7 @@ afterEach(async () => {
 afterAll(() => {
   mock.restore();
   mock.module("../src/app/lib/den", () => actualDen);
+  mock.module("../src/app/lib/managed-provider-scope", () => actualScope);
 });
 
 function gate() {
@@ -267,6 +280,83 @@ function signInAgain() {
   hostWindow.localStorage.setItem(ORG_KEY, "org_new_login_fixture");
   dispatchDenSessionUpdated({ status: "success" });
 }
+
+function readyWorkspaceRefresh() {
+  const authorityId = "fixture-authority";
+  const f = fixture({ [provider.id]: { ...imported, authorityId } });
+  const readiness = mock(async (_workspaceId: string, _authorityId: string, _ready: boolean) => ({}));
+  const fence = mock(async (_revision: string) => ({}));
+  const inventory = {
+    all: [{ id: imported.providerId, name: provider.name, source: "config", models: { "fixture-model": {} } }],
+    connected: [imported.providerId],
+    default: {},
+  };
+  const loadInventory = mock(async (_workspaceId: string) => inventory);
+  managedHost = {
+    ...f.hostClient,
+    managedProviderRevision: async () => ({ revision: authorityId }),
+    confirmManagedProviderAuthority: async () => ({ id: authorityId }),
+    setManagedProviderReadiness: readiness,
+    fenceManagedProviderAuthority: fence,
+    managedProviderInventory: loadInventory,
+    reloadEngine: async () => ({ ok: true }),
+  } as unknown as JuggleWorkServerClient;
+  const loadCatalog = mock(async () => [provider]);
+  const getSession = mock(async () => ({ id: "user_startup_fixture" }));
+  syncDenClient = {
+    getSession,
+    listOrgs: async () => ({ activeOrgId: ORG_ID, orgs: [{ id: ORG_ID }] }),
+    listOrgLlmProviders: loadCatalog,
+  } as unknown as typeof syncDenClient;
+  const client = {
+    global: { health: async () => ({ data: { healthy: true } }) },
+    config: { get: async () => ({ data: {} }) },
+    provider: { list: async () => ({ data: inventory }) },
+  } as unknown as Client;
+  return { ...f, ...f.create({ hostClient: managedHost, client }), readiness, fence, loadCatalog, getSession, loadInventory, authorityId };
+}
+
+test("keeps the verified workspace available during a slow unchanged provider refresh", async () => {
+  const f = readyWorkspaceRefresh();
+  const catalog = gate();
+  f.loadCatalog.mockImplementationOnce(async () => {
+    await catalog.promise;
+    return [provider];
+  });
+  const syncing = f.store.runCloudProviderSyncForReadiness("app_resume");
+  await waitFor(() => f.loadCatalog.mock.calls.length === 1, "provider directory read");
+  expect(f.readiness).not.toHaveBeenCalled();
+  catalog.resolve();
+  expect(await syncing).toBe(true);
+  expect(f.readiness.mock.calls).toEqual([[f.workspaceId, f.authorityId, true]]);
+});
+
+test("fences a withdrawn provider before checking the engine", async () => {
+  const f = readyWorkspaceRefresh();
+  f.loadCatalog.mockResolvedValueOnce([]);
+  const inventory = gate();
+  f.loadInventory.mockImplementationOnce(async () => {
+    await inventory.promise;
+    return { all: [], connected: [], default: {} };
+  });
+  const syncing = f.store.runCloudProviderSyncForReadiness("app_resume");
+  await waitFor(() => f.loadInventory.mock.calls.length === 1, "engine inventory read");
+  expect(f.readiness.mock.calls).toEqual([[f.workspaceId, f.authorityId, false]]);
+  inventory.resolve();
+  await syncing;
+});
+
+test("fences a confirmed revoked session but preserves authority on a transport failure", async () => {
+  const f = readyWorkspaceRefresh();
+  f.getSession.mockRejectedValueOnce(new Error("network temporarily unavailable"));
+  expect(await f.store.runCloudProviderSyncForReadiness("app_resume")).toBe(false);
+  expect(f.fence).not.toHaveBeenCalled();
+  expect(f.readiness).not.toHaveBeenCalled();
+
+  f.getSession.mockRejectedValueOnce(new actualDen.DenApiError(401, "unauthorized", "Session revoked"));
+  expect(await f.store.runCloudProviderSyncForReadiness("app_resume")).toBe(false);
+  expect(f.fence).toHaveBeenCalledWith(f.authorityId);
+});
 
 describe("cloud provider startup and session cleanup", () => {
   test("signed-in startup preserves imported providers while the OpenCode client is null", async () => {

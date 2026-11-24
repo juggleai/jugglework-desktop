@@ -16,3 +16,7 @@ An unconfigured desktop installation SHALL use https://work.jugglework.cn as its
 #### Scenario: Explicit deployment configuration
 - **WHEN** a desktop has an explicit deployment configuration
 - **THEN** the default-origin change does not forcibly replace that configuration
+
+#### Scenario: Restore the default from the sign-in screen
+- **WHEN** the user saves a blank or whitespace-only server address in the sign-in dialog
+- **THEN** the app persists its default server origin and uses it for subsequent sign-in

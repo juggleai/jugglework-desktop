@@ -42,6 +42,52 @@ ipcRenderer.on("jugglework:docs:appearance", (_event, message) => {
   );
 });
 
+// The window owns the label and its accessibility tree. The native page
+// only paints a passive copy on top of its content.
+let railHint;
+let railHintLabel;
+function hideRailHint() {
+  railHint?.remove();
+}
+window.addEventListener("pointermove", hideRailHint, { capture: true, passive: true });
+ipcRenderer.on("jugglework:docs:rail-hint", (_event, hint) => {
+  if (!hint) {
+    hideRailHint();
+    return;
+  }
+  if (!railHint) {
+    railHint = document.createElement("div");
+    railHint.setAttribute("data-jugglework-rail-hint", "");
+    railHint.setAttribute("aria-hidden", "true");
+    Object.assign(railHint.style, {
+      all: "initial",
+      position: "fixed",
+      left: "6px",
+      top: "0",
+      pointerEvents: "none",
+      zIndex: "2147483647",
+    });
+    railHintLabel = document.createElement("span");
+    Object.assign(railHintLabel.style, {
+      display: "block",
+      font: "400 12px/16px system-ui, sans-serif",
+      padding: "6px 12px",
+      borderRadius: "12px",
+      boxShadow: "0 4px 14px rgba(0, 0, 0, .22)",
+      maxWidth: "min(320px, calc(100vw - 36px))",
+      overflowWrap: "anywhere",
+    });
+    railHint.attachShadow({ mode: "closed" }).append(railHintLabel);
+  }
+  railHintLabel.textContent = hint.label;
+  railHintLabel.style.backgroundColor = hint.dark ? "#edeef0" : "#1c2024";
+  railHintLabel.style.color = hint.dark ? "#111113" : "#ffffff";
+  if (!railHint.isConnected) document.documentElement.append(railHint);
+  const height = railHint.offsetHeight;
+  const top = Math.max(4, Math.min(innerHeight - height - 4, hint.centerY - height / 2));
+  railHint.style.top = `${top}px`;
+});
+
 // TIPS: 产品页只接收已保存的文件内容，文件路径和源登录令牌不进入远程页面。
 ipcRenderer.on("jugglework:docs:file-intake-command", (_event, message) => {
   window.postMessage(

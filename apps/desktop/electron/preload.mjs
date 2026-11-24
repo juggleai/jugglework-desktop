@@ -400,6 +400,7 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     snapshot: (instanceId) => ipcRenderer.invoke('jugglework:docs:snapshot', instanceId, docsHostBinding),
     /** 对齐 React 内容区域并在宿主菜单打开时隐藏原生视图。 */
     setBounds: (input) => ipcRenderer.send('jugglework:docs:bounds', bindDocsHost(input)),
+    setRailHint: (input) => ipcRenderer.send('jugglework:docs:rail-hint', bindDocsHost(input)),
     /** 只向当前云文档传递展示配置。 */
     setAppearance: (input) => ipcRenderer.send('jugglework:docs:appearance', bindDocsHost(input)),
     /** 将顶部按钮操作传给当前实例的原生侧栏或搜索。 */

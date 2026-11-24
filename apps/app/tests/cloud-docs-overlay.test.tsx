@@ -12,42 +12,52 @@ afterAll(() => { Object.assign(globalThis, originals); mock.restore(); });
 const rect = (x = 60, y = 50, width = 800, height = 700) => ({ x, y, width, height, left: x, top: y, right: x + width, bottom: y + height }) as DOMRect;
 class Overlay {
   hidden = false;
+  dataset: { appRailTooltip?: string } = {};
+  attributes = new Map<string, string>();
   style = { display: "block", visibility: "visible" };
+  parentElement = { style: { opacity: "" } };
   constructor(public role: string, public box = rect(), public modal = false) {}
-  getAttribute(name: string) { return name === "aria-modal" && this.modal ? "true" : null; }
+  getAttribute(name: string) { return name === "aria-modal" && this.modal ? "true" : this.attributes.get(name) ?? null; }
   matches(selector: string) { return selector.includes(this.role); }
   getClientRects() { return this.hidden ? [] : [this.box]; }
   getBoundingClientRect() { return this.box; }
+  setAttribute(name: string, value: string) { this.attributes.set(name, value); }
+  removeAttribute(name: string) { this.attributes.delete(name); }
 }
 let overlays: Overlay[] = [];
 let frames: FrameRequestCallback[] = [];
 let hostVisible = true;
 beforeEach(() => {
   overlays = []; frames = []; hostVisible = true;
-  (globalThis as any).document = { hidden: false, querySelectorAll: (selector: string) => overlays.filter(node => selector.includes(node.role)) };
+  (globalThis as any).document = {
+    hidden: false, documentElement: new Overlay("root"),
+    querySelectorAll: (selector: string) => overlays.filter(node => selector.includes(node.role)),
+  };
   globalThis.getComputedStyle = ((node: Overlay) => node.style ?? { display: "block", visibility: hostVisible ? "visible" : "hidden", borderTopLeftRadius: "18px" }) as typeof getComputedStyle;
   globalThis.requestAnimationFrame = callback => { frames.push(callback); return frames.length; };
   globalThis.cancelAnimationFrame = () => {};
 });
-async function fixture() {
+async function fixture(mirrorRailHints = false) {
   const bounds = mock((_value: { instanceId: string; visible: boolean; borderRadius: number }) => {});
   const captures: Array<{ resolve: (image: string | null) => void; reject: (error: Error) => void }> = [];
   const status = mock(async (_id: string) => ({ ready: true }));
   const menuAction = mock(() => {});
   const restored = mock((_id: string) => {});
+  const railHint = mock((_input: { instanceId: string; hint: { label: string; centerY: number; dark: boolean } | null }) => {});
   (globalThis as any).window = { __JUGGLEWORK_ELECTRON__: { cloudDocs: {
     setBounds: bounds, status,
+    setRailHint: railHint,
     snapshot: () => new Promise<string | null>((resolve, reject) => captures.push({ resolve, reject })),
   } } };
   let result!: ReturnType<typeof useCloudDocsBounds>;
   function Host() {
     const host = React.useRef({ getBoundingClientRect: () => rect() } as HTMLDivElement);
-    result = useCloudDocsBounds(host, restored);
+    result = useCloudDocsBounds(host, restored, { mirrorRailHints });
     return <div>{overlays.length > 0 && <div role="menu"><button role="menuitem" onClick={menuAction}>Menu action</button></div>}{result.snapshot && <img src={result.snapshot} onLoad={result.loaded} onError={result.failed} />}{result.fallback && <CloudDocsPlaceholder />}</div>;
   }
   let renderer!: ReturnType<typeof create>;
   await act(async () => { renderer = create(<Host />); });
-  return { get result() { return result; }, renderer, bounds, captures, status, menuAction, restored,
+  return { get result() { return result; }, renderer, bounds, captures, status, menuAction, restored, railHint,
     sync: async (active = true, id = "home") => { await act(async () => result.sync(id, true, active)); },
     paint: async () => { await act(async () => { for (const frame of frames.splice(0)) frame(0); }); },
     close: async () => { await act(async () => renderer.unmount()); },
@@ -69,6 +79,38 @@ test("普通 tooltip 不截图／隐藏，非相交 menu 不遮挡；modal 与�
   overlays[0].style.visibility = "hidden";
   expect(hasCloudDocsOccluder(rect())).toBe(false);
   await f.close();
+});
+
+test("overlapping Rail hints display on the native layer without a capture or visibility change", async () => {
+  const f = await fixture(true);
+  await f.sync();
+  expect(document.documentElement.getAttribute("data-cloud-docs-rail-guard")).toBe("home");
+  const hint = new Overlay("[data-app-rail-tooltip][data-open]", rect(48, 80, 92, 24));
+  hint.dataset.appRailTooltip = "Calendar";
+  hint.parentElement.style.opacity = "0";
+  overlays = [hint];
+  await f.sync();
+  expect(f.railHint).not.toHaveBeenCalled();
+  expect(hint.attributes.has("data-cloud-docs-host-hint")).toBe(false);
+  hint.parentElement.style.opacity = "";
+  await f.sync();
+  await f.sync();
+  expect(f.railHint.mock.calls).toEqual([[{
+    instanceId: "home",
+    hint: { label: "Calendar", centerY: 42, dark: false },
+  }]]);
+  expect(hint.attributes.has("data-cloud-docs-host-hint")).toBe(false);
+  expect(f.captures).toHaveLength(0);
+  expect(f.bounds.mock.calls.every(([bounds]) => bounds.visible)).toBe(true);
+
+  hint.box = rect(0, 0, 48, 40);
+  await f.sync();
+  expect(f.railHint.mock.calls.at(-1)?.[0]).toEqual({ instanceId: "home", hint: null });
+  expect(hint.attributes.has("data-cloud-docs-host-hint")).toBe(true);
+  expect(f.bounds.mock.calls.at(-1)?.[0].visible).toBe(true);
+  await f.close();
+  expect(document.documentElement.getAttribute("data-cloud-docs-rail-guard")).toBeNull();
+  expect(hint.attributes.has("data-cloud-docs-host-hint")).toBe(false);
 });
 
 test("真实 overlay 等截图加载才隐藏，关闭后保留截图直到 IPC 屏障与下一帧", async () => {

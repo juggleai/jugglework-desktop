@@ -1,17 +1,52 @@
 import * as React from "react";
-import { hasCloudDocsOccluder } from "./cloud-docs-visibility";
+import { getResolvedThemeMode } from "@/app/theme";
+import { findPositionedRailHint, hasCloudDocsOccluder, intersectsCloudDocs } from "./cloud-docs-visibility";
 
 type FrozenFrame = { id: string; loaded: boolean; image?: string; fallback?: boolean; restoring?: boolean };
 
 /** 原生页位于 DOM 上方；宿主浮窗期间用当前画面垫底，避免菜单被遮挡或整个文档变白。 */
-export function useCloudDocsBounds(host: React.RefObject<HTMLDivElement | null>, onRestored?: (instanceId: string) => void) {
+export function useCloudDocsBounds(
+  host: React.RefObject<HTMLDivElement | null>,
+  onRestored?: (instanceId: string) => void,
+  options?: { mirrorRailHints?: boolean },
+) {
   const [snapshot, setSnapshot] = React.useState<FrozenFrame | null>(null);
   const frozen = React.useRef<FrozenFrame | null>(null);
   const latest = React.useRef<{ instanceId: string; ready: boolean; active: boolean } | null>(null);
   const suspended = React.useRef<string | null>(null);
+  const mirroredHint = React.useRef<{ key: string; instanceId: string } | null>(null);
+  const hostRailHint = React.useRef<HTMLElement | null>(null);
+  const railGuardOwner = React.useRef<string | null>(null);
+  const mirrorRailHints = options?.mirrorRailHints === true;
   const restored = React.useRef(onRestored);
   restored.current = onRestored;
-  React.useEffect(() => () => { frozen.current = null; latest.current = null; suspended.current = null; }, []);
+  const clearRailHint = React.useCallback(() => {
+    const previous = mirroredHint.current;
+    if (!previous) return;
+    mirroredHint.current = null;
+    window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.setRailHint?.({ instanceId: previous.instanceId, hint: null });
+  }, []);
+  const allowHostRailHint = React.useCallback((node: HTMLElement | null) => {
+    if (hostRailHint.current === node) return;
+    hostRailHint.current?.removeAttribute("data-cloud-docs-host-hint");
+    hostRailHint.current = node;
+    node?.setAttribute("data-cloud-docs-host-hint", "");
+  }, []);
+  const setRailGuard = React.useCallback((instanceId: string | null) => {
+    if (railGuardOwner.current === instanceId) return;
+    const root = document.documentElement;
+    if (instanceId) root.setAttribute("data-cloud-docs-rail-guard", instanceId);
+    else if (root.getAttribute("data-cloud-docs-rail-guard") === railGuardOwner.current) root.removeAttribute("data-cloud-docs-rail-guard");
+    railGuardOwner.current = instanceId;
+  }, []);
+  React.useEffect(() => () => {
+    frozen.current = null;
+    latest.current = null;
+    suspended.current = null;
+    clearRailHint();
+    allowHostRailHint(null);
+    setRailGuard(null);
+  }, [allowHostRailHint, clearRailHint, setRailGuard]);
   const sync = React.useCallback((instanceId: string, ready: boolean, active = true) => {
     latest.current = { instanceId, ready, active };
     const bridge = window.__JUGGLEWORK_ELECTRON__?.cloudDocs;
@@ -25,11 +60,37 @@ export function useCloudDocsBounds(host: React.RefObject<HTMLDivElement | null>,
       style.display !== "none" && style.visibility !== "hidden" && style.visibility !== "collapse" &&
       (!element.checkVisibility || element.checkVisibility({ checkVisibilityCSS: true }));
     const overlay = visible && hasCloudDocsOccluder(rect);
+    // Portal tooltips must start transparent while the native view can cover
+    // them, including the interval before Base UI finishes positioning.
+    setRailGuard(mirrorRailHints && bridge.setRailHint && visible ? instanceId : null);
+    const syncRailHint = () => {
+      if (!mirrorRailHints || !bridge.setRailHint) return;
+      const node = visible ? findPositionedRailHint() : undefined;
+      const intersects = node && intersectsCloudDocs(node, rect);
+      allowHostRailHint(node && !intersects ? node : null);
+      const label = !overlay && intersects ? node?.dataset.appRailTooltip : undefined;
+      if (!node || !label) {
+        clearRailHint();
+        return;
+      }
+      if (mirroredHint.current?.instanceId !== instanceId) clearRailHint();
+      const previous = mirroredHint.current;
+      const hintRect = node.getBoundingClientRect();
+      const hint = {
+        label,
+        centerY: Math.round(hintRect.top + hintRect.height / 2 - rect.top),
+        dark: getResolvedThemeMode() === "dark",
+      };
+      const key = JSON.stringify(hint);
+      if (previous?.key !== key) bridge.setRailHint({ instanceId, hint });
+      mirroredHint.current = { key, instanceId };
+    };
     const bounds = (show: boolean) => {
       bridge.setBounds({ instanceId, x: rect.x, y: rect.y, width: rect.width, height: rect.height, borderRadius, visible: show });
       if (!show && ready) suspended.current = instanceId;
     };
     if (overlay) {
+      syncRailHint();
       if (frozen.current?.id === instanceId) {
         let frame = frozen.current;
         if (frame.restoring) {
@@ -57,6 +118,8 @@ export function useCloudDocsBounds(host: React.RefObject<HTMLDivElement | null>,
       return;
     }
     bounds(visible);
+    // Activate the native view before forwarding a newly open hint.
+    syncRailHint();
     // TIPS: surface 隐藏和浮层遮挡都可能让 Main 拒绝 toggle；仅真实恢复时重新读取状态，截图预热不算恢复。
     if (visible && suspended.current === instanceId) {
       suspended.current = null;
@@ -78,7 +141,7 @@ export function useCloudDocsBounds(host: React.RefObject<HTMLDivElement | null>,
       frozen.current = null;
       setSnapshot(null);
     }
-  }, [host]);
+  }, [allowHostRailHint, clearRailHint, host, mirrorRailHints, setRailGuard]);
   const loaded = React.useCallback(() => {
     if (!snapshot || frozen.current !== snapshot) return;
     snapshot.loaded = true;

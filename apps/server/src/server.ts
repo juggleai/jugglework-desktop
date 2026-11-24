@@ -3,6 +3,7 @@ import { readFile, writeFile, rm, stat } from "node:fs/promises";
 import { statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createSessionCreationLedger } from "./session-create-idempotency.js";
+import { filterRemovedGlobalProviders } from "./local-provider-catalog.js";
 import { hasCurrentRunFinalResponse } from "./session-completion-evidence.js";
 import { persistServerWorkspaceState } from "./routes/workspaces.js";
 import { homedir, hostname } from "node:os";
@@ -2481,8 +2482,30 @@ async function proxyOpencodeRequest(input: {
     if (workspace && method === "GET" && response.ok) {
       if (path === "/provider" || path === "/config/providers") {
         const payload = await response.json();
-        if (path === "/provider") return jsonResponse(await input.providerCredentials.filterCatalog(workspace.id, payload, scopeCurrent || undefined));
-        const catalog = await input.providerCredentials.filterCatalog(workspace.id, { all: payload.providers, connected: payload.providers.map((provider: { id: string }) => provider.id), default: payload.default ?? {} }, scopeCurrent || undefined);
+        const upstream = path === "/provider" ? payload : {
+          all: payload.providers,
+          connected: payload.providers.map((provider: { id: string }) => provider.id),
+          default: payload.default ?? {},
+        };
+        const requestedDirectory = input.url.searchParams.get("directory");
+        const usingWorkspaceDirectory = directory && (!requestedDirectory || normalizeOpencodeDirectory(requestedDirectory) === directory)
+          && headers.get("x-opencode-directory") === buildOpencodeDirectoryHeader(directory);
+        const localCatalog = workspace.workspaceType === "local" && usingWorkspaceDirectory
+          && trustedOpencodeProcessIdentity(input.config, workspace)
+          ? await filterRemovedGlobalProviders(input.config, workspace, directory, upstream, async () => {
+            const global = await loopbackFetch(buildOpencodeProxyUrl(baseUrl, "/global/config", ""), {
+              headers: auth ? { Authorization: auth } : undefined,
+              signal: AbortSignal.timeout(2_000),
+            });
+            if (!global.ok) {
+              await global.body?.cancel();
+              return null;
+            }
+            return global.json();
+          })
+          : upstream;
+        const catalog = await input.providerCredentials.filterCatalog(workspace.id, localCatalog, scopeCurrent || undefined);
+        if (path === "/provider") return jsonResponse(catalog);
         return jsonResponse({ ...payload, providers: catalog.all, default: catalog.default });
       }
     }

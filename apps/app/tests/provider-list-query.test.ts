@@ -12,6 +12,8 @@ import {
   ensureProviderListQuery,
   PROVIDER_LIST_CACHE_MS,
   providerListQueryKey,
+  removeDeletedProviderFromQueries,
+  restoreRecreatedProvider,
 } from "../src/react-app/infra/provider-list-query";
 
 const empty: ProviderListResponse = { all: [], connected: [], default: {} };
@@ -105,6 +107,34 @@ describe("ensureProviderListQuery", () => {
     invalidateManagedProviderScope();
     finish({ all: [{ ...recovered.all[0]!, id: "lpr_late" }, ...recovered.all], connected: ["lpr_late", ...recovered.connected], default: { lpr_late: "chat" } });
     await expect(pending).resolves.toEqual(recovered);
+  });
+
+  test("removes a deleted provider from the picker cache and masks stale engine responses", async () => {
+    const backend = createBackend("/deleted");
+    const baseUrl = `${backend.input.baseUrl}/workspace/deleted/opencode`;
+    const input = { ...backend.input, baseUrl };
+    const key = providerListQueryKey(input);
+    const otherKey = providerListQueryKey({ ...input, baseUrl: `${backend.input.baseUrl}/workspace/other/opencode` });
+    const deleted = { ...recovered.all[0]!, id: "deleted", source: "config" as const };
+    const stale = { all: [deleted, ...recovered.all], connected: [deleted.id, ...recovered.connected], default: { [deleted.id]: "chat" } };
+    backend.setResult(stale);
+    await ensureProviderListQuery(queryClient, input);
+    queryClient.setQueryData(otherKey, stale);
+
+    let finish!: (value: ProviderListResponse) => void;
+    backend.setResult(new Promise((resolve) => { finish = resolve; }));
+    const pending = ensureProviderListQuery(queryClient, { ...input, force: true }).catch((error) => error);
+    await removeDeletedProviderFromQueries(queryClient, baseUrl, deleted.id);
+    finish(stale);
+    await pending;
+
+    expect(queryClient.getQueryData(key)).toEqual(recovered);
+    expect(queryClient.getQueryData(otherKey)).toEqual(stale);
+    expect(queryClient.getQueryState(otherKey)?.isInvalidated).toBe(true);
+    backend.setResult(stale);
+    await expect(ensureProviderListQuery(queryClient, { ...input, force: true })).resolves.toEqual(recovered);
+    restoreRecreatedProvider(baseUrl, deleted.id);
+    await expect(ensureProviderListQuery(queryClient, { ...input, force: true })).resolves.toEqual(stale);
   });
 
   test.each(["missing", "stale"] as const)("rejects backend errors with %s cache instead of returning an empty list", async (cache) => {

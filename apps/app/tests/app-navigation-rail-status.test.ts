@@ -232,7 +232,8 @@ describe("navigation rail visual proportions", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     expect(source).not.toContain('showTooltip=');
     expect(source).toContain('<RailHint label={tooltipLabel ?? label}>');
-    expect(source).toContain('<TooltipContent side="right"');
+    expect(source).toMatch(/<TooltipContent\s+side="right"/);
+    expect(source).toContain("data-app-rail-tooltip={nativeLabel}");
     for (const testId of ["app-rail-home", "app-rail-pinned-reviews", "app-rail-automations", "app-rail-chat", "app-rail-contacts"]) {
       const button = source.slice(source.indexOf(`testId="${testId}"`) - 220, source.indexOf(`testId="${testId}"`) + 220);
       expect(button).not.toContain('showTooltip={false}');

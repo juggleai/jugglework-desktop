@@ -512,6 +512,10 @@
   background: var(--ui-surface);
   transition: color 160ms ease, background-color 160ms ease;
 }
+/* The embedded empty canvas must receive pointer events for menu dismissal. */
+.jw-im-empty-surface .tyn-chat-none-box {
+  -webkit-app-region: no-drag;
+}
 .jw-im-empty-surface .tyn-chat-none-bg { transform: translateY(-2px); }
 .jw-im-empty-surface .fontcolor-title { color: var(--ui-text); }
 .jw-im-empty-surface .fontcolor-second { color: var(--ui-text-secondary); }

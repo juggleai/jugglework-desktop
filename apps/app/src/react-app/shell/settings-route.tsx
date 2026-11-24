@@ -13,6 +13,7 @@ import {
   createJuggleWorkServerClient,
   isLoopbackJuggleWorkServerUrl,
   readJuggleWorkServerSettings,
+  isEngineReloadDeferredError,
   JuggleWorkServerError,
   type JuggleWorkCloudMcpHealth,
   type JuggleWorkCloudMcpProviderModelContext,
@@ -253,6 +254,20 @@ const ROUTE_JUGGLEWORK_CAPABILITIES: JuggleWorkServerCapabilities = {
   commands: { read: true, write: true },
   config: { read: true, write: true },
 };
+
+async function refreshAfterProviderDeletion(refresh: () => Promise<void>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      refresh(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(t("providers.delete_refresh_timeout"))), 20_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function reloadEngineOrRestartDesktop(
   client: Pick<JuggleWorkServerClient, "reloadEngine">,
@@ -529,6 +544,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   // in-flight provider so the row can show progress instead of looking inert.
   const [disconnectingProviderId, setDisconnectingProviderId] = useState<string | null>(null);
   const [deletingProviderId, setDeletingProviderId] = useState<string | null>(null);
+  const [pendingDeletedProviderIds, setPendingDeletedProviderIds] = useState<string[]>([]);
   const [editingLocalProvider, setEditingLocalProvider] = useState<CustomProviderInput | null>(null);
   const [reconnectingProviderId, setReconnectingProviderId] = useState<string | null>(null);
   const [providerDisconnectError, setProviderDisconnectError] = useState<string | null>(null);
@@ -1638,8 +1654,45 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       return false;
     }
 
-    await reloadEngineOrRestartDesktop(juggleworkClient, workspaceId, options, refreshRouteState);
-    await refreshProviderListQueries(getReactQueryClient());
+    if (pendingDeletedProviderIds.length > 0) {
+      const reloadStartedAt = performance.now();
+      let outcome = "completed";
+      try {
+        await reloadEngineOrRestartDesktop(juggleworkClient, workspaceId, options);
+      } catch (error) {
+        outcome = isEngineReloadDeferredError(error) ? "deferred" : "failed";
+        throw error;
+      } finally {
+        console.info("[provider-delete]", { step: "engine_reload", outcome, durationMs: Math.round(performance.now() - reloadStartedAt) });
+      }
+
+      const refreshStartedAt = performance.now();
+      outcome = "completed";
+      const mediaScope = {
+        endpoint: routeStateRef.current.selectedWorkspaceJuggleWorkClient?.baseUrl ?? "",
+        workspaceId,
+        workspaceRoot: routeStateRef.current.selectedWorkspaceRoot,
+      };
+      try {
+        await refreshAfterProviderDeletion(async () => {
+          const queryClient = getReactQueryClient();
+          await Promise.all([
+            refreshProviderListQueries(queryClient),
+            invalidateMediaModelQueries(queryClient, mediaScope),
+          ]);
+          const providers = await providerAuthStore.refreshProviders({ force: true });
+          if (!providers) throw new Error(t("providers.delete_refresh_failed"));
+        });
+      } catch (error) {
+        outcome = "failed";
+        throw error;
+      } finally {
+        console.info("[provider-delete]", { step: "refresh_models", outcome, durationMs: Math.round(performance.now() - refreshStartedAt) });
+      }
+    } else {
+      await reloadEngineOrRestartDesktop(juggleworkClient, workspaceId, options, refreshRouteState);
+      await refreshProviderListQueries(getReactQueryClient());
+    }
 
     try {
       window.dispatchEvent(new CustomEvent("jugglework-server-settings-changed"));
@@ -1652,7 +1705,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     void pollMcpServersAfterReloadRef.current?.();
 
     return true;
-  }, [juggleworkClient, refreshRouteState, selectedWorkspaceId]);
+  }, [juggleworkClient, pendingDeletedProviderIds, providerAuthStore, refreshRouteState, selectedWorkspaceId]);
+
+  useEffect(() => {
+    if (!reloadCoordinator.reloadPending && !reloadCoordinator.reloadBusy) {
+      setPendingDeletedProviderIds((ids) => ids.length ? [] : ids);
+    }
+  }, [reloadCoordinator.reloadPending, reloadCoordinator.reloadBusy]);
 
   useEffect(() => {
     return reloadCoordinator.registerWorkspaceReloadControls({
@@ -2849,11 +2908,19 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           <AiSettingsView
             busy={busy}
             providerAuthBusy={providerAuthSnapshot.providerAuthBusy}
-            connectedProviders={modelGroupRows.localProviders}
+            connectedProviders={modelGroupRows.localProviders.filter(
+              (provider) => !pendingDeletedProviderIds.includes(provider.id),
+            )}
             disconnectingProviderId={disconnectingProviderId}
             deletingProviderId={deletingProviderId}
             providerConnectError={providerAuthSnapshot.providerAuthError}
             providerDisconnectError={providerDisconnectError}
+            providerDeleteRefresh={pendingDeletedProviderIds.length > 0 ? {
+              busy: reloadCoordinator.reloadBusy,
+              failed: Boolean(reloadCoordinator.reloadError),
+              canRetry: reloadCoordinator.canReloadWorkspaceEngine,
+              retry: reloadCoordinator.reloadWorkspaceEngine,
+            } : undefined}
             onOpenProviderAuth={handleOpenProviderAuth}
             onEditLocalProvider={async (providerId) => {
               if (checkDesktopRestriction({ restriction: "allowCustomProviders" })) {
@@ -2903,14 +2970,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                   setConfigActionStatus(message);
                 }
                 providerDisplayCacheRef.current.delete(providerId.trim().toLowerCase());
+                setPendingDeletedProviderIds((ids) => [...ids, providerId]);
                 return true;
               } catch (error) {
-                setProviderDisconnectError(
-                  error instanceof Error && error.message.trim()
-                    ? error.message
-                    : t("providers.delete_failed"),
-                );
-                return false;
+                return error instanceof Error && error.message.trim()
+                  ? error.message
+                  : t("providers.delete_failed");
               } finally {
                 setDeletingProviderId(null);
               }

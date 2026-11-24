@@ -32,6 +32,8 @@ type CloudDocsWarmupScope = Omit<CloudDocsResumeScope, "target"> & { authFingerp
 
 /** 仅主宿主可调用的原生云文档能力，不向远程页面暴露。 */
 export interface CloudDocsBridge {
+  /** 将宿主导航提示绘制在当前原生视图上。 */
+  setRailHint?(input: { instanceId: string; hint: { label: string; centerY: number; dark: boolean } | null }): void;
   /** 执行 AFFiNE 原生侧栏或搜索展示操作，不涉及文档写入。 */
   layoutCommand(input: { instanceId: string; action: "toggle-left" | "toggle-right" | "search" | "request-state" }): void;
   /** 监听当前实例真实侧栏状态。 */

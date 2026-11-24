@@ -13,6 +13,7 @@ import {
 import { t } from "@/i18n";
 import { TextInput } from "../../../design-system/text-input";
 import {
+  defaultControlPlaneUrl,
   displayCustomControlPlaneUrl,
   formatControlPlaneHost,
   isValidControlPlaneUrl,
@@ -30,13 +31,14 @@ export function OrganizationServerAffordance(props: OrganizationServerAffordance
   const [draft, setDraft] = useState("");
   const customUrl = displayCustomControlPlaneUrl(props.url);
   const connectedHost = customUrl ? formatControlPlaneHost(customUrl) : "";
+  const serverUrl = draft.trim() || defaultControlPlaneUrl();
 
   useEffect(() => {
     if (open) setDraft(customUrl);
   }, [customUrl, open]);
 
   const submit = async () => {
-    const ok = await props.onSave(draft);
+    const ok = await props.onSave(serverUrl);
     if (ok) setOpen(false);
   };
 
@@ -97,7 +99,7 @@ export function OrganizationServerAffordance(props: OrganizationServerAffordance
             <Button
               type="button"
               onClick={() => void submit()}
-              disabled={props.busy || !isValidControlPlaneUrl(draft)}
+              disabled={props.busy || !isValidControlPlaneUrl(serverUrl)}
             >
               {t("common.save")}
             </Button>

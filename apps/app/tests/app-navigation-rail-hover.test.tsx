@@ -4,6 +4,11 @@ import * as React from "react";
 import { act, create } from "react-test-renderer";
 import { useCloudDocsBounds } from "../src/react-app/domains/cloud-docs/use-cloud-docs-bounds";
 
+mock.module("../src/components/ui/tooltip", () => ({
+  Tooltip: ({ children }: React.PropsWithChildren) => children,
+  TooltipTrigger: ({ render }: { render: React.ReactElement }) => render,
+  TooltipContent: () => null,
+}));
 mock.module("../src/react-app/domains/jugglechat/store", () => ({ useJuggleChatStore: () => null }));
 mock.module("../src/react-app/domains/settings/cloud/cloud-session-provider", () => ({ useCloudSession: () => null }));
 mock.module("../src/react-app/domains/settings/cloud/device-connection-menu-item", () => ({ DeviceConnectionMenuItem: () => null, useDeviceConnection: () => null }));
@@ -14,7 +19,7 @@ const { RailButton } = await import("../src/react-app/shell/app-navigation-rail"
 const originals = { window: globalThis.window, document: globalThis.document, getComputedStyle: globalThis.getComputedStyle };
 afterAll(() => { Object.assign(globalThis, originals); mock.restore(); });
 
-test("真实 RailButton hover 保留提示文字，不创建 DOM tooltip／截图／hide，也不抢焦点；preview 与点击仍可操作", async () => {
+test("RailButton 保留可访问名称，悬停预览和点击不会要求云文档截图或抢焦点", async () => {
   const snapshot = mock(async () => "screen"), bounds = mock((_input: { visible: boolean }) => {});
   const focus = mock(() => {}), click = mock(() => {}), preview = mock((_target: string, _open: boolean) => {});
   (globalThis as any).window = { __JUGGLEWORK_ELECTRON__: { cloudDocs: { snapshot, setBounds: bounds } } };
@@ -26,18 +31,17 @@ test("真实 RailButton hover 保留提示文字，不创建 DOM tooltip／截�
     sync = useCloudDocsBounds(host).sync;
     return <>
       <RailButton label="云文档" tooltipLabel="文档提示" onClick={click}><span /></RailButton>
-      <RailButton label="应用" showTooltip={false} appPreviewTarget="plugins" onAppPreviewChange={preview}><span /></RailButton>
+      <RailButton label="应用" appPreviewTarget="plugins" onAppPreviewChange={preview}><span /></RailButton>
     </>;
   }
   let renderer!: ReturnType<typeof create>;
   await act(async () => { renderer = create(<Host />); });
   await act(async () => sync("docs", true));
   const [button, previewButton] = renderer.root.findAllByType("button");
-  expect(button.props.title).toBe("文档提示");
+  expect(button.props.title).toBeUndefined();
   expect(button.props["aria-label"]).toBe("云文档");
   expect(previewButton.props.title).toBeUndefined();
   await act(async () => { button.props.onMouseEnter(); sync("docs", true); button.props.onMouseLeave(); sync("docs", true); });
-  expect(renderer.root.findAll(node => node.props.role === "tooltip")).toHaveLength(0);
   expect(snapshot).not.toHaveBeenCalled();
   expect(bounds.mock.calls.every(([value]) => value.visible)).toBe(true);
   expect(focus).not.toHaveBeenCalled();

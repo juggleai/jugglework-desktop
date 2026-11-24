@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { createJuggleWorkServerClient } from "./jugglework-server";
 import { resolveJuggleWorkConnection } from "../../react-app/shell/jugglework-connection";
-import { createDenClient, readDenSettings, readDenUserId } from "./den";
+import { createDenClient, DenApiError, readDenSettings, readDenUserId } from "./den";
 import { isDesktopRuntime } from "./runtime-env";
 import { desktopBridge } from "./desktop";
 
@@ -94,6 +94,14 @@ export function managedProviderConfirmationCurrent(capturedEpoch: number) {
   return switching === 0 && capturedEpoch === epoch;
 }
 
+class ManagedProviderIdentityRejected extends Error {}
+
+export function isManagedProviderAuthorityRejected(error: unknown) {
+  return error instanceof ManagedProviderIdentityRejected || (error instanceof DenApiError &&
+    error.code !== "request_failed" &&
+    (error.status === 401 || error.status === 403 || error.code === "organization_not_found"));
+}
+
 /** Confirm the active organization of this bearer session, without an organization override. */
 export async function confirmManagedProviderScope(host: ReturnType<typeof createJuggleWorkServerClient>, revision?: string) {
   const captured = managedProviderEpoch();
@@ -107,9 +115,11 @@ export async function confirmManagedProviderScope(host: ReturnType<typeof create
   const [user, orgs, hash] = await Promise.all([den.getSession(), den.listOrgs(), crypto.subtle.digest("SHA-256", new TextEncoder().encode(token))]);
   const live = readDenSettings();
   if (!managedProviderConfirmationCurrent(captured) || live.baseUrl !== settings.baseUrl || live.authToken !== token ||
-    live.activeOrgId !== organizationId || readDenUserId()?.trim() !== userId || user.id !== userId ||
-    orgs.activeOrgId !== organizationId || !orgs.orgs.some((org) => org.id === organizationId)) {
+    live.activeOrgId !== organizationId || readDenUserId()?.trim() !== userId) {
     throw new Error("Managed model identity changed during confirmation.");
+  }
+  if (user.id !== userId || orgs.activeOrgId !== organizationId || !orgs.orgs.some((org) => org.id === organizationId)) {
+    throw new ManagedProviderIdentityRejected("Cloud did not confirm the managed model identity.");
   }
   const session = Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
   return (await host.confirmManagedProviderAuthority({ revision, deployment: den.baseUrls.apiBaseUrl, organizationId, userId, session })).id;

@@ -50,7 +50,7 @@ export function CloudDocsPage(props: Props) {
   const navigate = useNavigate();
   const target = useMemo(() => parseCloudDocsTarget(props.targetSearch), [props.targetSearch]);
   const host = useRef<HTMLDivElement>(null);
-  const nativeBounds = useCloudDocsBounds(host);
+  const nativeBounds = useCloudDocsBounds(host, undefined, { mirrorRailHints: true });
   const active = useRef(props.active);
   active.current = props.active;
   const referenceHandler = useRef(props.onAiReference);
