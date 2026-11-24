@@ -25,6 +25,13 @@ export function resolveRenderedSessionSnapshot(input: {
   return null;
 }
 
+/** Capture the persisted tail when editing starts, including assistant errors with no renderable parts. */
+export function captureSessionHistoryEdit(snapshot: JuggleWorkSessionSnapshot | null, workspaceId: string, messageId: string, text: string) {
+  const lastMessageId = snapshot?.messages.at(-1)?.info.id;
+  if (!snapshot || !lastMessageId) return null;
+  return { workspaceId, sessionId: snapshot.session.id, messageId, lastMessageId, text };
+}
+
 /** 生成聊天展示消息，失效快照不能覆盖同步层保留的实时结果。 */
 export function deriveRenderedSessionMessages(input: {
   transcriptState: UIMessage[] | null | undefined;

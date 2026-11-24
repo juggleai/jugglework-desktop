@@ -91,7 +91,7 @@ import { DevProfiler } from "@/react-app/shell/dev-profiler";
 import { useShellConfig } from "@/react-app/shell/shell-config";
 import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog";
 import { SessionDebugPanel } from "./debug-panel";
-import { deriveContextEstimationMessages, deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
+import { captureSessionHistoryEdit, deriveContextEstimationMessages, deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { isAttachmentFileReadable, resolveAttachmentFileMetadata, materializeComposerAttachment } from "@/react-app/domains/session/sync/attachment-file-part";
 import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
@@ -125,7 +125,7 @@ import {
   transcriptKey as reactTranscriptKey,
 } from "@/react-app/domains/session/sync/session-sync";
 import { useSessionTodos } from "@/react-app/domains/session/sync/use-session-todos";
-import { isSyntheticMessageId, resolveForkBoundaryId } from "@/react-app/domains/session/sync/transcript-reconcile";
+import { resolveForkBoundaryId } from "@/react-app/domains/session/sync/transcript-reconcile";
 import {
   getComposerAttachments,
   getComposerCapabilities,
@@ -694,7 +694,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const queuedRunObservedBusyRef = useRef(false);
   const composerShellRef = useRef<HTMLDivElement>(null);
   const hydratedKeyRef = useRef<string | null>(null);
-  const [historyEdit, setHistoryEdit] = useState<{ sessionId: string; workspaceId: string; messageId: string; lastMessageId: string; text: string } | null>(null);
+  const [historyEdit, setHistoryEdit] = useState<ReturnType<typeof captureSessionHistoryEdit>>(null);
   const activeSurfaceIdentityRef = useRef(`${props.workspaceId}:${props.sessionId}`);
   const inFlightSendIdentitiesRef = useRef(new Set<string>());
   activeSurfaceIdentityRef.current = `${props.workspaceId}:${props.sessionId}`;
@@ -2465,10 +2465,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.onForkAtMessage, props.sessionId, renderedMessages]);
 
   const handleEditUserMessage = useCallback((messageId: string, text: string) => {
-    const lastMessage = renderedMessages.findLast((message) => !isSyntheticMessageId(message.id));
-    if (fileHost || chatStreaming || !lastMessage) return;
-    setHistoryEdit({ sessionId: props.sessionId, workspaceId: props.workspaceId, messageId, lastMessageId: lastMessage.id, text });
-  }, [fileHost, chatStreaming, renderedMessages, props.sessionId, props.workspaceId]);
+    if (fileHost || chatStreaming) return;
+    setHistoryEdit(captureSessionHistoryEdit(currentSnapshot, props.workspaceId, messageId, text));
+  }, [fileHost, chatStreaming, currentSnapshot, props.workspaceId]);
 
   const submitHistoryEdit = async (text: string) => {
     if (!historyEdit || historyEdit.sessionId !== props.sessionId || historyEdit.workspaceId !== props.workspaceId || chatStreaming) return false;
@@ -2694,7 +2693,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onRevertToUserMessage={handleRevertToUserMessage}
                       onForkAtMessage={handleForkAtMessage}
                       onEditUserMessage={handleEditUserMessage}
-                      editDisabled={chatStreaming || props.taskSubmissionDisabled}
+                      editDisabled={chatStreaming || props.taskSubmissionDisabled || !currentSnapshot?.messages.length}
                       historyEditor={historyEdit?.sessionId === props.sessionId && historyEdit.workspaceId === props.workspaceId ? {
                         messageId: historyEdit.messageId, initialText: historyEdit.text,
                         onClose: () => setHistoryEdit((current) => current === historyEdit ? null : current),

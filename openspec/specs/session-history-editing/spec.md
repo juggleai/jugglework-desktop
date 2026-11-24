@@ -24,6 +24,11 @@ For an idle session, the workspace service SHALL preserve all messages preceding
 - **WHEN** the user confirms an edit of the first message
 - **THEN** the edited prompt starts a new turn in the same session with the original file attachments
 
+#### Scenario: Resend after an assistant error with no response text
+
+- **WHEN** the last persisted message contains only an assistant error and the user opens an earlier message for editing
+- **THEN** the desktop captures the last persisted message ID from the session snapshot, including the error message, for the history check at submission
+
 #### Scenario: The transcript changed while editing
 
 - **WHEN** the latest message no longer matches the tail recorded when editing began

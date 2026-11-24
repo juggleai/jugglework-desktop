@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { UIMessage } from "ai";
 import type { JuggleWorkSessionMessage, JuggleWorkSessionMessagesResponse, JuggleWorkSessionSnapshot } from "../src/app/lib/jugglework-server";
 
-import { deriveRenderedSessionMessages } from "../src/react-app/domains/session/surface/session-render-state";
+import { captureSessionHistoryEdit, deriveRenderedSessionMessages } from "../src/react-app/domains/session/surface/session-render-state";
 import { createSessionCompactionUIPart, getSessionCompactionFromMessage } from "../src/app/lib/session-compaction";
 
 const message = (id: string, text: string): UIMessage => ({
@@ -24,6 +24,25 @@ const snapshotWith = (messages: JuggleWorkSessionMessage[]): JuggleWorkSessionSn
 }) as JuggleWorkSessionSnapshot;
 
 describe("session render state", () => {
+  test("history edits capture the persisted tail even when only its synthetic error card is rendered", () => {
+    const user = rawMessage("user", "user", "generate an image", 1);
+    const failed = rawMessage("failed", "assistant", "", 2, {
+      error: { name: "APIError", data: { message: "Forbidden", statusCode: 403 } },
+    });
+    failed.parts = [];
+    const snapshot = snapshotWith([user, failed]);
+    const rendered = deriveRenderedSessionMessages({ snapshot, transcriptState: [] });
+    expect(rendered.map((message) => message.id)).toEqual(["user", "session-error:failed"]);
+
+    const edit = captureSessionHistoryEdit(snapshot, "workspace", user.info.id, "try again");
+    expect(edit).toEqual({ workspaceId: "workspace", sessionId: "root", messageId: "user", lastMessageId: "failed", text: "try again" });
+
+    snapshot.messages.push(rawMessage("later", "user", "another task", 3));
+    expect(edit?.lastMessageId).toBe("failed");
+    expect(captureSessionHistoryEdit(snapshot, "workspace", user.info.id, "retry")?.lastMessageId).toBe("later");
+    expect(captureSessionHistoryEdit(snapshotWith([]), "workspace", user.info.id, "retry")).toBeNull();
+  });
+
   test("an obsolete revert cursor cannot truncate the recovered live history", () => {
     const live = [message("answer", "restored answer")];
     const snapshot = { session: { id: "root", revert: { messageID: "answer" } }, messages: [], status: { type: "idle" }, todos: [] } as unknown as JuggleWorkSessionSnapshot;
