@@ -3,6 +3,15 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { inspectToonFactoryExecutable, sha256File } from "./toonFactoryBundle.mjs";
 import { windowsMediaImports, windowsMediaSignature } from "./windowsMediaTrust.mjs";
+import windowsTestPackage from "./windows-test-package.cjs";
+
+export function mediaRuntimeVerificationOptions(packaged, platform, metadata) {
+  if (!packaged) return { phase: "built" };
+  const packageMetadata = metadata ?? JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  return windowsTestPackage.isUnsignedWindowsTestPackage(platform, packageMetadata)
+    ? { phase: "built" }
+    : { phase: "signed", team: "H7PDHSK3C7" };
+}
 
 export const MEDIA_SOURCES = JSON.parse(readFileSync(new URL("./mediaToolsSources.json", import.meta.url), "utf8"));
 export const mediaSourceInputs = () => [...Object.values(MEDIA_SOURCES.sources), ...MEDIA_SOURCES.evidence];

@@ -121,6 +121,8 @@ Development and packaged restricted media operations MUST resolve FFmpeg and FFp
 ### Requirement: Windows media tools retain target and application trust
 Windows x64/ARM64 SHALL build pinned FFmpeg/x264 into target-specific executables with static dependencies and system-only PE imports. Packaged execution SHALL require valid Authenticode matching the application signer. Bun upstream bytes and trust hashes SHALL remain unchanged.
 
+An explicitly opted-in local Windows test package MAY use unsigned media only when its packaged metadata contains `juggleworkUnsignedTestPackage: true` and the build sets `JUGGLEWORK_WINDOWS_UNSIGNED_TEST=1`. It MUST preserve the original `built` manifest, build receipts, source hashes, target checks and full resource inventory. Runtime SHALL select this exception from package metadata, never from a runtime environment variable. Unsigned status MUST be disclosed on delivery; filenames and installed shortcuts MAY use the 北数Work brand without a test suffix. This package MUST NOT qualify for signed release publication; default release checks remain unchanged.
+
 #### Scenario: Windows tools are packaged
 - **WHEN** a Windows target stages and signs its media executables
 - **THEN** packaging validates unchanged source/license/configuration bytes and seals inventory after media signing

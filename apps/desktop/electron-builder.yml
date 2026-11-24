@@ -1,7 +1,7 @@
 # Stable JuggleWork bundle identifier for macOS keychain entries, Launchpad,
 # TCC permissions, and the packaged desktop application.
 appId: com.juggleai.jugglework
-productName: JuggleWork
+productName: 北数Work
 protocols:
   - name: JuggleWork
     schemes:
@@ -149,7 +149,10 @@ linux:
     - provider: generic
       url: https://downloads.jugglechat.cn/jugglework/releases/stable/linux
 win:
-  icon: resources/icons/icon.ico
+  # Keep the existing executable identity and upgrade compatibility.
+  executableName: JuggleWork
+  # Rounded-corner artwork for the Windows shortcut and executable icon.
+  icon: resources/icons/icon-rounded.ico
   extraResources:
     - from: resources/sidecars
       to: sidecars
@@ -166,9 +169,10 @@ win:
     - provider: generic
       url: https://downloads.jugglechat.cn/jugglework/releases/stable/windows
 nsis:
+  shortcutName: 北数Work
   # Keep the standard electron-builder installer even if an accidental
   # build/installer.nsi exists, and freeze the deployed registry identity.
   script: null
   guid: 6fbd4568-b529-5610-b7ba-24eb7d10b064
   include: build/installer.nsh
-artifactName: jugglework-${os}-${arch}-${version}.${ext}
+artifactName: 北数Work-${os}-${arch}-${version}.${ext}

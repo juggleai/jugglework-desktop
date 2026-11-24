@@ -15,9 +15,13 @@ The desktop application SHALL display the product name `北数Work` on every use
 - **WHEN** the desktop policy or the desktop bootstrap config sets `brandAppName` to `JuggleWork` (any case), which is the server's default rather than an organization brand
 - **THEN** the name is treated as unset and windows, the application menu, the sign-in page, and the document title display `北数Work`
 
+#### Scenario: Windows packaging uses the brand
+- **WHEN** a Windows installer is produced
+- **THEN** the installer product name, artifact filename, and shortcut name use `北数Work` with the rounded Windows icon, while the process and executable file name remain `JuggleWork`
+
 #### Scenario: Internal identities stay stable
 - **WHEN** the application starts, updates, or registers OS integrations
-- **THEN** the app ID, protocol scheme, userData path, packaged product name, bundle and executable file names, and on-disk Documents folders are unchanged from JuggleWork
+- **THEN** the app ID, NSIS GUID, protocol scheme, userData path, executable and bundle file names, and on-disk Documents folders are unchanged from JuggleWork
 
 ### Requirement: Localized first-launch sign-in page
 The full-screen sign-in page SHALL render its title, call to action, and introduction panel through i18n in the active locale and SHALL show a product logo.

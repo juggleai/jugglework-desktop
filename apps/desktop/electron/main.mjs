@@ -170,8 +170,8 @@ const TAURI_APP_IDENTIFIER = "com.juggleai.jugglework";
 const DEV_APP_IDENTIFIER = "com.juggleai.jugglework.dev";
 const DESKTOP_PROTOCOL_SCHEME = "jugglework";
 const isDevMode = process.env.JUGGLEWORK_DEV_MODE === "1";
-// TIPS: APP_NAME 是进程身份（ready 前的 app.setName、安装程序创建的 Windows 快捷方式文件名），
-// 必须与 electron-builder 的 productName 保持一致；界面显示名单独由 DEFAULT_DISPLAY_APP_NAME 提供。
+// TIPS: 保留 ASCII 进程身份和既有 userData 路径；安装包产品名和快捷方式使用北数Work，
+// 不随显示名称变更迁移已有数据目录。
 const APP_NAME =
   process.env.JUGGLEWORK_ELECTRON_APP_NAME?.trim() ||
   (isDevMode ? "JuggleWork - Dev" : "JuggleWork");
@@ -389,7 +389,7 @@ function windowsBrandShortcutPath() {
 }
 
 function windowsInstalledShortcutPath() {
-  return path.join(windowsProgramsPath(), windowsInstalledShortcutFileName(APP_NAME));
+  return path.join(windowsProgramsPath(), windowsInstalledShortcutFileName(DEFAULT_DISPLAY_APP_NAME));
 }
 
 function windowsBrandShortcutMarkerPath() {

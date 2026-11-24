@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { lstat, realpath, mkdtemp, rm, unlink, link, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { verifyMediaTools, mediaRun } from "./mediaTools.mjs";
+import { verifyMediaTools, mediaRun, mediaRuntimeVerificationOptions } from "./mediaTools.mjs";
 
 const publicationFs = { lstat, realpath, link, stat, rm, unlink };
 
@@ -179,7 +179,7 @@ export function createToonFactoryVideoEditor({ isDirectoryGranted, mediaToolsRoo
       // The outer signed app seals the manifest; its mutable local build hashes
       // alone are not an upstream trust anchor. Development uses verified staging.
       if (packaged && mediaTarget.platform === "darwin") mediaRun("/usr/bin/codesign", ["--verify", "--strict", "-R", '=anchor apple generic and certificate leaf[subject.OU] = "H7PDHSK3C7" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists', path.resolve(mediaToolsRoot, "../../..")]);
-      const tools = verifyMediaTools(mediaToolsRoot, mediaTarget, packaged ? { phase: "signed", team: "H7PDHSK3C7" } : { phase: "built" });
+      const tools = verifyMediaTools(mediaToolsRoot, mediaTarget, mediaRuntimeVerificationOptions(packaged, mediaTarget.platform));
       const probe = async file => {
         const data = JSON.parse(await run(tools.ffprobe, ["-v", "error", "-protocol_whitelist", "file,pipe", "-format_whitelist", "mov,matroska,webm", "-show_entries", "format=duration:stream=codec_type,width,height,codec_name", "-of", "json", file]));
         const video = data.streams?.find(stream => stream.codec_type === "video");

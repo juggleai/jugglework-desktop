@@ -5,6 +5,7 @@ const asar = require("@electron/asar");
 const { OFFICE_ENGINE_PLATFORMS, copyOfficeEngineResources } = require("./office-engine-resources.cjs");
 const { copyOfficeAssets } = require("./office-assets.cjs");
 const { verifyPackagedPresentationGenerator } = require("./presentation-package-verifier.cjs");
+const { isUnsignedWindowsTestPackage } = require("../electron/windows-test-package.cjs");
 
 const computerUseHelperAppName = "JuggleWork Computer Use.app";
 const macTrayTemplateImages = [
@@ -429,6 +430,36 @@ async function runAfterPack(context, dependencies = {}) {
   signHelper(context);
 }
 
+async function verifyWindowsPackagedMedia(context, mediaRoot, target, {
+  verifyMediaTools, mediaInventory, windowsMediaSignature, environment = process.env,
+}) {
+  const original = verifyMediaTools(path.join(context.packager.projectDir, "resources/mediaTools"), target, { phase: "built" });
+  if (isUnsignedWindowsTestPackage(target.platform, context.packager.config.extraMetadata)) {
+    if (environment.JUGGLEWORK_WINDOWS_UNSIGNED_TEST !== "1") {
+      throw new Error("Unsigned test package requires explicit JUGGLEWORK_WINDOWS_UNSIGNED_TEST=1");
+    }
+    // Keep the original build receipts and all inventory checks. Never label
+    // unsigned tools as signed or accept binaries changed during packaging.
+    const packaged = verifyMediaTools(mediaRoot, target, { phase: "built" });
+    if (JSON.stringify(packaged.manifest) !== JSON.stringify(original.manifest)) {
+      throw new Error("Unsigned test media differs from the verified build");
+    }
+    console.warn("[unsigned-test] Local test package only; Authenticode release verification is not satisfied.");
+    return;
+  }
+  const files = mediaInventory(mediaRoot);
+  const immutable = entries => entries.filter(entry => !["ffmpeg.exe", "ffprobe.exe"].includes(entry.path));
+  if (JSON.stringify(immutable(files)) !== JSON.stringify(immutable(original.manifest.files))) throw new Error("Media non-executable resource changed during signing");
+  const manifest = JSON.parse(fs.readFileSync(path.join(mediaRoot, "manifest.json"), "utf8"));
+  if (JSON.stringify(manifest) !== JSON.stringify(original.manifest)) throw new Error("Media manifest changed before signing seal");
+  const signer = windowsMediaSignature(path.join(mediaRoot, "ffmpeg.exe"));
+  if (windowsMediaSignature(path.join(mediaRoot, "ffprobe.exe")) !== signer) throw new Error("Media signer mismatch");
+  manifest.phase = "signed";
+  manifest.signerThumbprint = signer;
+  manifest.files = files;
+  fs.writeFileSync(path.join(mediaRoot, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
 async function afterPack(context) {
   const { verifyMediaTools, verifyMediaExecutables } = await import("../electron/mediaTools.mjs");
   const mediaRoot = path.join(resolvePackagedResourcesPath(context), "mediaTools");
@@ -436,20 +467,9 @@ async function afterPack(context) {
   if (target.platform === "win32") {
     // electron-builder signs extraResources before afterPack. Validate the original
     // build, then allow only the two authenticated executable byte changes.
-    const original = verifyMediaTools(path.join(context.packager.projectDir, "resources/mediaTools"), target, { phase: "built" });
     const { mediaInventory } = await import("../electron/mediaTools.mjs");
     const { windowsMediaSignature } = await import("../electron/windowsMediaTrust.mjs");
-    const files = mediaInventory(mediaRoot);
-    const immutable = entries => entries.filter(entry => !["ffmpeg.exe", "ffprobe.exe"].includes(entry.path));
-    if (JSON.stringify(immutable(files)) !== JSON.stringify(immutable(original.manifest.files))) throw new Error("Media non-executable resource changed during signing");
-    const manifest = JSON.parse(fs.readFileSync(path.join(mediaRoot, "manifest.json"), "utf8"));
-    if (JSON.stringify(manifest) !== JSON.stringify(original.manifest)) throw new Error("Media manifest changed before signing seal");
-    const signer = windowsMediaSignature(path.join(mediaRoot, "ffmpeg.exe"));
-    if (windowsMediaSignature(path.join(mediaRoot, "ffprobe.exe")) !== signer) throw new Error("Media signer mismatch");
-    manifest.phase = "signed";
-    manifest.signerThumbprint = signer;
-    manifest.files = files;
-    fs.writeFileSync(path.join(mediaRoot, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+    await verifyWindowsPackagedMedia(context, mediaRoot, target, { verifyMediaTools, mediaInventory, windowsMediaSignature });
   }
   const tools = verifyMediaTools(mediaRoot, target, { phase: target.platform === "win32" ? "any" : "built" });
   verifyMediaExecutables(tools);
@@ -478,3 +498,4 @@ module.exports.packageBundledOfficeResources = packageBundledOfficeResources;
 module.exports.verifyRendererResources = verifyRendererResources;
 module.exports.resolvePackagedExecutable = resolvePackagedExecutable;
 module.exports.resolvePackagedResourcesPath = resolvePackagedResourcesPath;
+module.exports.verifyWindowsPackagedMedia = verifyWindowsPackagedMedia;

@@ -88,6 +88,22 @@ test("development icon remains distinct while using the formal W mark assets", (
   );
 });
 
+test("Windows packaging uses the rounded shortcut and executable artwork", () => {
+  assert.deepEqual(pngSize("apps/desktop/resources/icons/icon-rounded.png"), [1024, 1024]);
+  assert.deepEqual(icoSizes("apps/desktop/resources/icons/icon-rounded.ico"), [
+    [16, 16],
+    [24, 24],
+    [32, 32],
+    [48, 48],
+    [64, 64],
+    [128, 128],
+    [256, 256],
+  ]);
+  const config = readFileSync(asset("apps/desktop/electron-builder.yml"), "utf8");
+  const windowsConfig = config.split("\nwin:\n")[1].split("\nnsis:\n")[0];
+  assert.match(windowsConfig, /\n\s*icon: resources\/icons\/icon-rounded\.ico/);
+});
+
 test("JuggleWork artwork is referenced consistently", () => {
   const appSources = [
     "apps/app/index.html",
