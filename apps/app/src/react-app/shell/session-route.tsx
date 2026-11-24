@@ -134,7 +134,6 @@ import type {
   CreateWorkspaceOptions,
   CreateWorkspaceScreen,
 } from "@/react-app/domains/workspace/types";
-import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { isManagedModelSubmissionReady } from "@/react-app/domains/connections/provider-auth/cloud-provider-readiness";
 import { managedProviderConfirmationCurrent, useManagedProviderEpoch } from "@/app/lib/managed-provider-scope";
 import { isManagedProvider } from "@jugglework/types/provider-credentials";
@@ -211,38 +210,13 @@ import {
   ensureProviderListQuery,
   getConnectedProviderItems,
   getProviderSource,
-  isChatSelectableProviderModel,
+  usePickerProviderItems,
   isModelAvailableInConnectedProviders,
   refreshProviderListQueries,
   resolveConnectedProviderModel,
   useProviderListQuery,
 } from "@/react-app/infra/provider-list-query";
 
-
-/**
- * A cloud admin can replace a provider instead of editing it in place. Cloud
- * provider IDs are then new (`lpr_*`), while locally persisted session and
- * default-model preferences still point at the retired ID.  Reuse the model
- * only when the live cloud catalog provides one unambiguous, exact model-ID
- * match.  Do not apply this to user-managed providers or fuzzy matches.
- */
-function findReplacementCloudModel(
-  model: ModelRef | null,
-  providers: ProviderListResponse | null | undefined,
-): ModelRef | null {
-  if (!model || !isCloudManagedProviderKey(model.providerID)) return null;
-  if (isModelAvailableInConnectedProviders(providers, model)) return null;
-
-  const candidates = getConnectedProviderItems(providers).filter(
-    (provider) =>
-      provider.id !== model.providerID &&
-      isCloudManagedProviderKey(provider.id) &&
-      isChatSelectableProviderModel(provider.models?.[model.modelID]),
-  );
-  if (candidates.length !== 1) return null;
-
-  return { providerID: candidates[0].id, modelID: model.modelID };
-}
 
 function describeTaskCreateError(error: unknown) {
   const message = describeRouteError(error);
@@ -1028,6 +1002,12 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   const [modelPickerSessionId, setModelPickerSessionId] = useState<string | null>(null);
   const modelPickerTargetSessionId = modelPickerSessionId ?? selectedSessionId;
   const managedScopeEpoch = useManagedProviderEpoch();
+  const selectableCloudProviders = usePickerProviderItems(cloudProviderList);
+  const scopedProviderList = useMemo(() => cloudProviderList && ({
+    ...cloudProviderList,
+    all: selectableCloudProviders,
+    connected: selectableCloudProviders.map((provider) => provider.id),
+  }), [cloudProviderList, selectableCloudProviders]);
   const isManagedModel = useCallback((model: ModelRef) => isManagedProvider(model.providerID,
     providerListQuery.data?.all.find((provider) => provider.id === model.providerID)), [providerListQuery.data]);
   /**
@@ -1040,9 +1020,9 @@ export function SessionRoute(props: SessionRouteProps = {}) {
 
     const usesCloudProvider = isManagedModel(model);
     // 云端 provider 的连接状态同步完成前不下结论，避免误报「模型不可用」。
-    if (usesCloudProvider && !cloudProviderSyncReady) return false;
+    if (usesCloudProvider && (!cloudProviderSyncReady || !managedProviderConfirmationCurrent(managedScopeEpoch))) return false;
 
-    const providerList = usesCloudProvider ? cloudProviderList : providerListQuery.data;
+    const providerList = usesCloudProvider ? scopedProviderList : providerListQuery.data;
     return Boolean(
       isDesktopModelBlocked({
         model,
@@ -1065,7 +1045,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   }, [
     allowedModels,
     checkDesktopRestriction,
-    cloudProviderList,
+    scopedProviderList,
+    managedScopeEpoch,
     cloudProviderSyncReady,
     isManagedModel,
     loading,
@@ -1077,72 +1058,43 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   const isManagedModelReady = useCallback((model: ModelRef | null) => (
     !model ||
     !isManagedModel(model) ||
-    (managedProviderConfirmationCurrent(managedScopeEpoch) && isManagedModelSubmissionReady({
+    (managedProviderConfirmationCurrent(managedScopeEpoch) && isModelAvailableInConnectedProviders(scopedProviderList, model) && isManagedModelSubmissionReady({
       cloudProviderSyncReady,
       providerList: providerListQuery.data,
       model,
     }))
-  ), [cloudProviderSyncReady, isManagedModel, managedScopeEpoch, providerListQuery.data]);
+  ), [cloudProviderSyncReady, isManagedModel, managedScopeEpoch, scopedProviderList, providerListQuery.data]);
   const selectedManagedModelPreparing = Boolean(
     activeModel &&
     !isManagedModelReady(activeModel),
   );
-  const selectedModelUnavailableKey = selectedModelUnavailable && activeModel
+  const replacementFor = useCallback((model: ModelRef | null) => {
+    if (!selectedWorkspaceId || providerListQuery.isPending || (model && !isModelUnavailable(model))) return null;
+    const managed = Boolean(model && isManagedModel(model));
+    return resolveConnectedProviderModel(managed ? scopedProviderList : providerListQuery.data, model, {
+      preferSameModelID: managed,
+      isAllowed: ({ provider, model: candidate }) =>
+        (!managed || isManagedProvider(provider.id, provider)) &&
+        isManagedModelReady(candidate) &&
+        !isDesktopModelBlocked({ model: candidate, checkRestriction: checkDesktopRestriction, allowedModels, providerSource: provider.source }),
+    });
+  }, [selectedWorkspaceId, providerListQuery.isPending, providerListQuery.data, isModelUnavailable,
+    isManagedModel, scopedProviderList, isManagedModelReady, checkDesktopRestriction, allowedModels]);
+
+  const replacement = useMemo(() => replacementFor(activeModel), [replacementFor, activeModel]);
+  const splitModel = splitRuntimeSessionId ? resolveModelForSession(splitRuntimeSessionId).model : null;
+  const splitReplacement = useMemo(() => splitModel && replacementFor(splitModel), [splitModel, replacementFor]);
+  useEffect(() => {
+    if (replacement) applyModelSelection(replacement, selectedSessionId);
+    if (splitReplacement && splitRuntimeSessionId && splitRuntimeSessionId !== selectedSessionId) {
+      applyModelSelection(splitReplacement, splitRuntimeSessionId);
+    }
+  }, [replacement, splitReplacement, applyModelSelection, selectedSessionId, splitRuntimeSessionId]);
+
+  const selectedModelUnavailableKey = selectedModelUnavailable && activeModel && !replacement
     ? `${activeModel.providerID}:${activeModel.modelID}`
     : null;
   const autoOpenedUnavailableModelRef = useRef<string | null>(null);
-
-  // A clean profile has no model preference, and remembered providers/models
-  // can disappear after an org or configuration change. Repair both cases from
-  // the authoritative connected-provider order instead of opening a chooser.
-  useEffect(() => {
-    if (!selectedWorkspaceId || providerListQuery.isPending) return;
-    if (activeModel && !selectedModelUnavailable) return;
-    if (activeModel && !isManagedModelReady(activeModel)) return;
-
-    const fallback = resolveConnectedProviderModel(providerListQuery.data, activeModel, {
-      isAllowed: ({ provider, model }) => !isDesktopModelBlocked({
-        model,
-        checkRestriction: checkDesktopRestriction,
-        allowedModels,
-        providerSource: provider.source,
-      }),
-    });
-    if (!fallback) return;
-    applyModelSelection(fallback, selectedSessionId);
-  }, [
-    activeModel,
-    allowedModels,
-    applyModelSelection,
-    checkDesktopRestriction,
-    cloudProviderSyncReady,
-    isManagedModelReady,
-    providerListQuery.data,
-    providerListQuery.isPending,
-    selectedModelUnavailable,
-    selectedSessionId,
-    selectedWorkspaceId,
-  ]);
-
-  // Repair local preferences left behind when an organization replaces a
-  // cloud-managed provider. This runs only after cloud sync is authoritative
-  // and only for an exact, unambiguous model match (see helper above).
-  useEffect(() => {
-    if (!cloudProviderSyncReady) return;
-    const replacement = findReplacementCloudModel(activeModel, cloudProviderList);
-    if (!replacement) return;
-
-    applyModelSelection(replacement, selectedSessionId);
-    toast("已切换到当前可用的云端模型", {
-      description: `${replacement.providerID}/${replacement.modelID}`,
-    });
-  }, [
-    activeModel,
-    applyModelSelection,
-    cloudProviderList,
-    cloudProviderSyncReady,
-    selectedSessionId,
-  ]);
 
   useEffect(() => {
     if (!selectedModelUnavailableKey) {
@@ -1402,7 +1354,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         modelPicker.setOpen(true);
       },
       modelPickerOpen: modelPicker.compactOpen,
-      modelUnavailable: selectedModelUnavailable,
+      modelUnavailable: selectedModelUnavailable && !replacement,
       promptSuggestionsProviderReady: !loading && providerListQuery.isSuccess && Boolean(activeModel) &&
         !selectedModelUnavailable && isManagedModelReady(activeModel),
       taskSubmissionDisabled: !canAcceptTask || selectedModelUnavailable || selectedManagedModelPreparing,
@@ -1435,7 +1387,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
             sessionProviderAuthSnapshot.cloudOrgProviders,
           ),
           modelLabel: model ? resolveModelDisplayName(model.modelID) : t("session.default_model"),
-          modelUnavailable: isModelUnavailable(model),
+          modelUnavailable: isModelUnavailable(model) && !(paneSessionId === selectedSessionId ? replacement : splitReplacement),
           promptSuggestionsProviderReady: !loading && providerListQuery.isSuccess && Boolean(model) &&
             !isModelUnavailable(model) && isManagedModelReady(model),
           taskSubmissionDisabled: Boolean(
@@ -1690,6 +1642,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     setSelectedAgent,
     selectedSessionId,
     selectedModelUnavailable,
+    replacement,
+    splitReplacement,
     selectedManagedModelPreparing,
     cloudProviderSyncReady,
     selectedWorkspace,

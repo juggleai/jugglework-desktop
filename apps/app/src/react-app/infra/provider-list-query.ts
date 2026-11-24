@@ -151,6 +151,7 @@ export function resolveConnectedProviderModel(
   value: ProviderListResponse | null | undefined,
   preferred: ModelRef | null | undefined,
   options?: {
+    preferSameModelID?: boolean;
     isAllowed?: (input: { provider: ProviderListItem; model: ModelRef }) => boolean;
   },
 ): ModelRef | null {
@@ -164,6 +165,13 @@ export function resolveConnectedProviderModel(
       isAllowed({ provider, model: preferred })
     ) {
       return preferred;
+    }
+  }
+  if (preferred && options?.preferSameModelID) {
+    for (const provider of providers) {
+      const model = { providerID: provider.id, modelID: preferred.modelID };
+      const entry = provider.models?.[model.modelID];
+      if (entry && isChatSelectableProviderModel(entry) && isAllowed({ provider, model })) return model;
     }
   }
   for (const provider of providers) {

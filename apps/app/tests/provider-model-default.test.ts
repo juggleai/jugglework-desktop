@@ -77,6 +77,21 @@ describe("connected provider model defaults", () => {
     });
   });
 
+  test("repairs an old organization model using the allowed providers in the new catalog", () => {
+    const catalog = {
+      all: [provider("new", ["default", "same"]), provider("other", ["same"])],
+      connected: ["new", "other"],
+      default: {},
+    };
+    const previous = { providerID: "retired", modelID: "same" };
+    expect(resolveConnectedProviderModel(catalog, previous, { preferSameModelID: true }))
+      .toEqual({ providerID: "new", modelID: "same" });
+    expect(resolveConnectedProviderModel(catalog, previous, {
+      preferSameModelID: true, isAllowed: ({ model }) => model.modelID !== "same",
+    })).toEqual({ providerID: "new", modelID: "default" });
+    expect(resolveConnectedProviderModel(catalog, previous, { preferSameModelID: true, isAllowed: () => false })).toBeNull();
+  });
+
   test("falls back to the first model of the first usable connected provider", () => {
     const value = {
       all: [provider("empty", []), provider("first", ["one", "two"]), provider("later", ["three"])],

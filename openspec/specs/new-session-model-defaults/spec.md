@@ -17,7 +17,7 @@ The desktop SHALL remember the model and reasoning strength most recently select
 - **THEN** the current session receives an explicit override while future sessions inherit the same values from the remembered defaults
 
 ### Requirement: First available model fallback
-When no remembered model exists or the remembered model is unavailable in the current workspace, the desktop SHALL select the first valid model of the first connected provider with models, preserving the provider and model order returned by OpenCode.
+Except when recovering a managed selection after an organization switch, when no remembered model exists or the remembered model is unavailable in the current workspace, the desktop SHALL select the first valid model of the first connected provider with models, preserving the provider and model order returned by OpenCode.
 
 #### Scenario: No previous model selection
 - **WHEN** a new session is created and no model has previously been selected
@@ -26,6 +26,11 @@ When no remembered model exists or the remembered model is unavailable in the cu
 #### Scenario: Previous model is unavailable
 - **WHEN** a remembered model is no longer available in the workspace provider catalog
 - **THEN** the desktop replaces it with the first available provider/model fallback without opening the model chooser
+
+#### Scenario: Recover a managed selection after switching organizations
+- **WHEN** the previous managed selection is unavailable after the new organization catalog is ready
+- **THEN** the session prefers the same model ID on a connected, permitted managed provider, then the first selectable managed chat model in catalog order
+- **AND** an automatic replacement does not open the model chooser
 
 #### Scenario: No model provider is available
 - **WHEN** no connected provider exposes a valid model
