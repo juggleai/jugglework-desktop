@@ -17,7 +17,7 @@ function fixture(options = {}) {
     {id:'window:3:0',name:'Document B',thumbnail:img(''),appIcon:img('app')},
   ];
   let capture = async () => sources;
-  const picker = createMeetingScreenPicker({desktopCapturer:{getSources: () => capture()},getMainWindow:()=>main,getMeetingWindow:()=>meeting,...options});
+  const picker = createMeetingScreenPicker({platform:'darwin',desktopCapturer:{getSources: () => capture()},getMainWindow:()=>main,getMeetingWindow:()=>meeting,...options});
   const event = {sender:main.webContents,senderFrame:main.webContents.mainFrame};
   const start = () => { picker.handle({frame:meeting.webContents.mainFrame,userGesture:true},answer=>answers.push(answer)); return notices.at(-1).requestId; };
   return {picker,main,meeting,event,notices,answers,start,setSources:v=>{sources=v;},setCapture:v=>{capture=v;}};
@@ -143,4 +143,64 @@ test('a cancelled identity lookup cannot overwrite a newer capture', async () =>
   assert.equal(await oldChoice, false);
   assert.equal(f.picker.readSharedWindow(f.event).captureId, newId);
   assert.deepEqual(f.answers.map(answer => answer?.video.id ?? null), [null, 'window:3:0']);
+});
+
+test('Windows source handles reach authentication and the capture target without numeric conversion', async () => {
+  const hwnd = '9007199254740993';
+  const seen = [];
+  const f = fixture({ platform: 'win32', resolveWindowsIdentity: async value => {
+    seen.push(value);
+    return { pid: 812, processStartedAt: '134000000000000001' };
+  } });
+  f.setSources([{ id: `window:${hwnd}:0`, name: 'Synthetic', thumbnail: { isEmpty: () => true } }]);
+  const id = f.start();
+  await f.picker.list(f.event, id);
+  await f.picker.choose(f.event, id, `window:${hwnd}:0`);
+  assert.deepEqual(seen, [hwnd]);
+  assert.deepEqual(f.picker.readSharedWindow(f.event), {
+    kind: 'window', platform: 'win32', captureId: id, sourceId: `window:${hwnd}:0`,
+    windowId: hwnd, pid: 812, processStartedAt: '134000000000000001',
+  });
+  assert.equal(f.answers[0].video.id, `window:${hwnd}:0`);
+});
+
+test('Windows refuses unscoped identities without breaking ordinary window sharing', async () => {
+  for (const identity of [{ pid: 812 }, { pid: 812, processStartedAt: '' }, { pid: 0, processStartedAt: '123' }, null]) {
+    const f = fixture({ platform: 'win32', resolveWindowsIdentity: async () => identity,
+      resolveWindowIdentity: async () => { throw new Error('must not use the macOS resolver'); } });
+    const id = f.start();
+    await f.picker.list(f.event, id);
+    assert.equal(await f.picker.choose(f.event, id, 'window:2:0'), true);
+    assert.equal(f.picker.readSharedWindow(f.event), null);
+    assert.equal(f.answers[0].video.id, 'window:2:0');
+  }
+});
+
+test('Windows rejects a handle outside uint64 without calling the native identity resolver', async () => {
+  let calls = 0;
+  const f = fixture({ platform: 'win32', resolveWindowsIdentity: async () => { calls++; return null; } });
+  const sourceId = 'window:18446744073709551616:0';
+  f.setSources([{ id: sourceId, name: 'Synthetic', thumbnail: { isEmpty: () => true } }]);
+  const id = f.start();
+  await f.picker.list(f.event, id);
+  await f.picker.choose(f.event, id, sourceId);
+  assert.equal(calls, 0);
+  assert.equal(f.picker.readSharedWindow(f.event), null);
+  assert.equal(f.answers[0].video.id, sourceId);
+});
+
+test('a cancelled Windows identity lookup cannot publish a stale target', async () => {
+  let release = (_value) => {};
+  let started = () => {};
+  const waiting = new Promise(resolve => { started = () => resolve(undefined); });
+  const f = fixture({ platform: 'win32', resolveWindowsIdentity: () => new Promise(resolve => { release = resolve; started(); }) });
+  const id = f.start();
+  await f.picker.list(f.event, id);
+  const choosing = f.picker.choose(f.event, id, 'window:2:0');
+  await waiting;
+  await f.picker.choose(f.event, id, null);
+  release({ pid: 812, processStartedAt: '123' });
+  assert.equal(await choosing, false);
+  assert.equal(f.picker.readSharedWindow(f.event), null);
+  assert.deepEqual(f.answers, [null]);
 });

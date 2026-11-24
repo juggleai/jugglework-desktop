@@ -2,15 +2,18 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
 /** @typedef {{ x: number, y: number, width: number, height: number }} Bounds */
-/** @typedef {{ status: 'visible', pid: number, bounds: Bounds } | { status: 'hidden' | 'minimized' | 'closed' | 'needs-accessibility' | 'unavailable' }} Sample */
+/** @typedef {Pick<Bounds, 'width' | 'height'>} WindowSize */
+/** @typedef {{ status: 'visible', pid: number, bounds: Bounds, actualSize?: WindowSize } | { status: 'hidden' | 'minimized' | 'closed' | 'needs-accessibility' | 'unavailable' }} Sample */
 /** @typedef {'order-lost' | 'order-interleaved' | 'edge-overlap'} OrderEvent */
 
-/** @param {Bounds | null} initial @param {Sample} sample */
-export function classifyWindowSample(initial, sample) {
+/** @param {WindowSize | null} initial @param {Sample} sample @param {boolean} [requireActualSize] */
+export function classifyWindowSample(initial, sample, requireActualSize = false) {
   if (sample.status === 'hidden' || sample.status === 'minimized') return 'hide';
   if (sample.status === 'closed') return 'close';
   if (sample.status !== 'visible' || !validBounds(sample.bounds)) return 'unavailable';
-  return initial && (initial.width !== sample.bounds.width || initial.height !== sample.bounds.height) ? 'resize' : 'follow';
+  const size = requireActualSize ? sample.actualSize : sample.bounds;
+  if (!size || !Number.isFinite(size.width) || !Number.isFinite(size.height) || size.width <= 0 || size.height <= 0) return 'unavailable';
+  return initial && (initial.width !== size.width || initial.height !== size.height) ? 'resize' : 'follow';
 }
 
 /** @param {Bounds | undefined} bounds */
@@ -49,8 +52,7 @@ export function createMeetingWindowTracker({ helperPath, spawnHelper = spawn }) 
   function watchWindow({ windowId, pid }, onSample, onOrderEvent) {
     let child;
     let stopped = false;
-    /** @type {Set<number> | null} */
-    let registeredEdges = null;
+    let registered = false;
     try { child = spawnHelper(helperPath, ['watch', String(windowId), String(pid)], { stdio: ['pipe', 'pipe', 'ignore'] }); }
     catch {
       queueMicrotask(() => { if (!stopped) onSample({ status: 'unavailable' }); });
@@ -78,11 +80,9 @@ export function createMeetingWindowTracker({ helperPath, spawnHelper = spawn }) 
       try { sample = JSON.parse(line); }
       catch { terminal('unavailable'); return; }
       if (sample?.event === 'order-lost' || sample?.event === 'order-interleaved') {
-        if (registeredEdges) onOrderEvent?.(sample.event);
+        if (registered) onOrderEvent?.(sample.event);
       } else if (sample?.event === 'edge-overlap') {
-        const edgeIds = sample.edgeIds;
-        if (registeredEdges && Array.isArray(edgeIds) && edgeIds.length <= 4 && new Set(edgeIds).size === edgeIds.length &&
-            edgeIds.every(id => registeredEdges?.has(id))) onOrderEvent?.('edge-overlap', edgeIds);
+        return; // Compatibility with a helper still emitting the removed input-layer event.
       } else if (sample?.status === 'visible' && sample.pid === pid && validBounds(sample.bounds)) {
         clearTimeout(timer);
         onSample(sample);
@@ -97,9 +97,9 @@ export function createMeetingWindowTracker({ helperPath, spawnHelper = spawn }) 
     return Object.assign(stop, {
       /** @param {number[]} ids */
       setOverlayWindows(ids) {
-        if (stopped || registeredEdges || !child.stdin || ids.length !== 5 || new Set(ids).size !== ids.length ||
+        if (stopped || registered || !child.stdin || ids.length !== 1 ||
             ids.some(id => !Number.isInteger(id) || id <= 0 || id > 0xffffffff || id === windowId)) return;
-        registeredEdges = new Set(ids.slice(1));
+        registered = true;
         child.stdin.write(`${JSON.stringify({ overlayWindowIds: ids })}\n`);
       },
     });

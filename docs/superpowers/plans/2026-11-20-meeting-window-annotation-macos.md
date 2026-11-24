@@ -1,5 +1,7 @@
 # macOS 窗口共享标注实施计划
 
+> 本文保留历史方案。边框拦截已不再是产品要求；macOS 与 Windows 的统一规则见 `openspec/changes/add-meeting-window-annotation/design.md` 第 5 节。实现时移除现有边框窗，保留画布层级、遮挡和同源尺寸退出。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 主讲人在被共享的真实 macOS 窗口上画；标注期间不能用鼠标拉伸边框，窗口实际宽高改变时自动退出标注，但继续共享同一个窗口。

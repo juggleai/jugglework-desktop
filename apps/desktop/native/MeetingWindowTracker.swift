@@ -84,9 +84,7 @@ CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(observer), 
 var lastFrame: CGRect?
 var lastStatus = ""
 var invalidSince: TimeInterval?
-var overlayWindowIDs = Set<CGWindowID>()
 var canvasWindowID: CGWindowID = 0
-var reportedEdgeOverlaps = Set<CGWindowID>()
 var orderRepairAttempts = 0
 var nextOrderRepair: TimeInterval = 0
 var attemptedInterlopers = Set<CGWindowID>()
@@ -96,14 +94,10 @@ let overlayOwnerPID = getppid()
 DispatchQueue.global().async {
     if let line = readLine(), line.utf8.count <= 256,
        let command = try? JSONDecoder().decode(OverlayRegistration.self, from: Data(line.utf8)),
-       command.overlayWindowIds.count == 5 {
-        let ids = Set(command.overlayWindowIds)
-        if ids.count == 5 && !ids.contains(0) && !ids.contains(windowID) {
-            DispatchQueue.main.async {
-                // Registration order is canvas, then the four input edges.
-                canvasWindowID = command.overlayWindowIds[0]
-                overlayWindowIDs = ids
-            }
+       command.overlayWindowIds.count == 1, let id = command.overlayWindowIds.first,
+       id != 0, id != windowID {
+        DispatchQueue.main.async {
+            canvasWindowID = id
         }
     }
 }
@@ -114,13 +108,11 @@ struct OverlayRegistration: Decodable {
 @Sendable func sampleOrder(_ rows: [[String: Any]], targetInfo: [String: Any]) {
     let targetLevel = targetInfo[kCGWindowLayer as String] as? NSNumber
     var seenTarget = false
-    var seenLayers = 0
-    var overlayBelowTarget = false
+    var seenCanvas = false
+    var canvasBelowTarget = false
     var interlopers = Set<CGWindowID>()
-    var compatibleFrontLayers: [(id: CGWindowID, bounds: CGRect)] = []
-    var visibleEdges = Set<CGWindowID>()
-    var overlappedEdges = Set<CGWindowID>()
-    // Trust actual order for registered layers at any level. Other rows can
+    var compatibleCanvasBounds: CGRect?
+    // Trust actual order for the registered canvas at any level. Other rows can
     // include target-owned surfaces; CG order alone cannot establish that
     // moveAbove can put them above the annotation stack.
     for row in rows {
@@ -128,34 +120,24 @@ struct OverlayRegistration: Decodable {
         let compatible = targetLevel != nil && (row[kCGWindowLayer as String] as? NSNumber) == targetLevel
         if id == windowID {
             seenTarget = true
-        } else if overlayWindowIDs.contains(id), ownerPID(row) == overlayOwnerPID {
-            seenLayers += 1
-            if seenTarget { overlayBelowTarget = true; break }
-            if id != canvasWindowID, frame(row) != nil { visibleEdges.insert(id) }
-            if compatible, let bounds = frame(row) { compatibleFrontLayers.append((id, bounds)) }
-        } else if !seenTarget && compatible && !compatibleFrontLayers.isEmpty,
+        } else if id == canvasWindowID, ownerPID(row) == overlayOwnerPID {
+            seenCanvas = true
+            if seenTarget { canvasBelowTarget = true; break }
+            if compatible { compatibleCanvasBounds = frame(row) }
+        } else if !seenTarget && compatible,
                   ((row[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0) > 0,
-                  let bounds = frame(row) {
-            for layer in compatibleFrontLayers where !layer.bounds.intersection(bounds).isEmpty {
-                interlopers.insert(id)
-                if layer.id != canvasWindowID { overlappedEdges.insert(layer.id) }
-            }
+                  let bounds = frame(row), let canvasBounds = compatibleCanvasBounds,
+                  !canvasBounds.intersection(bounds).isEmpty {
+            interlopers.insert(id)
         }
-        if seenTarget && seenLayers == overlayWindowIDs.count { break }
+        if seenTarget && seenCanvas { break }
     }
     guard seenTarget else { return }
     let now = ProcessInfo.processInfo.systemUptime
-    if !overlayBelowTarget {
-        // A correctly ordered visible subset ends the inversion streak even
-        // with an interloper. No observable layers give no evidence either way.
-        guard seenLayers > 0 else { return }
+    if !canvasBelowTarget {
+        // No observable canvas gives no evidence either way.
+        guard seenCanvas else { return }
         orderRepairAttempts = 0
-        // Keep missing edges in their last state until observed again.
-        let edgeOverlaps = reportedEdgeOverlaps.subtracting(visibleEdges).union(overlappedEdges)
-        if edgeOverlaps != reportedEdgeOverlaps {
-            reportedEdgeOverlaps = edgeOverlaps
-            emit(["event": "edge-overlap", "edgeIds": edgeOverlaps.sorted()])
-        }
         attemptedInterlopers.formIntersection(interlopers)
         // Don't reorder the same stable interloper again, or spend any of the
         // inversion budget on it. Let an outstanding inversion repair settle.
@@ -186,7 +168,7 @@ struct OverlayRegistration: Decodable {
 }
 func sample() {
     if owner.isTerminated { emit(["status": "closed"]); exit(0) }
-    let rows = overlayWindowIDs.isEmpty ? nil :
+    let rows = canvasWindowID == 0 ? nil :
         CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
     let info = rows?.first { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == windowID } ?? windowInfo()
     if let info, ownerPID(info) != pid { emit(["status": "unavailable"]); exit(0) }

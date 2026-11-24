@@ -1,5 +1,7 @@
 # Windows 单窗口标注实施计划
 
+> 本文保留历史方案。边框拦截要求已取消，执行以最新 OpenSpec 和 [Windows 真机验证与实现交接计划](2026-11-23-meeting-window-annotation-windows-validation.md) 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans. Steps use checkbox syntax for tracking.
 
 **目标：**先在用户手头的 Windows 测试机跑通单窗口标注实验版，再扩展窗口和设备兼容范围。

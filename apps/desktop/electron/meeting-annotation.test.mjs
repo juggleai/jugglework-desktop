@@ -39,7 +39,8 @@ function fakeWindow(options) {
 
 function fixture({ displays = [{ id: 1, bounds: { x: 0, y: 0, width: 1512, height: 982 }, workArea: { x: 0, y: 25, width: 1512, height: 957 } },
   { id: 3, bounds: { x: -237, y: -1080, width: 1920, height: 1080 }, workArea: { x: -237, y: -1055, width: 1920, height: 1055 } }],
-  shared = 1, platform = "darwin", windowShare = false, initialSample = null } = {}) {
+  shared = 1, platform = "darwin", windowShare = false, initialSample = null,
+  placeWindowCanvas = /** @type {Parameters<typeof createMeetingAnnotation>[0]['placeWindowCanvas']} */ (undefined) } = {}) {
   const created = [], handlers = {}, listeners = {};
   const screen = Object.assign(new EventEmitter(), { getAllDisplays: () => displays });
   const ipcMain = { handle: (c, fn) => { handlers[c] = fn; }, on: (c, fn) => { listeners[c] = fn; } };
@@ -55,6 +56,7 @@ function fixture({ displays = [{ id: 1, bounds: { x: 0, y: 0, width: 1512, heigh
     getMainWindow: () => main, getMeetingWindow: () => meeting,
     getSharedDisplayId: () => sharedDisplay, clearShared: () => { sharedDisplay = null; }, platform,
     getSharedWindow: () => target,
+    placeWindowCanvas,
     watchWindow: (_target, sample, onOrderLost = () => {}) => {
       samples.push(sample);
       orderLost.push(onOrderLost);
@@ -120,6 +122,176 @@ const tool = (name, color = "#ef4444") => ({ type: "tool", tool: { tool: name, c
 const visibleWindow = { status: /** @type {const} */ ("visible"), pid: 812, bounds: { x: 120, y: -100, width: 640, height: 400 } };
 const windowEvents = (f) => f.main.webContents.sent.filter(([channel]) => channel === "jugglework:meeting:window-annotation").map(([, event]) => event);
 
+test("Windows cannot start window annotation without a platform canvas placement adapter", () => {
+  const f = fixture({ shared: null, platform: "win32", windowShare: true });
+  f.annotation.windowShareReady(f.fromMain, { captureId: "capture-1", ready: true });
+  assert.equal(f.annotation.state(f.fromMain).available, false);
+  assert.equal(f.created.length, 0);
+});
+
+test("Windows shares the borderless session lifecycle and withdraws ink when placement is unverified", async () => {
+  let verified = true;
+  const calls = [];
+  const f = fixture({ shared: null, platform: "win32", windowShare: true,
+    placeWindowCanvas: (canvas, target) => { calls.push([canvas, target]); return verified; } });
+  f.annotation.windowShareReady(f.fromMain, { captureId: "capture-1", ready: true });
+  assert.equal(f.annotation.state(f.fromMain).available, true);
+  const opening = f.annotation.open(f.fromMain);
+  const sample = { ...visibleWindow, actualSize: { width: 640, height: 400 } };
+  f.samples[0](sample);
+  await opening;
+  const canvas = canvasOf(f);
+  assert.deepEqual(f.created, [canvas, toolbarOf(f)]);
+  assert.equal(calls[0][0], canvas);
+  assert.equal(calls[0][1].captureId, "capture-1");
+  assert.equal(canvas.relativeMoves, 0, "do not fall back to Electron moveAbove on Windows");
+  assert.deepEqual(f.overlayIds, [], "do not use the numeric macOS overlay protocol");
+  f.samples[0]({ ...sample, bounds: { ...sample.bounds, x: 150 } });
+  assert.equal(canvas.bounds.x, 150);
+  assert.equal(f.annotation.isActive(), true);
+  verified = false;
+  f.samples[0]({ ...sample, bounds: { ...sample.bounds, x: 151 } });
+  await flushPlacement();
+  assert.ok(f.created.every(win => win.destroyed));
+  assert.equal(windowEvents(f).at(-1).reason, "tracking-lost");
+  assert.equal(f.annotation.state(f.fromMain).available, true);
+});
+
+test("Windows compares trusted actual size separately from mapped canvas bounds", async () => {
+  const f = fixture({ shared: null, platform: "win32", windowShare: true, placeWindowCanvas: () => true });
+  f.annotation.windowShareReady(f.fromMain, { captureId: "capture-1", ready: true });
+  const opening = f.annotation.open(f.fromMain);
+  const sample = { ...visibleWindow, actualSize: { width: 640, height: 400 } };
+  f.samples[0](sample);
+  await opening;
+  const mapped = { ...sample, bounds: { ...sample.bounds, width: 641 } };
+  f.samples[0](mapped);
+  assert.equal(f.annotation.isActive(), true);
+  assert.equal(canvasOf(f).bounds.width, 641);
+  f.samples[0]({ ...mapped, actualSize: { width: 641, height: 400 } });
+  assert.equal(f.annotation.isActive(), false);
+  assert.equal(windowEvents(f).at(-1).reason, "resized");
+  assert.equal(f.annotation.state(f.fromMain).available, true);
+});
+
+const flushPlacement = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+
+test("Windows keeps ink hidden and passive until async placement and visible readback both succeed", async () => {
+  const replies = [];
+  const f = fixture({ shared: null, platform: 'win32', windowShare: true,
+    placeWindowCanvas: () => new Promise(resolve => replies.push(resolve)) });
+  f.annotation.windowShareReady(f.fromMain, { captureId: 'capture-1', ready: true });
+  const opening = f.annotation.open(f.fromMain);
+  f.samples[0]({ ...visibleWindow, actualSize: { width: 640, height: 400 } });
+  await flushPlacement();
+  const canvas = canvasOf(f), toolbar = toolbarOf(f);
+  assert.equal(canvas.visible, false);
+  assert.equal(canvas.ignore[0], true);
+  assert.equal(replies.length, 1);
+  assert.deepEqual(windowEvents(f), []);
+  replies.shift()(true);
+  await flushPlacement();
+  assert.equal(canvas.visible, true);
+  assert.equal(canvas.ignore[0], true);
+  assert.equal(toolbar.visible, false);
+  assert.deepEqual(windowEvents(f), []);
+  replies.shift()(true);
+  await opening;
+  assert.equal(toolbar.visible, true);
+  assert.deepEqual(windowEvents(f).map(event => event.kind), ['opened', 'geometry']);
+  assert.equal(toolbar.top, null, 'window toolbar must not create a topmost band');
+  f.annotation.close(f.fromMain);
+});
+
+test("a late Windows placement success cannot resurrect a closed session", async () => {
+  let complete = (_value) => {};
+  const f = fixture({ shared: null, platform: 'win32', windowShare: true,
+    placeWindowCanvas: () => new Promise(resolve => { complete = resolve; }) });
+  f.annotation.windowShareReady(f.fromMain, { captureId: 'capture-1', ready: true });
+  const opening = f.annotation.open(f.fromMain);
+  f.samples[0]({ ...visibleWindow, actualSize: { width: 640, height: 400 } });
+  await flushPlacement();
+  f.annotation.close(f.fromMain);
+  complete(true);
+  await opening;
+  await flushPlacement();
+  assert.ok(f.created.every(win => win.destroyed && !win.visible));
+  assert.equal(windowEvents(f).some(event => event.kind === 'opened'), false);
+});
+
+test("unchanged Windows heartbeats do not hide and reshow the canvas", async () => {
+  let placements = 0;
+  const f = fixture({ shared: null, platform: 'win32', windowShare: true,
+    placeWindowCanvas: async (_canvas, _target, request) => { if (!request.checkOnly) placements++; return true; } });
+  f.annotation.windowShareReady(f.fromMain, { captureId: 'capture-1', ready: true });
+  const opening = f.annotation.open(f.fromMain);
+  const sample = { ...visibleWindow, actualSize: { width: 640, height: 400 } };
+  f.samples[0](sample);
+  await opening;
+  const count = placements;
+  f.samples[0](sample);
+  await flushPlacement();
+  assert.equal(placements, count);
+  assert.equal(canvasOf(f).visible, true);
+  f.annotation.close(f.fromMain);
+});
+
+test("a failed stationary Windows readback closes annotation but keeps the source", async () => {
+  const f = fixture({ shared: null, platform: 'win32', windowShare: true,
+    placeWindowCanvas: async (_canvas, _target, request) => !request.checkOnly });
+  f.annotation.windowShareReady(f.fromMain, { captureId: 'capture-1', ready: true });
+  const opening = f.annotation.open(f.fromMain);
+  const sample = { ...visibleWindow, actualSize: { width: 640, height: 400 } };
+  f.samples[0](sample);
+  await opening;
+  f.samples[0](sample);
+  await flushPlacement();
+  assert.ok(f.created.every(win => win.destroyed));
+  assert.equal(windowEvents(f).at(-1).reason, 'tracking-lost');
+  assert.equal(f.annotation.state(f.fromMain).available, true);
+});
+
+test("Windows drawing input waits for placement verification and a rejected reply withdraws the layer", async () => {
+  let fail = false, rejectPlacement = (_error) => {};
+  const f = fixture({ shared: null, platform: 'win32', windowShare: true,
+    placeWindowCanvas: () => fail ? new Promise((_resolve, reject) => { rejectPlacement = reject; }) : Promise.resolve(true) });
+  f.annotation.windowShareReady(f.fromMain, { captureId: 'capture-1', ready: true });
+  const opening = f.annotation.open(f.fromMain);
+  f.samples[0]({ ...visibleWindow, actualSize: { width: 640, height: 400 } });
+  await opening;
+  fail = true;
+  f.listeners['jugglework:annotation:command']({ sender: toolbarOf(f).webContents }, tool('pen'));
+  assert.equal(canvasOf(f).ignore[0], true);
+  assert.equal(canvasOf(f).visible, false);
+  rejectPlacement(new Error('native reply lost'));
+  await flushPlacement();
+  assert.ok(f.created.every(win => win.destroyed));
+  assert.equal(windowEvents(f).at(-1).reason, 'tracking-lost');
+});
+
+test("Windows drops an obsolete placement on move and waits for the latest geometry", async () => {
+  const replies = [];
+  const f = fixture({ shared: null, platform: 'win32', windowShare: true,
+    placeWindowCanvas: (_canvas, _target, request) => new Promise(resolve => replies.push({ resolve, request })) });
+  f.annotation.windowShareReady(f.fromMain, { captureId: 'capture-1', ready: true });
+  const opening = f.annotation.open(f.fromMain);
+  const sample = { ...visibleWindow, actualSize: { width: 640, height: 400 } };
+  f.samples[0](sample);
+  await flushPlacement();
+  f.samples[0]({ ...sample, bounds: { ...sample.bounds, x: 150 } });
+  replies.shift().resolve(true);
+  await flushPlacement();
+  assert.equal(canvasOf(f).visible, false);
+  assert.equal(replies[0].request.bounds.x, 150);
+  replies.shift().resolve(true);
+  await flushPlacement();
+  replies.shift().resolve(true);
+  await opening;
+  assert.equal(canvasOf(f).bounds.x, 150);
+  assert.equal(f.annotation.isActive(), true);
+  f.annotation.close(f.fromMain);
+});
+
 test("a target raised above the ink repairs the relative stack without changing geometry or focus", async () => {
   const f = fixture({ shared: null, windowShare: true });
   f.annotation.windowShareReady(f.fromMain, { captureId: "capture-1", ready: true });
@@ -135,9 +307,9 @@ test("a target raised above the ink repairs the relative stack without changing 
 
   f.orderLost[0]();
 
-  assert.deepEqual(moves(), [2, 2, 2, 2, 2]);
-  assert.deepEqual(layers.map(win => win.above), ["window:73:0", "window:100:0", "window:102:0", "window:103:0", "window:104:0"]);
-  assert.deepEqual(f.overlayIds, [[100, 102, 103, 104, 105]]);
+  assert.deepEqual(moves(), [2]);
+  assert.deepEqual(layers.map(win => win.above), ["window:73:0"]);
+  assert.deepEqual(f.overlayIds, [[100]]);
   assert.deepEqual(windowEvents(f), before);
   assert.ok(layers.every((win, i) => win.bounds === bounds[i] && !win.focused && win.top === null));
   assert.equal(toolbar.raised, toolbarRaises);
@@ -145,10 +317,10 @@ test("a target raised above the ink repairs the relative stack without changing 
 
   f.samples[0]({ status: "hidden" });
   f.orderLost[0]();
-  assert.deepEqual(moves(), [2, 2, 2, 2, 2], "hidden layers must not be raised");
+  assert.deepEqual(moves(), [2], "hidden layers must not be raised");
   f.annotation.close(f.fromMain);
   f.orderLost[0]();
-  assert.deepEqual(moves(), [2, 2, 2, 2, 2], "a stopped session must not be raised");
+  assert.deepEqual(moves(), [2], "a stopped session must not be raised");
   assert.equal(f.stopped(), 1);
 });
 
@@ -190,34 +362,21 @@ test("a failed best-effort reorder does not close annotation", async () => {
   assert.equal(windowEvents(f).at(-1).reason, "tracking-lost");
 });
 
-test("only overlapped edges pass input through until the helper confirms clearance", async () => {
+test("a legacy edge notification does not change canvas input or ordering", async () => {
   const f = fixture({ shared: null, windowShare: true });
   f.annotation.windowShareReady(f.fromMain, { captureId: "capture-1", ready: true });
   const opening = f.annotation.open(f.fromMain);
   f.samples[0](visibleWindow);
   await opening;
-  const [, topId, , , rightId] = f.overlayIds[0];
-  const edges = f.created.filter(win => !win.view);
-  const passthrough = () => edges.map(win => win.ignore?.[0] === true);
-  const signal = f.orderLost[0];
-
-  signal("order-interleaved"); // Interior-only companion: no edge to release.
-  assert.deepEqual(passthrough(), [false, false, false, false]);
-  signal("edge-overlap", [topId, rightId]);
-  assert.deepEqual(passthrough(), [true, false, false, true]);
+  const moves = canvasOf(f).relativeMoves;
+  f.orderLost[0]("edge-overlap", [102]);
+  assert.equal(canvasOf(f).relativeMoves, moves);
   assert.deepEqual(canvasOf(f).ignore, [true, true]);
-  f.samples[0]({ status: "hidden" });
-  f.samples[0](visibleWindow);
-  assert.deepEqual(passthrough(), [true, false, false, true]);
-  signal("edge-overlap", [rightId]);
-  assert.deepEqual(passthrough(), [false, false, false, true]);
-  signal("edge-overlap", []);
-  assert.deepEqual(passthrough(), [false, false, false, false]);
   assert.equal(f.annotation.isActive(), true);
   f.annotation.close(f.fromMain);
 });
 
-test("window annotation blocks the border in both modes and only closes annotation on resize", async () => {
+test("window annotation creates no border blockers, follows a move and closes only annotation on resize", async () => {
   const f = fixture({ shared: null, windowShare: true });
   const sample = { status: "visible", pid: 812, bounds: { x: 120, y: -100, width: 640, height: 400 } };
   assert.equal(f.annotation.state(f.fromMain).available, false);
@@ -227,17 +386,15 @@ test("window annotation blocks the border in both modes and only closes annotati
   f.samples[0](sample);
   await opening;
   const canvas = canvasOf(f), toolbar = toolbarOf(f);
-  const edges = f.created.filter(win => !win.view);
   const geometryEvents = () => f.main.webContents.sent.filter(([, event]) => event.kind === "geometry").length;
   assert.equal(geometryEvents(), 1);
-  assert.equal(edges.length, 4);
-  assert.ok(edges.every(win => win.visible && win.options.focusable === false && win.ignore?.[0] !== true));
+  assert.deepEqual(f.created, [canvas, toolbar]);
   assert.equal(canvas.ignore[0], true);
   f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, tool("pen"));
   assert.equal(canvas.ignore[0], false);
-  assert.ok(edges.every(win => win.ignore?.[0] !== true));
   f.samples[0]({ ...sample, bounds: { ...sample.bounds, x: 150 } });
   assert.equal(canvas.bounds.x, 150);
+  assert.equal(f.annotation.isActive(), true);
   assert.equal(geometryEvents(), 1, "moving on the same display must not replace the approved capture size");
   f.samples[0]({ status: "hidden" });
   assert.ok(f.created.every(win => !win.visible));
@@ -245,7 +402,7 @@ test("window annotation blocks the border in both modes and only closes annotati
   f.samples[0]({ status: "minimized" });
   assert.ok(f.main.webContents.sent.some(([, event]) => event.kind === "paused"));
   f.samples[0](sample);
-  assert.ok(edges.every(win => win.visible));
+  assert.ok(canvas.visible && toolbar.visible);
   f.samples[0]({ ...sample, bounds: { ...sample.bounds, height: 401 } });
   assert.ok(f.created.every(win => win.destroyed));
   assert.equal(f.stopped(), 1);
@@ -309,13 +466,13 @@ for (const delivery of ["asynchronous", "synchronous"]) {
   });
 }
 
-test("destroying the host window destroys all six annotation layers", async () => {
+test("destroying the host window destroys the window annotation canvas and toolbar", async () => {
   const f = fixture({ shared: null, windowShare: true });
   f.annotation.windowShareReady(f.fromMain, { captureId: "capture-1", ready: true });
   const opened = f.annotation.open(f.fromMain);
   f.samples[0](visibleWindow);
   await opened;
-  assert.equal(f.created.length, 6);
+  assert.deepEqual(f.created, [canvasOf(f), toolbarOf(f)]);
 
   assert.doesNotThrow(() => f.main.destroy());
 

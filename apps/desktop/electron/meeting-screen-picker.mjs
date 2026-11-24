@@ -3,7 +3,9 @@ import { createHash, randomUUID } from "node:crypto";
 // Own the pending Chromium request, not an independently armed source ID.
 // Confirming a thumbnail resolves this exact request; closing never captures.
 export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getMeetingWindow, getDisplays = () => [],
-  resolveWindowIdentity = async (/** @type {number} */ _windowId) => /** @type {{pid: number} | null} */ (null), timeoutMs = 120_000 }) {
+  platform = process.platform,
+  resolveWindowIdentity = async (/** @type {number} */ _windowId) => /** @type {{pid: number} | null} */ (null),
+  resolveWindowsIdentity = async (/** @type {string} */ _hwnd) => /** @type {{pid: number, processStartedAt: string} | null} */ (null), timeoutMs = 120_000 }) {
   let pending = null;
   // The renderer can read, but cannot set, the source verified by the picker.
   /** @type {{kind: 'screen', displayId: number} | import('@jugglework/types/desktop-ipc').MeetingWindowShareTarget | null} */
@@ -98,10 +100,20 @@ export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getM
         if (current.owner.isDestroyed() || current.frame !== current.owner.webContents.mainFrame) { finish(current); return false; }
         const displayId = source.id.startsWith("screen:") ? Number(source.display_id) : NaN;
         const match = /^window:([1-9]\d*):\d+$/.exec(source.id);
+        /** @type {{kind: 'screen', displayId: number} | import('@jugglework/types/desktop-ipc').MeetingWindowShareTarget | null} */
         let target = null;
         if (Number.isInteger(displayId) && getDisplays().some(d => d.id === displayId)) {
           target = { kind: /** @type {const} */ ('screen'), displayId };
-        } else if (match && Number(match[1]) <= 0xffffffff) {
+        } else if (match && platform === 'win32' && match[1].length <= 20 && BigInt(match[1]) <= 0xffffffffffffffffn) {
+          try {
+            const identity = await resolveWindowsIdentity(match[1]);
+            if (identity && Number.isInteger(identity.pid) && identity.pid > 0 && identity.pid <= 0x7fffffff &&
+                typeof identity.processStartedAt === 'string' && /^[1-9]\d{0,19}$/.test(identity.processStartedAt) &&
+                BigInt(identity.processStartedAt) <= 0xffffffffffffffffn)
+              target = { kind: 'window', platform: 'win32', captureId: current.id, sourceId: source.id,
+                windowId: match[1], pid: identity.pid, processStartedAt: identity.processStartedAt };
+          } catch { /* Authentication failure must not prevent ordinary sharing. */ }
+        } else if (match && platform === 'darwin' && Number(match[1]) <= 0xffffffff) {
           const windowId = Number(match[1]);
           try {
             const identity = await resolveWindowIdentity(windowId);

@@ -7,17 +7,6 @@
 import { randomUUID } from 'node:crypto';
 import { classifyWindowSample } from './meeting-window-tracker.mjs';
 
-/** @param {{x:number,y:number,width:number,height:number}} b */
-function edgeBounds({x,y,width,height}, inset = 9) {
-  if (width <= inset * 2 || height <= inset * 2) throw new Error('窗口太小，无法开启标注');
-  return [
-    {x:x-inset,y:y-inset,width:width+2*inset,height:2*inset},
-    {x:x-inset,y:y+height-inset,width:width+2*inset,height:2*inset},
-    {x:x-inset,y:y+inset,width:2*inset,height:height-2*inset},
-    {x:x+width-inset,y:y+inset,width:2*inset,height:height-2*inset},
-  ];
-}
-
 export const ANNOTATION_TOOLS = ["pointer", "laser", "pen", "highlighter", "ellipse", "rectangle", "arrow", "eraser"];
 export const ANNOTATION_COLORS = ["#ef4444", "#facc15", "#22c55e", "#3b82f6", "#a855f7"];
 const STROKE_SIZE = 4;
@@ -62,9 +51,11 @@ function validTool(value) {
  *   getSharedDisplayId: () => number | null, clearShared: () => void, platform?: string,
  *   getSharedWindow?: () => import('@jugglework/types/desktop-ipc').MeetingWindowShareTarget | null,
  *   watchWindow?: ReturnType<typeof import('./meeting-window-tracker.mjs').createMeetingWindowTracker>['watchWindow'],
+ *   placeWindowCanvas?: (canvas: any, target: import('@jugglework/types/desktop-ipc').MeetingWindowShareTarget,
+ *     request: {bounds: any, visible: boolean, checkOnly?: boolean}) => boolean | Promise<boolean>,
  *   getDisplayMatching?: (bounds: any) => any }} options
  */
-export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloadPath, loadPage, getMainWindow, getMeetingWindow, getSharedDisplayId, clearShared, platform = process.platform, getSharedWindow, watchWindow, getDisplayMatching }) {
+export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloadPath, loadPage, getMainWindow, getMeetingWindow, getSharedDisplayId, clearShared, platform = process.platform, getSharedWindow, watchWindow, placeWindowCanvas, getDisplayMatching }) {
   let session = null;
   let opening = null;
   let state = initialState();
@@ -85,6 +76,10 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
   function applyMode() {
     const canvas = session?.canvas;
     if (!live(canvas)) return;
+    if (session.target && platform === 'win32') {
+      void placeWindowsLayers(session);
+      return;
+    }
     if (state.mode === "pointer") {
       canvas.setIgnoreMouseEvents(true, { forward: true });
       // On macOS, Electron's blur() orders the window out and back in, which
@@ -100,17 +95,69 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
     raiseToolbar();
   }
   function orderWindowLayers(current, bestEffort = false) {
-    const {canvas, edges, target} = current;
+    const {canvas, target} = current;
     if (!target || current.hidden || !current.shown || !live(canvas)) return;
+    if (platform === 'win32') {
+      void placeWindowsLayers(current);
+      return;
+    }
     try {
       canvas.moveAbove(target.sourceId);
-      let below = canvas.getMediaSourceId();
-      for (const edge of edges) {
-        if (!live(edge)) continue;
-        edge.moveAbove(below);
-        below = edge.getMediaSourceId();
-      }
     } catch { if (!bestEffort) teardown('tracking-lost'); }
+  }
+  function suspendWindowsLayers(current) {
+    current.placementReady = false;
+    current.canvas.setIgnoreMouseEvents(true, { forward: true });
+    current.canvas.setFocusable(false);
+    current.canvas.hide();
+    current.toolbar.hide();
+  }
+  function placeWindowsLayers(current) {
+    if (session !== current || current.hidden || !current.shown) return Promise.resolve(false);
+    if (current.placementTask) return current.placementTask;
+    suspendWindowsLayers(current);
+    const task = (async () => {
+      while (session === current && !current.hidden) {
+        const revision = current.placementRevision;
+        const bounds = { ...current.bounds };
+        const active = () => session === current && !current.hidden && revision === current.placementRevision;
+        // Both native replies must refer to the same geometry. Hidden placement
+        // precedes display; visible readback precedes any drawing input.
+        let placed = await placeWindowCanvas(current.canvas, current.target, { bounds, visible: false });
+        if (!active()) continue;
+        if (placed !== true) { teardown('tracking-lost'); return false; }
+        current.canvas.showInactive();
+        placed = await placeWindowCanvas(current.canvas, current.target, { bounds, visible: true });
+        if (!active()) { if (session === current) suspendWindowsLayers(current); continue; }
+        if (placed !== true) { teardown('tracking-lost'); return false; }
+        current.placementReady = true;
+        // Do not focus/blur here: that would change the just-verified Z order.
+        current.canvas.setFocusable(state.mode !== 'pointer');
+        current.canvas.setIgnoreMouseEvents(state.mode === 'pointer', { forward: true });
+        current.toolbar.showInactive();
+        return true;
+      }
+      return false;
+    })().catch(() => {
+      if (session === current) teardown('tracking-lost');
+      return false;
+    }).finally(() => {
+      if (current.placementTask === task) current.placementTask = null;
+    });
+    current.placementTask = task;
+    return task;
+  }
+  function verifyWindowsLayers(current) {
+    if (current.verificationTask || current.placementTask || !current.placementReady || current.hidden) return;
+    const revision = current.placementRevision;
+    const task = Promise.resolve().then(() => placeWindowCanvas(current.canvas, current.target,
+      { bounds: { ...current.bounds }, visible: true, checkOnly: true })).then(verified => {
+      if (session === current && revision === current.placementRevision && verified !== true) teardown('tracking-lost');
+    }).catch(() => { if (session === current && revision === current.placementRevision) teardown('tracking-lost'); }).finally(() => {
+      if (current.verificationTask === task) current.verificationTask = null;
+    });
+    // Readback does not reorder or briefly hide a stationary canvas.
+    current.verificationTask = task;
   }
   // Focusing the canvas reorders top-most windows on Windows, where the
   // relative level is ignored; keep the toolbar above it.
@@ -147,10 +194,10 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
     if (current?.shown || reason === 'target-closed') windowEvent(current ?? pending, 'closed', { reason });
     if (!current) return;
     current.detach();
-    for (const win of [current.toolbar, current.canvas, ...(current.edges ?? [])]) if (live(win)) win.destroy();
+    for (const win of [current.toolbar, current.canvas]) if (live(win)) win.destroy();
   }
 
-  async function create(displayId, ticket = null, bounds = null) {
+  async function create(displayId, ticket = null, bounds = null, initialSize = bounds) {
     const windowTarget = ticket?.target ?? null;
     const target = windowTarget ? getDisplayMatching?.(bounds) : display(displayId);
     if (!target) throw new Error("被共享的屏幕已断开");
@@ -159,7 +206,6 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
       minimizable: false, maximizable: false, fullscreenable: false,
       webPreferences: { preload: preloadPath, partition: "meeting-annotation", sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
     };
-    const cells = windowTarget ? edgeBounds(bounds) : [];
     const canvas = new BrowserWindow({ ...common, ...(bounds ?? target.bounds), transparent: true, backgroundColor: "#00000000", enableLargerThanScreen: true, focusable: true });
     // Windows ignores the relative top-most level, so a focused canvas would
     // cover the toolbar. An owned window always stays above its owner there.
@@ -169,7 +215,7 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
     // The canvas must stay capturable; only the toolbar is excluded.
     toolbar.setContentProtection(true);
     if (!windowTarget) canvas.setAlwaysOnTop(true, "screen-saver");
-    toolbar.setAlwaysOnTop(true, "screen-saver", 1);
+    if (!windowTarget || platform !== 'win32') toolbar.setAlwaysOnTop(true, "screen-saver", 1);
     for (const win of [canvas, toolbar]) {
       if (!windowTarget || win === toolbar) win.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
       harden(win);
@@ -203,27 +249,20 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
         mainContents.removeListener("render-process-gone", close);
       }
     };
-    const edges = [];
-    const current = { canvas, toolbar, displayId: target.id, target: windowTarget, bounds, initialBounds: bounds, edges, edgeIds: /** @type {number[]} */ ([]), annotationId: ticket?.annotationId, registerLayers: ticket?.registerLayers, seq: 0, geometryKey: '', hidden: false, minimized: false, shown: false, detach };
+    const current = { canvas, toolbar, displayId: target.id, target: windowTarget, bounds, initialSize, annotationId: ticket?.annotationId, registerLayers: ticket?.registerLayers, seq: 0, geometryKey: '', hidden: false, minimized: false, shown: false, announced: false,
+      placementReady: false, placementRevision: 0, placementTask: /** @type {Promise<boolean> | null} */ (null),
+      verificationTask: /** @type {Promise<void> | null} */ (null), detach };
     session = current;
-    for (const rect of cells) {
-      const edge = new BrowserWindow({ ...common, ...rect, transparent: true, enableLargerThanScreen: true, focusable: false,
-        webPreferences: { partition: 'meeting-annotation', sandbox: true, contextIsolation: true, nodeIntegration: false } });
-      edges.push(edge);
-      harden(edge);
-      edge.on('closed', close);
-      edge.webContents.on('render-process-gone', close);
-    }
     // Every annotation session starts on the mouse tool with an empty canvas.
     state = initialState();
-    await Promise.all([loadPage(canvas, "canvas"), loadPage(toolbar, "toolbar"), ...edges.map(edge => edge.loadURL(
-      'data:text/html,<style>html,body{margin:0;width:100%;height:100%;cursor:default;background:rgba(0,0,0,0.01)}</style>'))]);
+    await Promise.all([loadPage(canvas, "canvas"), loadPage(toolbar, "toolbar")]);
     // Closed while loading: never reveal stale windows.
     if (session !== current || !live(canvas) || !live(toolbar)) { if (session === current) teardown(); return; }
     current.shown = true;
-    if (!current.hidden) showLayers(current);
+    if (!current.hidden) await showLayers(current);
     if (session !== current) return;
     if (windowTarget) {
+      current.announced = true;
       windowEvent(current, 'opened');
       if (current.minimized) windowEvent(current, 'paused');
       else reportSize(current);
@@ -232,19 +271,19 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
   }
 
   function showLayers(current) {
+    if (current.target && platform === 'win32') return placeWindowsLayers(current);
     current.canvas.setIgnoreMouseEvents(state.mode === 'pointer', { forward: true });
-    for (const win of [current.canvas, ...current.edges, current.toolbar]) win.showInactive();
+    for (const win of [current.canvas, current.toolbar]) win.showInactive();
     applyMode();
-    if (session === current && current.registerLayers) {
-      const ids = [current.canvas, ...current.edges].map(win => Number(/^window:(\d+):/.exec(win.getMediaSourceId())?.[1]));
-      current.edgeIds = ids.slice(1);
-      current.registerLayers(ids);
+    if (platform === 'darwin' && session === current && current.registerLayers) {
+      current.registerLayers([Number(/^window:(\d+):/.exec(current.canvas.getMediaSourceId())?.[1])]);
       current.registerLayers = null;
     }
   }
 
   function reportSize(current) {
-    if (!current.shown || current.hidden || !current.bounds) return;
+    if (!current.shown || current.hidden || !current.bounds ||
+        (platform === 'win32' && current.target && (!current.placementReady || !current.announced))) return;
     const factor = getDisplayMatching?.(current.bounds)?.scaleFactor;
     if (!(factor > 0)) return;
     const width = Math.round(current.bounds.width * factor), height = Math.round(current.bounds.height * factor);
@@ -255,7 +294,8 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
   }
 
   function getReadyWindow() {
-    const target = platform === 'darwin' && watchWindow && getSharedWindow?.();
+    const canPlaceCanvas = platform === 'darwin' || (platform === 'win32' && typeof placeWindowCanvas === 'function');
+    const target = canPlaceCanvas && watchWindow && getSharedWindow?.();
     return target && target.captureId === readyCaptureId ? target : null;
   }
 
@@ -291,7 +331,8 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
         if (!live(meeting) || !live(main) || getReadyWindow()?.captureId !== target.captureId) { cancel(); return; }
         try {
           const current = session;
-          const change = classifyWindowSample(current?.initialBounds ?? null, sample);
+          const nativeSizeRequired = platform === 'win32';
+          const change = classifyWindowSample(current?.initialSize ?? null, sample, nativeSizeRequired);
           if (change === 'resize' || change === 'close' || change === 'unavailable') {
             if (!current && change === 'unavailable') reject(sample.status === 'needs-accessibility'
               ? new Error('请在 macOS「系统设置 → 隐私与安全性 → 辅助功能」中允许窗口跟踪后重试。')
@@ -301,24 +342,38 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
           }
           if (!current) {
             if (sample.status !== 'visible') { reject(new Error('请恢复共享窗口后再开启标注。')); teardown(); return; }
-            create(null, ticket, sample.bounds).then(resolve, reject);
+            create(null, ticket, sample.bounds, nativeSizeRequired ? sample.actualSize : sample.bounds).then(resolve, reject);
             return;
           }
           const wasHidden = current.hidden;
           const wasMinimized = current.minimized;
           current.hidden = change === 'hide';
           if (current.hidden) {
+            current.placementRevision++;
             // Hidden samples can be part of a Dock transition, not a restore.
             if (sample.status === 'minimized') current.minimized = true;
-            for (const win of [current.canvas, current.toolbar, ...current.edges]) if (live(win)) win.hide();
+            for (const win of [current.canvas, current.toolbar]) if (live(win)) win.hide();
             if (current.shown && !wasMinimized && current.minimized) windowEvent(current, 'paused');
           } else if (sample.status === 'visible') {
             current.minimized = false;
+            const geometryChanged = wasHidden || ['x', 'y', 'width', 'height'].some(key => current.bounds[key] !== sample.bounds[key]);
+            if (geometryChanged) {
+              current.placementRevision++;
+              if (platform === 'win32') suspendWindowsLayers(current);
+            }
             current.bounds = sample.bounds;
             current.displayId = getDisplayMatching?.(sample.bounds)?.id ?? current.displayId;
             current.canvas.setBounds(sample.bounds);
-            edgeBounds(sample.bounds).forEach((b, i) => current.edges[i]?.setBounds(b));
             if (current.shown) {
+              if (platform === 'win32') {
+                if (!geometryChanged) { verifyWindowsLayers(current); return; }
+                void placeWindowsLayers(current).then(verified => {
+                  if (!verified || session !== current || !current.announced || current.hidden) return;
+                  if (wasMinimized) windowEvent(current, 'resumed');
+                  reportSize(current);
+                });
+                return;
+              }
               if (wasHidden) showLayers(current);
               else raiseToolbar();
               if (session === current) {
@@ -328,15 +383,10 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
             }
           }
         } catch (error) { reject(error); if (pendingWindow === ticket) teardown('tracking-lost'); }
-      }, (event, edgeIds) => {
+      }, event => {
         const current = session;
         if (pendingWindow !== ticket || !current || current.annotationId !== ticket.annotationId) return;
-        if (event === 'edge-overlap') {
-          if (!edgeIds) return;
-          current.edges.forEach((edge, i) => {
-            if (live(edge)) edge.setIgnoreMouseEvents(edgeIds.includes(current.edgeIds[i]));
-          });
-        } else orderWindowLayers(current, event === 'order-interleaved');
+        if (event !== 'edge-overlap') orderWindowLayers(current, event === 'order-interleaved');
       });
       // A synchronous terminal sample can cancel before watchWindow returns stop.
       if (pendingWindow !== ticket) stop?.();
@@ -390,6 +440,7 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
   ipcMain.on('jugglework:annotation:scene', (event, scene) => {
     const current = session;
     if (!current?.target || !current.shown || event.sender !== current.canvas.webContents || event.senderFrame !== current.canvas.webContents.mainFrame) return;
+    if (platform === 'win32' && (!current.placementReady || !current.announced)) return;
     if (!validScene(scene)) { teardown('tracking-lost'); return; }
     windowEvent(current, 'scene', { scene });
   });

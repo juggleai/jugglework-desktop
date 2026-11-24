@@ -628,9 +628,12 @@ export type MeetingWindowShareTarget = {
   kind: "window";
   captureId: string;
   sourceId: string;
-  windowId: number;
   pid: number;
-};
+} & ({ platform?: "darwin"; windowId: number } | {
+  platform: "win32";
+  windowId: string;
+  processStartedAt: string;
+});
 
 export type MeetingScreenSource = {
   id: string;

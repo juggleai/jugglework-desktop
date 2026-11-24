@@ -47,14 +47,16 @@ test('watch registers only the scoped layers and delivers order loss separately 
   const lost = '{"event":"order-lost"}\n';
   child.stdout.write(lost);
   assert.deepEqual(orders, [], 'no overlay is registered yet');
-  stop.setOverlayWindows?.([7, 8, 9, 10, 11]);
+  for (const invalid of [[], [2], [0], [7, 8, 9, 10, 11]]) stop.setOverlayWindows(invalid);
+  assert.deepEqual(commands, []);
+  stop.setOverlayWindows([7]);
   child.stdout.write(lost);
   stop();
-  stop.setOverlayWindows?.([12, 13, 14, 15, 16]);
+  stop.setOverlayWindows([12]);
   child.stdout.write(lost);
   child.emit('close', 0);
   assert.deepEqual(orders, ['lost']);
-  assert.deepEqual(commands, [{ overlayWindowIds: [7, 8, 9, 10, 11] }]);
+  assert.deepEqual(commands, [{ overlayWindowIds: [7] }]);
   assert.deepEqual(samples, [visible()]);
 });
 
@@ -73,7 +75,7 @@ test('an ambiguous interleaving is delivered as a best-effort repair, not tracki
   child.stdout.write(`${JSON.stringify(visible())}\n`);
   child.stdout.write('{"event":"order-interleaved"}\n');
   assert.deepEqual(orders, [], 'unregistered annotation cannot be reordered');
-  stop.setOverlayWindows([7, 8, 9, 10, 11]);
+  stop.setOverlayWindows([7]);
   child.stdout.write('{"event":"order-interleaved"}\n');
   child.stdout.write('{"event":"order-lost"}\n');
   assert.deepEqual(orders, ['order-interleaved', 'order-lost']);
@@ -81,20 +83,19 @@ test('an ambiguous interleaving is delivered as a best-effort repair, not tracki
   stop();
 });
 
-test('edge overlap updates accept only registered edge IDs and can clear the overlap', () => {
+test('legacy edge overlap updates neither reorder nor stop a canvas-only session', () => {
   const { tracker, child } = fixture();
   const samples = [], orders = [];
   const stop = tracker.watchWindow({ windowId: 2, pid: 812 }, s => samples.push(s), (...event) => orders.push(event));
   const overlap = ids => child.stdout.write(`${JSON.stringify({ event: 'edge-overlap', edgeIds: ids })}\n`);
   child.stdout.write(`${JSON.stringify(visible())}\n`);
   overlap([8]);
-  stop.setOverlayWindows([7, 8, 9, 10, 11]);
-  for (const ids of [[7], [99], [8, 8], null]) overlap(ids);
-  overlap([8, 11]);
-  overlap([]);
+  stop.setOverlayWindows([7]);
+  overlap([7]);
+  child.stdout.write('{"event":"order-lost"}\n');
   stop();
   assert.deepEqual(samples, [visible()]);
-  assert.deepEqual(orders, [['edge-overlap', [8, 11]], ['edge-overlap', []]]);
+  assert.deepEqual(orders, [['order-lost']]);
 });
 
 test('inspect waits for successful completion and does not trust an invalid PID', async () => {
