@@ -7,6 +7,7 @@ import { MemoryRouter } from "react-router-dom";
 import { DenApiError, type DenClient, type DenProductTask, type DenProductTaskActivityItem, type DenProductTaskList, type DenProductTaskListResult, type DenProductTaskResult } from "../src/app/lib/den";
 import { Button } from "../src/components/ui/button";
 import { taskSectionStorageKey } from "../src/react-app/domains/tasks/task-page-state";
+import { productTaskKeys } from "../src/react-app/domains/tasks/task-queries";
 import { taskWorkbenchStorageKey } from "../src/react-app/domains/tasks/task-view-state";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -1555,6 +1556,56 @@ test("workbench time update loads the latest task permission and sends a CAS pat
 
 const destination: DenProductTaskList = { id: "list_destination", creatorMemberId: "member_self", name: "Personal filing", description: "", marker: "P", visibility: "private", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
 const destinationResult = () => ({ list: destination, members: [], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: false, canDelete: false, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false });
+
+for (const outcome of ["shared", "missing", "error"] as const) {
+  test(`refreshes the viewer's stale list directory once for multiple task references (${outcome})`, async () => {
+    const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+    const ownerScope = { ...scope, userId: "user_owner" };
+    const sharedList = { ...destination, id: "tasklist_shared_fixture", name: "Shared by owner", creatorMemberId: "member_owner", visibility: "members" as const };
+    const filedTasks = ["task_one", "task_two"].map((id) => ({ ...task(1, id, "", id), listIds: [sharedList.id] }));
+    const refresh = deferred<{ items: DenProductTaskList[]; nextCursor: string }>();
+    const loadDirectory = mock(async () => refresh.promise);
+    let shared = false;
+    const viewer = connectedClient({
+      listProductTasks: async () => ({ items: shared ? [...filedTasks, task(1, "Not filed", "", "task_unfiled")] : [], nextCursor: "" }),
+      listProductTaskLists: loadDirectory,
+    });
+    setCloudSession(viewer);
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(productTaskKeys.taskLists(ownerScope, false), { items: [sharedList], nextCursor: "" });
+    queryClient.setQueryData(productTaskKeys.taskLists(scope, false), { items: [], nextCursor: "" });
+    sessionValues.set(taskSectionStorageKey(scope), "all");
+    localValues.set(taskWorkbenchStorageKey(scope, "all"), JSON.stringify({ fields: ["list"] }));
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(taskPage(queryClient)); });
+    try {
+      await settle();
+      const label = (id: string) => renderer.root.findByProps({ "data-testid": `task-list-trigger-${id}` }).props.title;
+      const sidebar = () => renderer.root.findAllByProps({ "data-testid": `tasks-sidebar-list-${sharedList.id}` });
+      expect(sidebar()).toHaveLength(0);
+      expect(loadDirectory).not.toHaveBeenCalled();
+      shared = true; // A fresh task response arrives after the other member shares the list.
+      await act(async () => { await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(scope) }); });
+      await settle();
+      expect(loadDirectory).toHaveBeenCalledTimes(1);
+      expect(label("task_one")).toBe("Syncing task list…");
+      expect(label("task_two")).toBe("Syncing task list…");
+      expect(label("task_unfiled")).toBe("No task list");
+      await act(async () => {
+        if (outcome === "error") refresh.reject(new Error("Offline"));
+        else refresh.resolve({ items: outcome === "shared" ? [sharedList] : [], nextCursor: "" });
+      });
+      await settle();
+      const expected = outcome === "shared" ? sharedList.name : "Task list unavailable";
+      expect(label("task_one")).toBe(expected);
+      expect(label("task_two")).toBe(expected);
+      expect(sidebar()).toHaveLength(outcome === "shared" ? 1 : 0);
+      await act(async () => { await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(scope) }); });
+      await settle();
+      expect(loadDirectory).toHaveBeenCalledTimes(1);
+    } finally { await act(async () => renderer.unmount()); }
+  });
+}
 
 test.each(["new share", "new promotion", "new demotion", "historical share", "historical admin share", "standalone enable", "standalone without digest"] as const)("%s follows the task-access confirmation rules", async (mode) => {
   const active = mode.startsWith("new");

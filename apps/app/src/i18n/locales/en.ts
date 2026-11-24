@@ -1789,6 +1789,8 @@ export default {
   "tasks.field_list": "Task list",
   "tasks.unavailable": "Unavailable",
   "tasks.no_list": "No task list",
+  "tasks.list_syncing": "Syncing task list…",
+  "tasks.list_unavailable": "Task list unavailable",
   "tasks.search_or_create_list": "Search or create a list",
   "tasks.create_list_inline": "Create list",
   "tasks.list_edit_not_allowed": "You do not have permission to change this task list.",

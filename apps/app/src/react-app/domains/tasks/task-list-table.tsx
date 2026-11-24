@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { ALargeSmall, CalendarDays, Check, ChevronDown, ChevronRight, Copy, Ellipsis, Flag, Link2, ListTodo, Pencil, Plus, RotateCcw, Trash2, UserRound, UserRoundPlus, type LucideIcon } from "lucide-react";
 
 import type { DenOrganizationMember, DenProductTask, DenProductTaskCompletionPolicy, DenProductTaskList, DenProductTaskMember, DenProductTaskReminder } from "@/app/lib/den";
@@ -20,6 +20,16 @@ export type TaskPresentation = {
 };
 
 function shortId(value: string) { return value.length > 12 ? `${value.slice(0, 8)}...` : value; }
+
+export const TaskListSyncContext = createContext(false);
+
+function taskListName(id: string, lists: Map<string, DenProductTaskList>, syncing: boolean) {
+  return lists.get(id)?.name ?? t(syncing ? "tasks.list_syncing" : "tasks.list_unavailable");
+}
+
+export function taskListLabel(task: DenProductTask, lists: Map<string, DenProductTaskList>, syncing: boolean) {
+  return productTaskListIds(task).map((id) => taskListName(id, lists, syncing)).join(", ") || t("tasks.no_list");
+}
 export function taskMemberName(memberId: string, members: Map<string, DenOrganizationMember>) {
   const member = members.get(memberId);
   return member?.user.name?.trim() || member?.user.account?.trim() || member?.user.email?.trim() || shortId(memberId) || t("tasks.unavailable");
@@ -100,6 +110,7 @@ function TaskIdCell({ id, displayNumber }: { id: string; displayNumber: number |
 }
 
 export function TaskListCell(props: { task: DenProductTask; lists: Map<string, DenProductTaskList>; onChange?: (task: DenProductTask, listId: string) => Promise<boolean>; onCreate?: (task: DenProductTask, name: string) => Promise<string | null> }) {
+  const syncingLists = useContext(TaskListSyncContext);
   const [search, setSearch] = useState("");
   const selectedIds = productTaskListIds(props.task);
   const [pending, setPending] = useState(false);
@@ -116,7 +127,7 @@ export function TaskListCell(props: { task: DenProductTask; lists: Map<string, D
     setPending(true);
     try { if (await props.onCreate(props.task, query)) setSearch(""); } finally { setPending(false); }
   };
-  const label = selectedIds.map((id) => props.lists.get(id)?.name ?? shortId(id)).join(", ") || t("tasks.no_list");
+  const label = taskListLabel(props.task, props.lists, syncingLists);
   if (!props.onChange && !props.onCreate) return <span>{label}</span>;
   return <Popover onOpenChange={(open) => { if (!open) setSearch(""); }}>
     <PopoverTrigger render={<button type="button" title={label} data-testid={`task-list-trigger-${props.task.id}`} className="flex min-h-8 min-w-24 max-w-48 items-center rounded-md px-1 text-left outline-none transition-colors hover:bg-dls-hover data-popup-open:ring-1 data-popup-open:ring-blue-8" />}><span className={`truncate ${selectedIds.length ? "rounded-md bg-dls-hover px-2 py-1 text-dls-text/85" : "text-dls-secondary"}`}>{label}</span></PopoverTrigger>
@@ -170,11 +181,11 @@ export function timeGroupLabel(key: TimeGroupKey, kind: "start" | "due") {
   return t(`tasks.group_time_${key}`);
 }
 
-export function taskGroupValues(task: DenProductTask, group: TaskWorkbenchGroup, presentation: TaskPresentation, now: Date, customGroupLabel: string) {
+export function taskGroupValues(task: DenProductTask, group: TaskWorkbenchGroup, presentation: TaskPresentation, now: Date, customGroupLabel: string, syncingLists = false) {
   if (group === "custom") return [{ key: defaultCustomTaskGroupKey, label: customGroupLabel }];
   if (group === "list") {
     const ids = productTaskListIds(task);
-    return ids.length ? ids.map((key) => ({ key, label: presentation.listById.get(key)?.name ?? shortId(key) })) : [{ key: "", label: t("tasks.no_list") }];
+    return ids.length ? ids.map((key) => ({ key, label: taskListName(key, presentation.listById, syncingLists) })) : [{ key: "", label: t("tasks.no_list") }];
   }
   if (group === "creator") return [{ key: task.creatorMemberId, label: taskMemberName(task.creatorMemberId, presentation.memberById) }];
   if (group === "priority") return [{ key: task.priority, label: t(`tasks.priority_${task.priority}`) }];
@@ -205,6 +216,7 @@ export function taskGroupCreateDefaults(group: TaskWorkbenchGroup, key: string, 
 }
 
 function InlineCreateField(props: { field: TaskWorkbenchField; creatorMemberId: string | null; createdAt: string; defaults: TaskQuickCreateDefaults; members: Map<string, DenOrganizationMember>; lists: Map<string, DenProductTaskList> }) {
+  const syncingLists = useContext(TaskListSyncContext);
   if (props.field === "assignee") return <EmptyAssigneeIcon />;
   if (props.field === "creator") return props.creatorMemberId ? <MemberCell ids={[props.creatorMemberId]} members={props.members} /> : <span className="text-dls-secondary/70">{t("tasks.unavailable")}</span>;
   if (props.field === "assigner") return <span className="text-dls-secondary/70">{t("tasks.unavailable")}</span>;
@@ -215,7 +227,7 @@ function InlineCreateField(props: { field: TaskWorkbenchField; creatorMemberId: 
   if (props.field === "completed") return <span className="text-dls-secondary/70">{t("tasks.unavailable")}</span>;
   if (props.field === "id") return <span className="font-mono">-</span>;
   if (props.field === "priority") return <TaskPriorityCell priority={props.defaults.priority ?? "none"} />;
-  return props.defaults.listId ? <span className="inline-flex rounded-md bg-dls-hover px-2 py-1 text-dls-text/85">{props.lists.get(props.defaults.listId)?.name ?? shortId(props.defaults.listId)}</span> : <span className="text-dls-secondary/70">{t("tasks.no_list")}</span>;
+  return props.defaults.listId ? <span className="inline-flex rounded-md bg-dls-hover px-2 py-1 text-dls-text/85">{taskListName(props.defaults.listId, props.lists, syncingLists)}</span> : <span className="text-dls-secondary/70">{t("tasks.no_list")}</span>;
 }
 
 function TaskFieldCell(props: { field: TaskWorkbenchField; task: DenProductTask; taskMembers: DenProductTaskMember[]; members: Map<string, DenOrganizationMember>; lists: Map<string, DenProductTaskList>; onAssigneesChange?: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onCompletionPolicyChange?: (task: DenProductTask, policy: DenProductTaskCompletionPolicy) => Promise<boolean>; onTimeChange?: (task: DenProductTask, field: TaskTimeField, value: string | null) => Promise<boolean>; onLoadReminders?: (task: DenProductTask) => Promise<DenProductTaskReminder[]>; onReminderChange?: (task: DenProductTask, reminder: TaskReminderDraft) => Promise<boolean>; onListChange?: (task: DenProductTask, listId: string) => Promise<boolean>; onListCreate?: (task: DenProductTask, name: string) => Promise<string | null>; onPriorityChange?: (task: DenProductTask, priority: EditableTaskPriority) => Promise<boolean> }) {
@@ -268,6 +280,7 @@ export function TaskListTable(props: TaskPresentation & { fields: TaskWorkbenchF
   const [customGroupCreateDraft, setCustomGroupCreateDraft] = useState("");
   const visibleFields = props.fields;
   const groups = new Map<string, { label: string; tasks: DenProductTask[] }>();
+  const syncingLists = useContext(TaskListSyncContext);
   const now = new Date();
   const customGroupLabel = props.customGroupName.trim() || t("tasks.group_default");
   if (props.group === "custom") {
@@ -287,7 +300,7 @@ export function TaskListTable(props: TaskPresentation & { fields: TaskWorkbenchF
     const assignedCustomGroup = props.group === "custom" ? props.customGroupAssignments[task.id] : undefined;
     const values = assignedCustomGroup && groups.has(assignedCustomGroup)
       ? [{ key: assignedCustomGroup, label: groups.get(assignedCustomGroup)!.label }]
-      : taskGroupValues(task, props.group, props, now, customGroupLabel);
+      : taskGroupValues(task, props.group, props, now, customGroupLabel, syncingLists);
     for (const { key, label } of values) {
       if (!groups.has(key)) groups.set(key, { label, tasks: [] });
       groups.get(key)!.tasks.push(task);

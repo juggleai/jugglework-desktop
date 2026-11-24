@@ -18,6 +18,11 @@ Sidebar task-list rows SHALL display a consistent task-list icon followed by the
 
 The task-list section add action and the workbench New task list menu SHALL open the same auto-focused inline name input above the existing task lists instead of opening a task-list dialog. If the sidebar is collapsed, the workbench menu action SHALL expand it first. The input SHALL prefill and select a localized `Task list N` name so typing replaces it while immediate submission accepts the default. Enter or focus loss SHALL create a private list with an empty description and a marker derived from the first name character, then open the created list. Escape SHALL cancel without a mutation. A failed create SHALL preserve the entered name for retry.
 
+#### Scenario: Resolve a newly shared task list without leaving Tasks
+- **WHEN** loaded task data references a list missing from the current member's active list directory
+- **THEN** Desktop refreshes the directory through the normal permission-filtered query, combining missing references and attempting at most once per missing list per page visit and account scope
+- **AND** workbench and detail list labels show a syncing state while loading, the name when resolved, or an unavailable state if unresolved; they do not show raw IDs or imply the task has no list
+
 #### Scenario: Create a task list from the sidebar
 - **WHEN** the member activates the task-list section add action, enters a non-empty name, and presses Enter or moves focus away
 - **THEN** the Desktop creates a private task list inline and opens its workbench without showing the full creation dialog

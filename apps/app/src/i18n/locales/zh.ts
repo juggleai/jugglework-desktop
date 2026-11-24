@@ -1792,6 +1792,8 @@ export default {
   "tasks.field_list": "所属清单",
   "tasks.unavailable": "暂无",
   "tasks.no_list": "无任务清单",
+  "tasks.list_syncing": "正在同步清单…",
+  "tasks.list_unavailable": "清单不可用",
   "tasks.search_or_create_list": "搜索或新建清单",
   "tasks.create_list_inline": "创建清单",
   "tasks.list_edit_not_allowed": "你没有修改任务所属清单的权限。",

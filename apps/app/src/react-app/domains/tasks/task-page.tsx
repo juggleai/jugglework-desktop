@@ -29,7 +29,7 @@ import { flattenProductTaskActivityPages, flattenProductTaskMembers, flattenProd
 import { productTaskEditDraft, readTaskSection, reapplyProductTaskDraft, taskSectionStorageKey, writeTaskSection, type ProductTaskEditDraft, type TaskSection } from "./task-page-state";
 import { TaskWorkbench, taskWorkbenchServerSort, taskWorkbenchStatuses } from "./task-workbench";
 import { TaskDateTimeCell, type TaskReminderDraft, type TaskTimeField } from "./task-date-time-cell";
-import { AssigneeCell, TaskListCell, type TaskQuickCreateDefaults } from "./task-list-table";
+import { AssigneeCell, TaskListCell, TaskListSyncContext, type TaskQuickCreateDefaults } from "./task-list-table";
 import { productTaskListIds } from "@/app/lib/den";
 import { applyTaskListMembership } from "./task-queries";
 import { isTaskWorkbenchSection, readTaskWorkbenchSettings, removeTaskWorkbenchSettings, taskSectionDefaultSettings, writeTaskWorkbenchSettings, type TaskWorkbenchSection, type TaskWorkbenchSettings } from "./task-view-state";
@@ -224,7 +224,31 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   const commentMutation = useAddProductTaskComment(cloud.client, scope);
   const listMutations = useProductTaskListMutations(cloud.client, scope);
   const reminderMutations = useProductTaskReminderMutations(cloud.client, scope, selectedTaskId);
-  const tasks = flattenProductTaskPages(tasksQuery.data);
+  const tasks = React.useMemo(() => flattenProductTaskPages(tasksQuery.data), [tasksQuery.data]);
+  const detailTask = detailQuery.data?.task;
+  const missingListIds = React.useMemo(() => {
+    const activeListIds = new Set(activeListsQuery.data?.items.map((list) => list.id));
+    const missing = new Set<string>();
+    for (const task of detailTask ? [...tasks, detailTask] : tasks) {
+      for (const id of productTaskListIds(task)) {
+        if (!activeListIds.has(id)) missing.add(id);
+      }
+    }
+    return [...missing];
+  }, [activeListsQuery.data, tasks, detailTask]);
+  // One repair attempt per missing list for this account and page visit. A
+  // still-missing list may be archived or no longer visible to the member.
+  const listRepair = React.useRef({ scopeKey, attempted: new Set<string>() });
+  const attemptedListIds = listRepair.current.scopeKey === scopeKey ? listRepair.current.attempted : undefined;
+  const { isSuccess: listDirectoryLoaded, fetchStatus: listDirectoryFetchStatus, refetch: refetchListDirectory } = activeListsQuery;
+  const needsListRepair = Boolean(scope && listDirectoryLoaded && missingListIds.some((id) => !attemptedListIds?.has(id)));
+  const listNamesSyncing = listDirectoryFetchStatus === "fetching" || (listDirectoryFetchStatus === "idle" && needsListRepair);
+  React.useEffect(() => {
+    if (listRepair.current.scopeKey !== scopeKey) listRepair.current = { scopeKey, attempted: new Set() };
+    if (!needsListRepair || listDirectoryFetchStatus !== "idle" || !missingListIds.some((id) => !listRepair.current.attempted.has(id))) return;
+    for (const id of missingListIds) listRepair.current.attempted.add(id);
+    void refetchListDirectory({ cancelRefetch: false });
+  }, [scopeKey, needsListRepair, listDirectoryFetchStatus, missingListIds, refetchListDirectory]);
   const membersByTaskId = flattenProductTaskMembers(tasksQuery.data);
   const activityItems = flattenProductTaskActivityPages(activityFeedQuery.data);
   const activitySummary = activitySummaryQuery.data?.pages[0];
@@ -765,6 +789,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   else content = <TaskList tasks={tasks} selectedTaskId={selectedTaskId} onSelect={selectTask} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} onLoadMore={() => void tasksQuery.fetchNextPage()} />;
 
   return (
+    <TaskListSyncContext.Provider value={listNamesSyncing}>
     <TaskPageFrame {...props} section={section} activityUnreadCount={activityUnreadCount} pageTitle={selectedListTitle} listHeaderActions={listHeaderActions} onSectionChange={(next) => { selectSection(next); setSelectedListId(null); setSelectedListFallback(null); setListCollaborationDialog(null); setListOperationDialog(null); setReturnToCollaboratorManagement(false); selectTask(null); }} filters={{ priority, setPriority, sort, setSort }} lists={activeListsQuery.data?.items ?? []} selectedListId={selectedListId} onSelectList={(listId) => { setSection("all"); writeTaskSection(scope, "all"); setSelectedListId(listId); setSelectedListFallback(null); setListCollaborationDialog(null); setListOperationDialog(null); setReturnToCollaboratorManagement(false); setWorkbenchSettings(sectionSettings("all", listId)); selectTask(null); }} onCreateList={async (name) => { const result = await runMutation(() => listMutations.create.mutateAsync({ idempotencyKey: mutationKey("desktop-create-sidebar-list"), name, description: "", marker: name.slice(0, 1).toUpperCase() || "#", visibility: "private" })); if (!result || !scope) return false; queryClient.setQueryData(productTaskKeys.taskListDetail(scope, result.list.id), result); setSection("all"); writeTaskSection(scope, "all"); setSelectedListId(result.list.id); setSelectedListFallback({ id: result.list.id, name: result.list.name }); setWorkbenchSettings(sectionSettings("all", result.list.id)); selectTask(null); return true; }} onArchiveList={(listId, version) => void runMutation(() => listMutations.transition.mutateAsync({ listId, operation: "archive", expectedVersion: version, idempotencyKey: mutationKey("desktop-archive-list") }))}
       onCreateTask={() => setShowFullCreate(true)}>
       {conflict ? <ConflictBanner conflict={conflict} pending={updateMutation.isPending} canRetry={canSaveTaskContent(conflict.taskId)} onDismiss={dismissConflict} onReload={() => void loadLatestForConflict()} onRetry={() => void retryConflictDraft()} /> : null}
@@ -778,6 +803,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
       {listOperationDialog === "delete" && selectedListDetailQuery.data ? <TaskListDeleteDialog result={selectedListDetailQuery.data} pending={listMutations.remove.isPending} onClose={() => setListOperationDialog(null)} onDelete={async (deleteUnassignedTasks) => { const current = selectedListDetailQuery.data!; const result = await runMutation(() => listMutations.remove.mutateAsync({ listId: current.list.id, patch: { expectedVersion: current.list.version, idempotencyKey: mutationKey("desktop-delete-task-list"), deleteUnassignedTasks } })); if (!result) return false; const allSettings = readTaskWorkbenchSettings(scope, "all"); const nextAllSettings = { ...taskSectionDefaultSettings("all", currentMemberId, allSettings), listIds: allSettings.listIds.filter((listId) => listId !== current.list.id) }; writeTaskWorkbenchSettings(scope, nextAllSettings, "all"); removeTaskWorkbenchSettings(scope, "all", current.list.id); setListOperationDialog(null); setListCollaborationDialog(null); setSelectedListId(null); setSelectedListFallback(null); setSection("all"); writeTaskSection(scope, "all"); setWorkbenchSettings(nextAllSettings); selectTask(null); return true; }} /> : null}
       </TaskUploadContext.Provider>
     </TaskPageFrame>
+    </TaskListSyncContext.Provider>
   );
 }
 
