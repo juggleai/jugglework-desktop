@@ -210,6 +210,9 @@ export function CloudDocsPage(props: Props) {
     }, 60_000);
     void (async () => {
       try {
+        // TIPS: 等待本轮挂载确认，避免 StrictMode 的预检先认领唯一预热视图，随后又将它关闭。
+        await Promise.resolve();
+        if (!stillCurrent()) return;
         const client = createDenClient({
           baseUrl: settings.baseUrl,
           token: settings.authToken,
