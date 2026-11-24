@@ -43,13 +43,17 @@ test("transparent engine messages do not consume a change and missing model data
   expect(submittedTaskModelNotices([first!, unknown, next!]).size).toBe(0);
 });
 
-test("live messages and reopened history attach the same notice, including a provider-only switch", () => {
+test("live messages and reopened history attach the same notice, without exposing provider IDs", () => {
   const input = { workspaceId: "switch-test", baseUrl: "http://localhost:1234", juggleworkToken: "token" };
   const cleanup = __createWorkspaceSessionSyncForTest(input);
   const release = trackWorkspaceSessionSync(input, sessionID);
   const key = transcriptKey(input.workspaceId, sessionID);
   try {
-    const messages = [prompt("p1", astra), prompt("p2", astra, "local")];
+    const messages = [
+      prompt("p1", "deepseek-v4-flash", "lpr_first"),
+      prompt("p2", "deepseek-v4-flash", "lpr_second"),
+      prompt("p3", luna, "lpr_third"),
+    ];
     for (const { info, parts } of messages) {
       __applySessionSyncEventForTest(input, { type: "message.updated", properties: { info } });
       for (const part of parts) {
@@ -58,11 +62,19 @@ test("live messages and reopened history attach the same notice, including a pro
     }
     const live = getReactQueryClient().getQueryData<UIMessage[]>(key) ?? [];
     const notices = [...submittedTaskModelNotices(live)];
-    expect(notices).toEqual([["p2", { from: "openai/gpt-6.2-astra", to: "local/gpt-6.2-astra" }]]);
+    expect(notices).toEqual([["p3", { from: "Deepseek V4 Flash", to: "GPT-6 Luna" }]]);
     expect([...submittedTaskModelNotices(replay(messages))]).toEqual(notices);
   } finally {
     release();
     cleanup();
     getReactQueryClient().removeQueries({ queryKey: key, exact: true });
   }
+});
+
+test("model variants with the same display name use only their model IDs", () => {
+  const first = prompt("p1", "claude-opus-4-1", "lpr_first");
+  const next = prompt("p2", "claude-opus-4-5", "lpr_second");
+  expect([...submittedTaskModelNotices(replay([first, next]))]).toEqual([
+    ["p2", { from: "claude-opus-4-1", to: "claude-opus-4-5" }],
+  ]);
 });

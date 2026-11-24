@@ -1,6 +1,5 @@
 import type { UIMessage } from "ai";
-import type { ModelRef } from "@/app/types";
-import { formatModelRef, modelEquals, modelFromUserMessage, resolveModelDisplayName } from "@/app/utils";
+import { modelFromUserMessage, resolveModelDisplayName } from "@/app/utils";
 
 export type ModelSwitch = { from: string; to: string };
 
@@ -15,17 +14,17 @@ function modelName(id: string) {
 // Each accepted prompt carries its selected model in both the live feed and history.
 export function submittedTaskModelNotices(messages: UIMessage[]) {
   const notices = new Map<string, ModelSwitch>();
-  let previous: ModelRef | null = null;
+  let previous: string | undefined;
   for (const message of messages) {
     if (message.role !== "user" || !message.parts.some(part =>
       part.type === "file" || (part.type === "text" && part.text.trim().length > 0))) continue;
     const metadata = message.metadata as { opencode?: { model?: unknown } } | undefined;
-    const current = modelFromUserMessage({ role: message.role, model: metadata?.opencode?.model });
-    if (previous && current && !modelEquals(previous, current)) {
-      const from = modelName(previous.modelID);
-      const to = modelName(current.modelID);
+    const current = modelFromUserMessage({ role: message.role, model: metadata?.opencode?.model })?.modelID;
+    if (previous && current && previous !== current) {
+      const from = modelName(previous);
+      const to = modelName(current);
       notices.set(message.id, from === to
-        ? { from: formatModelRef(previous), to: formatModelRef(current) }
+        ? { from: previous, to: current }
         : { from, to });
     }
     previous = current;

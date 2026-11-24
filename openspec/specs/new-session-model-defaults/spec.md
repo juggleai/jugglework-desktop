@@ -43,12 +43,12 @@ The desktop SHALL validate a remembered reasoning strength against the selected 
 - **THEN** the new session uses the selected model's effective default reasoning behavior
 
 ### Requirement: Show model changes at task submission
-The workspace transcript SHALL show a single model change notice immediately above a submitted task when its recorded provider or model differs from that of the previous submitted task. The same notice SHALL appear when the session history is reopened.
+The workspace transcript SHALL show a single model change notice immediately above a submitted task when its recorded model ID differs from that of the previous submitted task. The notice SHALL identify the models without displaying provider IDs. The same notice SHALL appear when the session history is reopened.
 
 #### Scenario: Several selections before sending
 - **WHEN** the previous task used model A, the user selects B and then C, and the next task is submitted with C
 - **THEN** the transcript first shows the change from A to C when the new task appears
 
 #### Scenario: First task or return to the original model
-- **WHEN** the user submits the first task or submits with the same model and provider as the previous task
+- **WHEN** the user submits the first task or submits with the same model ID as the previous task, including through a different provider
 - **THEN** the task appears without a model change notice
