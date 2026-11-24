@@ -32,6 +32,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
@@ -94,7 +95,6 @@ type AppNavigationRailProps = {
   /** Opens the requested workspace creation flow when the session shell owns it. */
   onOpenCreateWorkspace?: OpenCreateWorkspace;
   onPreviewMenuChange?: (scope: TaskScope | null) => void;
-  suppressPreviewMenuTooltips?: boolean;
 };
 
 type RailButtonProps = {
@@ -106,9 +106,7 @@ type RailButtonProps = {
   testId?: string;
   badge?: number;
   badgeLabel?: string;
-  badgeVariant?: "count" | "dot";
   statusIndicator?: WorkspaceSessionIndicator;
-  showTooltip?: boolean;
   tooltipLabel?: string;
   previewScope?: TaskScope;
   onPreviewMenuChange?: (scope: TaskScope | null) => void;
@@ -271,6 +269,17 @@ function CloudDocsRailIcon({ active }: { active: boolean }) {
   );
 }
 
+function RailHint({ label, children }: { label: string; children: React.ReactElement }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={children} />
+      <TooltipContent side="right" sideOffset={8} hideArrow positionerClassName="pointer-events-none z-[80]">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function RailButton({
   label,
   active = false,
@@ -280,9 +289,7 @@ export function RailButton({
   testId,
   badge = 0,
   badgeLabel,
-  badgeVariant = "count",
   statusIndicator = null,
-  showTooltip = true,
   tooltipLabel,
   previewScope,
   onPreviewMenuChange,
@@ -292,73 +299,67 @@ export function RailButton({
   onAppPreviewChange,
 }: RailButtonProps) {
   const resolvedBadgeLabel = badgeLabel ?? t("chat.unread_count", { count: badge });
-  // TIPS: Rail 普通提示统一使用系统浮层，不遮挡 Electron 原生页面，也不触发展示切换；交互式 preview 保持原样。
   return (
-    <button
-      type="button"
-      aria-label={badge > 0 ? `${label}, ${resolvedBadgeLabel}` : label}
-      title={showTooltip ? tooltipLabel ?? label : undefined}
-      disabled={disabled}
-      onClick={onClick}
-      onMouseEnter={() => {
-        if (previewScope) {
-          onWorkspacePreviewOpen?.();
-          onWorkspacePreviewChange?.(previewScope, true);
-        }
-        onPreviewMenuChange?.(previewScope ?? null);
-        if (appPreviewTarget) onAppPreviewChange?.(appPreviewTarget, true);
-      }}
-      onMouseLeave={() => {
-        onPreviewMenuChange?.(null);
-        if (previewScope) onWorkspacePreviewChange?.(previewScope, false);
-        if (appPreviewTarget) onAppPreviewChange?.(appPreviewTarget, false);
-      }}
-      onFocus={() => {
-        if (appPreviewTarget) onAppPreviewChange?.(appPreviewTarget, true);
-      }}
-      onBlur={() => {
-        if (appPreviewTarget) onAppPreviewChange?.(appPreviewTarget, false);
-      }}
-      data-testid={testId}
-      data-app-rail-button
-      data-active={active ? "true" : undefined}
-      className={cn(
-        "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag [&>svg]:size-5 [&>svg]:stroke-[1.85]",
-        "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
-        active && "bg-dls-active [&>svg]:fill-current",
-        disabled && "cursor-default opacity-40 hover:bg-transparent hover:text-dls-secondary active:scale-100",
-      )}
-    >
-      {children}
-      {statusIndicator ? (
-        <span
-          className={cn(
-            "absolute flex items-center justify-center",
-            statusIndicator === "running" ? "-right-0.5 -top-0.5 size-4" : "right-0 top-0 size-2.5",
-          )}
-          title={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_completed_unseen")}
-          aria-label={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_completed_unseen")}
-        >
-          {statusIndicator === "running" ? (
-            <SessionCircularProgress />
-          ) : (
-            <span className="relative size-2.5 rounded-full bg-green-9" />
-          )}
-        </span>
-      ) : null}
-      {badge > 0 ? badgeVariant === "dot" ? (
-        <span
-          className="absolute right-0 top-0 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9"
-          aria-hidden="true"
-          data-rail-unread-dot
-        />
-      ) : (
-        <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-dls-sidebar bg-red-9 px-1 text-[10px] font-semibold leading-none text-white" aria-hidden="true">
-          {badge > 99 ? "99+" : badge}
-        </span>
-      ) : null}
-    </button>
+    <RailHint label={tooltipLabel ?? label}>
+      <button
+        type="button"
+        aria-label={badge > 0 ? `${label}, ${resolvedBadgeLabel}` : label}
+        disabled={disabled}
+        onClick={onClick}
+        onMouseEnter={() => {
+          if (previewScope) {
+            onWorkspacePreviewOpen?.();
+            onWorkspacePreviewChange?.(previewScope, true);
+          }
+          onPreviewMenuChange?.(previewScope ?? null);
+          if (appPreviewTarget) onAppPreviewChange?.(appPreviewTarget, true);
+        }}
+        onMouseLeave={() => {
+          onPreviewMenuChange?.(null);
+          if (previewScope) onWorkspacePreviewChange?.(previewScope, false);
+          if (appPreviewTarget) onAppPreviewChange?.(appPreviewTarget, false);
+        }}
+        onFocus={() => {
+          if (appPreviewTarget) onAppPreviewChange?.(appPreviewTarget, true);
+        }}
+        onBlur={() => {
+          if (appPreviewTarget) onAppPreviewChange?.(appPreviewTarget, false);
+        }}
+        data-testid={testId}
+        data-app-rail-button
+        data-active={active ? "true" : undefined}
+        className={cn(
+          "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag [&>svg]:size-5 [&>svg]:stroke-[1.85]",
+          "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
+          active && "bg-dls-active [&>svg]:fill-current",
+          disabled && "cursor-default opacity-40 hover:bg-transparent hover:text-dls-secondary active:scale-100",
+        )}
+      >
+        {children}
+        {statusIndicator ? (
+          <span
+            className={cn(
+              "absolute flex items-center justify-center",
+              statusIndicator === "running" ? "-right-0.5 -top-0.5 size-4" : "right-0 top-0 size-2.5",
+            )}
+            title={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_completed_unseen")}
+            aria-label={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_completed_unseen")}
+          >
+            {statusIndicator === "running" ? (
+              <SessionCircularProgress />
+            ) : (
+              <span className="relative size-2.5 rounded-full bg-green-9" />
+            )}
+          </span>
+        ) : null}
+        {badge > 0 ? (
+          <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-dls-sidebar bg-red-9 px-1 text-[10px] font-semibold leading-none text-white" aria-hidden="true">
+            {badge > 99 ? "99+" : badge}
+          </span>
+        ) : null}
+      </button>
+    </RailHint>
   );
 }
 
@@ -389,7 +390,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const tasksActive = location.pathname.startsWith("/tasks");
   const calendarActive = parseWorkspaceAppPath(location.pathname)?.view === "calendar";
   const meetingsActive = parseWorkspaceAppPath(location.pathname)?.view === "meetings";
-  const { hasActiveRuns } = useAutomationActivity();
+  const { hasActiveRuns, hasUnreadCompletion } = useAutomationActivity();
   const localWorkspaceIndicator = useLocalWorkspaceIndicator();
   const chatView = useJuggleChatStore((state) => state.view);
   const totalUnreadCount = useJuggleChatStore((state) => state.totalUnreadCount);
@@ -587,7 +588,6 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onPreviewMenuChange={props.onPreviewMenuChange}
           onWorkspacePreviewOpen={appSidebarPreview.closePreview}
           onWorkspacePreviewChange={appSidebarPreview.onWorkspaceTriggerChange}
-          showTooltip={!props.suppressPreviewMenuTooltips}
         >
           <LocalWorkspaceIcon active={Boolean(props.homeActive && taskScope === "local")} />
         </RailButton>
@@ -597,11 +597,10 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           active={automationsActive}
           onClick={() => navigate("/automations")}
           testId="app-rail-automations"
-          statusIndicator={!automationsActive && hasActiveRuns ? "running" : null}
+          statusIndicator={automationsActive ? null : hasActiveRuns ? "running" : hasUnreadCompletion ? "completed" : null}
           onPreviewMenuChange={props.onPreviewMenuChange}
           appPreviewTarget="automation"
           onAppPreviewChange={appSidebarPreview.onTriggerChange}
-          showTooltip={!appSidebarPreview.enabled}
         >
           <AutomationRailIcon active={automationsActive} />
         </RailButton> : null}
@@ -613,7 +612,6 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onPreviewMenuChange={props.onPreviewMenuChange}
           appPreviewTarget="plugins"
           onAppPreviewChange={appSidebarPreview.onTriggerChange}
-          showTooltip={!appSidebarPreview.enabled}
         >
           <PluginOrbitIcon active={Boolean(props.appsActive)} />
         </RailButton>
@@ -626,7 +624,6 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               testId="app-rail-chat"
               onPreviewMenuChange={props.onPreviewMenuChange}
               badge={totalUnreadCount}
-              badgeVariant="dot"
             >
               <ChatRailIcon active={Boolean(props.chatActive && chatView !== "contacts")} />
             </RailButton>
@@ -642,34 +639,35 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           </>
         ) : null}
         <DropdownMenu open={navigationMenuOpen} onOpenChange={setNavigationMenuOpen}>
-          <DropdownMenuTrigger
-            render={(
-              <button
-                type="button"
-                aria-label={t("navigation.more")}
-                title={t("navigation.more")}
-                data-testid="app-rail-more"
-                data-app-rail-button
-                data-active={(navigationMenuOpen || (tasksActive && !tasksPinned) || (calendarActive && !calendarPinned) || (imNavigationVisible && meetingsActive && !meetingsPinned) || (cloudDocsActive && !cloudDocsPinned) || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) ? "true" : undefined}
-                className={cn(
-                  "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag",
-                  "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
-                  "data-popup-open:bg-dls-active data-popup-open:text-dls-text",
-                  (navigationMenuOpen || (tasksActive && !tasksPinned) || (calendarActive && !calendarPinned) || (imNavigationVisible && meetingsActive && !meetingsPinned) || (cloudDocsActive && !cloudDocsPinned) || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) && "bg-dls-active text-dls-text",
-                )}
-              >
-                <Ellipsis className="size-5" strokeWidth={2} />
-                {!tasksPinned && taskUnreadCount > 0 ? (
-                  <span
-                    className="absolute right-0 top-0 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9"
-                    aria-hidden="true"
-                    data-task-menu-unread-dot
-                  />
-                ) : null}
-              </button>
-            )}
-          />
+          <RailHint label={t("navigation.more")}>
+            <DropdownMenuTrigger
+              render={(
+                <button
+                  type="button"
+                  aria-label={t("navigation.more")}
+                  data-testid="app-rail-more"
+                  data-app-rail-button
+                  data-active={(navigationMenuOpen || (tasksActive && !tasksPinned) || (calendarActive && !calendarPinned) || (imNavigationVisible && meetingsActive && !meetingsPinned) || (cloudDocsActive && !cloudDocsPinned) || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) ? "true" : undefined}
+                  className={cn(
+                    "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag",
+                    "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
+                    "data-popup-open:bg-dls-active data-popup-open:text-dls-text",
+                    (navigationMenuOpen || (tasksActive && !tasksPinned) || (calendarActive && !calendarPinned) || (imNavigationVisible && meetingsActive && !meetingsPinned) || (cloudDocsActive && !cloudDocsPinned) || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) && "bg-dls-active text-dls-text",
+                  )}
+                >
+                  <Ellipsis className="size-5" strokeWidth={2} />
+                  {!tasksPinned && taskUnreadCount > 0 ? (
+                    <span
+                      className="absolute right-0 top-0 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9"
+                      aria-hidden="true"
+                      data-task-menu-unread-dot
+                    />
+                  ) : null}
+                </button>
+              )}
+            />
+          </RailHint>
           <DropdownMenuContent
             side="right"
             align="start"
@@ -943,7 +941,6 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               onPreviewMenuChange={props.onPreviewMenuChange}
               appPreviewTarget={tasksActive ? "tasks" : undefined}
               onAppPreviewChange={appSidebarPreview.onTriggerChange}
-              showTooltip={!tasksActive || !appSidebarPreview.enabled}
             >
               <TaskRailIcon active={tasksActive} />
             </RailButton>
@@ -992,7 +989,6 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               onPreviewMenuChange={props.onPreviewMenuChange}
               appPreviewTarget={toonFactoryActive ? "toon-factory" : undefined}
               onAppPreviewChange={appSidebarPreview.onTriggerChange}
-              showTooltip={!toonFactoryActive || !appSidebarPreview.enabled}
             >
               <ToonFactoryRailIcon active={toonFactoryActive} />
             </RailButton>
@@ -1030,31 +1026,32 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         ) : null}
         <div className="relative flex h-9 w-full items-center justify-center">
         <DropdownMenu open={accountMenuOpen} onOpenChange={(open) => { setAccountMenuOpen(open); if (open) void refreshAccount(); }}>
-          <DropdownMenuTrigger
-            render={(
-              <button
-                type="button"
-                aria-label={t("account_menu.open")}
-                title={identity}
-                data-testid="app-rail-account-menu"
-                data-app-rail-button
-                className={cn(
-                  "relative flex size-9 items-center justify-center rounded-xl transition-[background-color,transform] duration-150",
-                  "hover:bg-dls-hover active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
-                  "data-popup-open:bg-dls-active",
-                  props.settingsActive && "bg-dls-active",
-                )}
-              >
-                <Avatar size="lg" className="size-7 bg-background ring-1 ring-dls-border/70">
-                  {profileUser?.avatar ? <AvatarImage src={profileUser.avatar} alt={identity} /> : null}
-                  <AvatarFallback className="bg-dls-hover font-semibold text-dls-text">{initial}</AvatarFallback>
-                  {notificationUnreadCount > 0 ? (
-                    <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9" aria-hidden="true" data-rail-unread-dot />
-                  ) : null}
-                </Avatar>
-              </button>
-            )}
-          />
+          <RailHint label={identity}>
+            <DropdownMenuTrigger
+              render={(
+                <button
+                  type="button"
+                  aria-label={t("account_menu.open")}
+                  data-testid="app-rail-account-menu"
+                  data-app-rail-button
+                  className={cn(
+                    "relative flex size-9 items-center justify-center rounded-xl transition-[background-color,transform] duration-150",
+                    "hover:bg-dls-hover active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
+                    "data-popup-open:bg-dls-active",
+                    props.settingsActive && "bg-dls-active",
+                  )}
+                >
+                  <Avatar size="lg" className="size-7 bg-background ring-1 ring-dls-border/70">
+                    {profileUser?.avatar ? <AvatarImage src={profileUser.avatar} alt={identity} /> : null}
+                    <AvatarFallback className="bg-dls-hover font-semibold text-dls-text">{initial}</AvatarFallback>
+                    {notificationUnreadCount > 0 ? (
+                      <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9" aria-hidden="true" data-rail-unread-dot />
+                    ) : null}
+                  </Avatar>
+                </button>
+              )}
+            />
+          </RailHint>
           <DropdownMenuContent
             side="right"
             align="end"

@@ -9,12 +9,14 @@ import { LOCAL_AUTOMATION_ENABLED } from "./automation-feature-flags";
 export type AutomationActivity = {
   activeRuns: AutomationRun[];
   hasActiveRuns: boolean;
+  hasUnreadCompletion: boolean;
   refresh: () => Promise<void>;
 };
 
 const emptyActivity: AutomationActivity = {
   activeRuns: [],
   hasActiveRuns: false,
+  hasUnreadCompletion: false,
   refresh: async () => {},
 };
 const AutomationActivityContext = createContext<AutomationActivity>(emptyActivity);
@@ -44,6 +46,22 @@ export async function fetchActiveAutomationRuns(
   return [...runs.values()];
 }
 
+export async function hasUnreadAutomationCompletion(client: Pick<JuggleWorkServerClient, "listAutomations">, signal?: AbortSignal) {
+  const cursors = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    signal?.throwIfAborted();
+    const page = await client.listAutomations({ limit: 100, cursor });
+    if (page.items.some((record) => record.hasUnreadResult && record.latestResultRun?.state === "succeeded")) return true;
+    cursor = page.nextCursor;
+    if (cursor) {
+      if (cursors.has(cursor)) throw new Error("Repeated automation list cursor");
+      cursors.add(cursor);
+    }
+  } while (cursor);
+  return false;
+}
+
 /** Mounted once under the root server provider, outside all routes and workspace stores. */
 export function AutomationActivityProvider({ children }: { children: ReactNode }) {
   const store = useJuggleWorkServer();
@@ -62,12 +80,21 @@ export function AutomationActivityProvider({ children }: { children: ReactNode }
     retry: false,
     gcTime: 0,
   });
+  const completions = useQuery({
+    queryKey: ["automation-unread-completion", client?.baseUrl, enabled],
+    queryFn: ({ signal }) => client ? hasUnreadAutomationCompletion(client, signal) : Promise.resolve(false),
+    enabled,
+    refetchInterval: 5_000,
+    retry: false,
+    gcTime: 0,
+  });
   // A new connection must fetch successfully before cached runs can light up the rail.
   const activeRuns = enabled && query.isFetchedAfterMount && !query.isError ? query.data ?? emptyActivity.activeRuns : emptyActivity.activeRuns;
   return (
     <AutomationActivityContext.Provider value={{
       activeRuns,
       hasActiveRuns: activeRuns.length > 0,
+      hasUnreadCompletion: enabled && completions.isFetchedAfterMount && completions.data === true,
       refresh: async () => { if (enabled) await query.refetch({ cancelRefetch: false }); },
     }}>
       {children}

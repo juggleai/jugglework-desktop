@@ -1570,7 +1570,6 @@ export function SessionPage(props: SessionPageProps) {
               onOpenReviews={props.sidebar.onOpenReviews}
               onOpenSettings={props.onOpenSettings}
               onPreviewMenuChange={handleSidebarPreviewMenuChange}
-              suppressPreviewMenuTooltips
             />
           </div>
         ) : null}

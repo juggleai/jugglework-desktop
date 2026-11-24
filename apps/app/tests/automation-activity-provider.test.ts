@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AutomationRun } from "@jugglework/types/automation";
 
-import { fetchActiveAutomationRuns } from "../src/react-app/domains/automations/automation-activity-provider";
+import { fetchActiveAutomationRuns, hasUnreadAutomationCompletion } from "../src/react-app/domains/automations/automation-activity-provider";
 
 const run = (id: string, state: AutomationRun["state"]): AutomationRun => ({
   schema: "automation-run/v1",
@@ -36,4 +36,16 @@ describe("global automation activity", () => {
     expect(cursors).toEqual([undefined, "next"]);
     expect(result.map((item) => item.id)).toEqual(["queued", "running"]);
   });
+});
+
+test("only successful unread results light the rail, including results beyond the first page", async () => {
+  let unread = true;
+  const client = {
+    listAutomations: async ({ cursor }: { cursor?: string }) => cursor
+      ? { items: [{ hasUnreadResult: unread, latestResultRun: run("success", "succeeded") }] }
+      : { items: [{ hasUnreadResult: true, latestResultRun: run("failure", "failed") }], nextCursor: "page2" },
+  };
+  expect(await hasUnreadAutomationCompletion(client as never)).toBe(true);
+  unread = false;
+  expect(await hasUnreadAutomationCompletion(client as never)).toBe(false);
 });

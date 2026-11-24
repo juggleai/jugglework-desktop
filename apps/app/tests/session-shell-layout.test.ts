@@ -252,7 +252,7 @@ describe("desktop session shell layout", () => {
     expect(sessionPage).toContain('sidebarRailPreviewOpen');
     expect(sessionPage).toContain('handleSidebarPreviewMenuChange');
     expect(sessionPage).toContain('previewTaskScope={sidebarRailPreviewOpen ? sidebarPreviewScope ?? undefined : undefined}');
-    expect(sessionPage).toContain('suppressPreviewMenuTooltips');
+    expect(sessionPage).not.toContain('suppressPreviewMenuTooltips');
     expect(sessionPage).toContain('setTimeout(() =>');
     expect(sessionPage).toContain('}, 120)');
     expect(sessionPage).toContain('sidebarPreviewPointerInsideRef');

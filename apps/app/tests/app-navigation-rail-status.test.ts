@@ -33,8 +33,8 @@ describe("scheduled-task rail status", () => {
       railSource.indexOf('label={t("navigation.automations")}'),
       railSource.indexOf("</RailButton>", railSource.indexOf('label={t("navigation.automations")}')),
     );
-    expect(railSource).toContain("const { hasActiveRuns } = useAutomationActivity()");
-    expect(automation).toContain('statusIndicator={!automationsActive && hasActiveRuns ? "running" : null}');
+    expect(railSource).toContain("const { hasActiveRuns, hasUnreadCompletion } = useAutomationActivity()");
+    expect(automation).toContain('statusIndicator={automationsActive ? null : hasActiveRuns ? "running" : hasUnreadCompletion ? "completed" : null}');
   });
 });
 
@@ -228,16 +228,16 @@ describe("navigation rail visual proportions", () => {
     expect(trigger).toContain('className="size-7 bg-background ring-1 ring-dls-border/70"');
   });
 
-  test("uses native titles for ordinary Rail hints while preserving preview suppression", () => {
+  test("uses portaled tooltips for Rail hints including preview-enabled destinations", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
-    expect(source).toContain('showTooltip?: boolean');
-    expect(source).toContain('title={showTooltip ? tooltipLabel ?? label : undefined}');
-    expect(source).not.toContain('data-app-rail-tooltip');
+    expect(source).not.toContain('showTooltip=');
+    expect(source).toContain('<RailHint label={tooltipLabel ?? label}>');
+    expect(source).toContain('<TooltipContent side="right"');
     for (const testId of ["app-rail-home", "app-rail-pinned-reviews", "app-rail-automations", "app-rail-chat", "app-rail-contacts"]) {
       const button = source.slice(source.indexOf(`testId="${testId}"`) - 220, source.indexOf(`testId="${testId}"`) + 220);
       expect(button).not.toContain('showTooltip={false}');
     }
-    expect(source).toContain('title={t("navigation.more")}');
+    expect(source).toContain('<RailHint label={t("navigation.more")}>');
   });
 
   test("places More after Contacts and keeps pinned entries below it", () => {
@@ -273,7 +273,6 @@ describe("navigation rail visual proportions", () => {
     const moreTasks = source.slice(source.indexOf('data-testid="app-navigation-more-tasks-row"'), source.indexOf('data-testid="app-navigation-pin-tasks"'));
     expect(pinnedTasks).toContain('appPreviewTarget={tasksActive ? "tasks" : undefined}');
     expect(pinnedTasks).toContain('onAppPreviewChange={appSidebarPreview.onTriggerChange}');
-    expect(pinnedTasks).toContain('showTooltip={!tasksActive || !appSidebarPreview.enabled}');
     expect(moreTasks).not.toContain("appPreviewTarget");
   });
 
@@ -354,16 +353,12 @@ describe("navigation rail visual proportions", () => {
     expect(local).toContain('previewScope="local"');
     expect(local).toContain('onWorkspacePreviewOpen={appSidebarPreview.closePreview}');
     expect(local).toContain('onWorkspacePreviewChange={appSidebarPreview.onWorkspaceTriggerChange}');
-    expect(local).toContain('showTooltip={!props.suppressPreviewMenuTooltips}');
     expect(source).not.toContain('testId="app-rail-cloud-tasks"');
     expect(source).not.toContain('previewScope="remote"');
     expect(automation).not.toContain('previewScope=');
-    expect(automation).not.toContain('showTooltip={!props.suppressPreviewMenuTooltips}');
     expect(source).toContain('onPreviewMenuChange?.(previewScope ?? null)');
     expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, true)');
     expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, false)');
-    // TIPS: Windows 隐藏原生标题栏后会显示系统 title 气泡；提示统一由应用内 Tooltip 提供。
-    expect(source).not.toContain('title={showTooltip ? (tooltipLabel ?? label) : undefined}');
   });
 
   test("keeps Windows drag regions from swallowing Rail clicks", () => {
@@ -385,18 +380,18 @@ describe("navigation rail visual proportions", () => {
     const plugins = source.slice(source.indexOf('label={t("project_extensions.group_plugin")}'), source.indexOf('<PluginOrbitIcon active={Boolean(props.appsActive)} />'));
     expect(automation).toContain('appPreviewTarget="automation"');
     expect(automation).toContain('onAppPreviewChange={appSidebarPreview.onTriggerChange}');
-    expect(automation).toContain('showTooltip={!appSidebarPreview.enabled}');
     expect(plugins).toContain('appPreviewTarget="plugins"');
     expect(plugins).toContain('onAppPreviewChange={appSidebarPreview.onTriggerChange}');
-    expect(plugins).toContain('showTooltip={!appSidebarPreview.enabled}');
   });
 });
 
 describe("chat unread reminder", () => {
-  test("uses a small red dot instead of the unread count", () => {
+  test("shows the total unread count on Chat, hiding zero and capping the badge at 99+", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
-    const chat = source.slice(source.indexOf('label={t("navigation.chat")}'), source.indexOf("<MessageSquare />"));
-    expect(chat).toMatch(/badgeVariant="dot"/);
+    const chat = source.slice(source.indexOf('label={t("navigation.chat")}'), source.indexOf('label={t("navigation.contacts")}'));
+    expect(chat).toContain("badge={totalUnreadCount}");
+    expect(source).toContain("{badge > 0 ? (");
+    expect(source).toContain('{badge > 99 ? "99+" : badge}');
   });
 
   test("shows Chat and Contacts only with current IM bootstrap availability", () => {
@@ -446,7 +441,7 @@ describe("account menu", () => {
     expect(source).toMatch(/data-rail-unread-dot/);
     expect(source).toMatch(/right-0 top-0 size-2\.5[^\"]+bg-red-9/);
     expect(source).toMatch(/-right-0\.5 -top-0\.5 size-2\.5[^\"]+bg-red-9/);
-    expect(source).toMatch(/badgeVariant === "dot"[\s\S]+aria-hidden="true"/);
+    expect(source).toContain('aria-hidden="true" data-rail-unread-dot');
   });
 
   test("keeps only the avatar in the bottom-left trigger", () => {
