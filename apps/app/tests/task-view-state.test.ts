@@ -51,6 +51,13 @@ test("moves preserve other groups and the saved ranks of filtered tasks", () => 
   expect(mergeTaskManualOrder(["a", "hidden-1", "other-group", "hidden-2"], reordered)).toEqual(["b", "hidden-1", "other-group", "hidden-2", "a"]);
 });
 
+test("loading legacy task-list grouping preserves list filters and the board grouping", () => {
+  for (const view of ["list", "board"] as const) {
+    writeTaskWorkbenchSettings(scopeA, { ...defaultTaskWorkbenchSettings, view, group: "list", listIds: ["list_one"] });
+    expect(readTaskWorkbenchSettings(scopeA)).toMatchObject({ view, group: view === "list" ? "none" : "list", listIds: ["list_one"] });
+  }
+});
+
 test("each task-list workbench has an isolated custom-group default", () => {
   expect(readTaskWorkbenchSettings(scopeA, "all", "list_one").group).toBe("custom");
   writeTaskWorkbenchSettings(scopeA, { ...defaultTaskWorkbenchSettings, group: "priority" }, "all", "list_one");

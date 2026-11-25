@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { t } from "@/i18n";
 import { TaskFilterPanel } from "./task-filter-panel";
-import { reorderTaskWorkbenchFields, taskTimeSorts, taskWorkbenchFields, type TaskWorkbenchCapabilities, type TaskWorkbenchField, type TaskWorkbenchGroup, type TaskWorkbenchSettings, type TaskWorkbenchSort, type TaskWorkbenchStatus } from "./task-view-state";
+import { reorderTaskWorkbenchFields, taskTimeSorts, taskWorkbenchGroupForView, taskWorkbenchFields, type TaskWorkbenchCapabilities, type TaskWorkbenchField, type TaskWorkbenchGroup, type TaskWorkbenchSettings, type TaskWorkbenchSort, type TaskWorkbenchStatus } from "./task-view-state";
 
 const priorities: DenProductTaskPriority[] = ["none", "low", "medium", "high"];
 const fieldLabels: Record<TaskWorkbenchField, string> = {
@@ -109,7 +109,7 @@ export function TaskToolbar(props: TaskWorkbenchCapabilities & { settings: TaskW
   const update = <K extends keyof TaskWorkbenchSettings>(key: K, value: TaskWorkbenchSettings[K]) => props.onChange({ ...props.settings, [key]: value });
   const statusLabels: Array<[TaskWorkbenchStatus, string]> = [["incomplete", "tasks.status_incomplete"], ["completed", "tasks.completed"], ["all", "tasks.status_all"]];
   const groupLabels: Array<[TaskWorkbenchGroup, string]> = [["none", "tasks.group_none"], ["list", "tasks.group_list"], ["creator", "tasks.group_creator"], ["start", "tasks.group_start"], ["due", "tasks.group_due"], ["priority", "tasks.field_priority"], ["custom", "tasks.group_custom"]];
-  const availableGroupLabels = groupLabels.filter(([value]) => (value !== "custom" || props.allowCustomGrouping) && (value !== "none" || props.settings.view !== "board"));
+  const availableGroupLabels = groupLabels.filter(([value]) => taskWorkbenchGroupForView(value, props.settings.view, props.allowCustomGrouping) === value);
   const subtaskVisibility = props.settings.subtaskVisibility;
   const subtaskLabels = { hide: t("common.hide"), show: t("tasks.subtasks_show") };
   return <div className="flex flex-wrap items-center gap-0.5" aria-label={t("tasks.quick_settings")}>

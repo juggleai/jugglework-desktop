@@ -24,6 +24,7 @@ export function taskWorkbenchCapabilities(section: TaskWorkbenchSection | null |
 }
 
 export function taskWorkbenchGroupForView(group: TaskWorkbenchGroup, view: TaskWorkbenchView, allowCustomGrouping: boolean): TaskWorkbenchGroup {
+  if (view === "list" && group === "list") return "none";
   const availableGroup = !allowCustomGrouping && group === "custom" ? "none" : group;
   if (view === "board" && availableGroup === "none") return allowCustomGrouping ? "custom" : "priority";
   return availableGroup;

@@ -722,14 +722,14 @@ test("entering a system board defaults an ungrouped workbench to priority groupi
   } finally { await act(async () => renderer!.unmount()); }
 });
 
-test("entering board preserves task-list grouping", async () => {
+test("switching from a task-list grouped board to List selects No grouping", async () => {
   const settings: typeof defaultTaskWorkbenchSettings[] = [];
   let renderer: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, group: "list" }, (next) => settings.push(next))); });
+  await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, view: "board", group: "list" }, (next) => settings.push(next))); });
   try {
     const tabs = renderer!.root.findAll((node) => typeof node.props.onValueChange === "function")[0]!;
-    await act(async () => { tabs.props.onValueChange("board"); });
-    expect(settings.at(-1)).toMatchObject({ view: "board", group: "list" });
+    await act(async () => { tabs.props.onValueChange("list"); });
+    expect(settings.at(-1)).toMatchObject({ view: "list", group: "none" });
   } finally { await act(async () => renderer!.unmount()); }
 });
 
@@ -779,21 +779,19 @@ test("priority grouping is available in the menu, orders buckets, and inherits t
   } finally { await act(async () => renderer!.unmount()); }
 });
 
-for (const view of ["list", "board"] as const) {
-  test(`${view} groups a task once under each projected list, ignoring the stale legacy id`, async () => {
-    const projected = [{ ...tasks[0]!, listId: "legacy_hidden", listIds: ["list_one", "list_two"] }, { ...tasks[1]!, listId: "legacy_hidden", listIds: [] }];
-    let renderer: TestRenderer.ReactTestRenderer;
-    await act(async () => { renderer = TestRenderer.create(React.cloneElement(workbench({ ...defaultTaskWorkbenchSettings, view, group: "list" }), { tasks: projected, lists: [...lists, { ...lists[0]!, id: "list_two", name: "Second" }] })); });
-    try {
-      const prefix = view === "list" ? "task-group-row-" : "task-board-group-";
-      for (const id of ["list_one", "list_two", ""]) expect(renderer!.root.findByProps({ "data-testid": prefix + id })).toBeDefined();
-      expect(renderer!.root.findAllByProps({ "data-testid": prefix + "legacy_hidden" })).toHaveLength(0);
-      const row = view === "list" ? "task-title-cell-" : "task-board-card-";
-      expect(renderer!.root.findAllByProps({ "data-testid": row + projected[0]!.id })).toHaveLength(2);
-      expect(renderer!.root.findAllByProps({ "data-testid": row + projected[1]!.id })).toHaveLength(1);
-    } finally { await act(async () => renderer!.unmount()); }
-  });
-}
+test("board groups a task once under each projected list, ignoring the stale legacy id", async () => {
+  const projected = [{ ...tasks[0]!, listId: "legacy_hidden", listIds: ["list_one", "list_two"] }, { ...tasks[1]!, listId: "legacy_hidden", listIds: [] }];
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(React.cloneElement(workbench({ ...defaultTaskWorkbenchSettings, view: "board", group: "list" }), { tasks: projected, lists: [...lists, { ...lists[0]!, id: "list_two", name: "Second" }] })); });
+  try {
+    const prefix = "task-board-group-";
+    for (const id of ["list_one", "list_two", ""]) expect(renderer!.root.findByProps({ "data-testid": prefix + id })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ "data-testid": prefix + "legacy_hidden" })).toHaveLength(0);
+    const row = "task-board-card-";
+    expect(renderer!.root.findAllByProps({ "data-testid": row + projected[0]!.id })).toHaveLength(2);
+    expect(renderer!.root.findAllByProps({ "data-testid": row + projected[1]!.id })).toHaveLength(1);
+  } finally { await act(async () => renderer!.unmount()); }
+});
 
 test("custom board creates a group inline while other board grouping hides the action", async () => {
   const settings: typeof defaultTaskWorkbenchSettings[] = [];
@@ -908,13 +906,15 @@ test.each(["list", "board"] as const)("%s drop updates priority and dates withou
   } finally { await act(async () => renderer.unmount()); }
 });
 
-test("List view groups rows by task list", async () => {
-  let renderer: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, group: "list", status: "all" })); });
+test("a legacy Task list grouping renders each task once in an ungrouped list", async () => {
+  const entry = { ...tasks[0]!, listIds: ["list_one", "list_two"] };
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(React.cloneElement(workbench({ ...defaultTaskWorkbenchSettings, group: "list" }), { tasks: [entry] })); });
   try {
-    expect(renderer!.root.findByProps({ "data-testid": "task-group-toggle-list_one" }).findAll((node) => node.props.children === "Launch")).toHaveLength(1);
-    expect(renderer!.root.findByProps({ "data-testid": "task-group-toggle-" }).findAll((node) => node.props.children === "No task list")).toHaveLength(1);
-  } finally { await act(async () => renderer!.unmount()); }
+    expect(renderer.root.findAllByProps({ "data-task-id": entry.id })).toHaveLength(1);
+    expect(renderer.root.findAll(node => String(node.props["data-testid"]).startsWith("task-group-row-"))).toHaveLength(0);
+    expect(renderer.root.findByProps({ "data-testid": "task-group-menu" }).findAllByProps({ value: "list" })).toHaveLength(0);
+  } finally { await act(async () => renderer.unmount()); }
 });
 
 test("task-list group menu places Custom group last", async () => {
@@ -922,7 +922,7 @@ test("task-list group menu places Custom group last", async () => {
   await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, group: "custom" })); });
   try {
     const menu = renderer!.root.findByProps({ "data-testid": "task-group-menu" });
-    expect(menu.findAll((node) => node.type === "button" && typeof node.props.value === "string").map((node) => node.props.value)).toEqual(["none", "list", "creator", "start", "due", "priority", "custom"]);
+    expect(menu.findAll((node) => node.type === "button" && typeof node.props.value === "string").map((node) => node.props.value)).toEqual(["none", "creator", "start", "due", "priority", "custom"]);
     const selected = menu.find((node) => node.type === "button" && node.props.value === "custom");
     expect(selected.props.children).toBe("Custom group");
     expect(selected.props.className).toContain("text-blue-10");
@@ -1130,14 +1130,14 @@ test("group quick-create defaults inherit task list and local time buckets", () 
 test("group new-task row submits inherited defaults", async () => {
   const creates: Array<{ title: string; defaults: Record<string, unknown> }> = [];
   let renderer: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, group: "list", status: "all" }, () => undefined, () => undefined, async (title, defaults) => { creates.push({ title, defaults }); return true; })); });
+  await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, group: "priority", status: "all" }, () => undefined, () => undefined, async (title, defaults) => { creates.push({ title, defaults }); return true; })); });
   try {
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-inline-create-group-trigger-list_one" }).props.onClick(); });
-    let row = renderer!.root.findByProps({ "data-testid": "task-inline-create-row-group-list_one" });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-inline-create-group-trigger-high" }).props.onClick(); });
+    let row = renderer!.root.findByProps({ "data-testid": "task-inline-create-row-group-high" });
     await act(async () => { row.findByType("input").props.onChange({ target: { value: "Grouped task" } }); });
-    row = renderer!.root.findByProps({ "data-testid": "task-inline-create-row-group-list_one" });
+    row = renderer!.root.findByProps({ "data-testid": "task-inline-create-row-group-high" });
     await act(async () => { row.findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
-    expect(creates).toEqual([{ title: "Grouped task", defaults: { listId: "list_one" } }]);
+    expect(creates).toEqual([{ title: "Grouped task", defaults: { priority: "high" } }]);
   } finally { await act(async () => renderer!.unmount()); }
 });
 
@@ -1162,20 +1162,20 @@ test("group headers expose a hover plus and the Due toolbar draft defaults to To
 
 test("group header plus inserts first while trailing new task inserts last", async () => {
   let renderer: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, group: "list", status: "all" })); });
+  await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, group: "priority", status: "all" })); });
   try {
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-group-add-list_one" }).props.onClick(); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-group-add-high" }).props.onClick(); });
     let rows = renderer!.root.findByType("tbody").findAllByType("tr");
-    let headerIndex = rows.findIndex((row) => row.props["data-testid"] === "task-group-row-list_one");
-    let draftIndex = rows.findIndex((row) => row.props["data-testid"] === "task-inline-create-row-group-list_one");
+    let headerIndex = rows.findIndex((row) => row.props["data-testid"] === "task-group-row-high");
+    let draftIndex = rows.findIndex((row) => row.props["data-testid"] === "task-inline-create-row-group-high");
     let taskIndex = rows.findIndex((row) => row.findAllByProps({ "data-testid": "task-title-cell-task_todo_with_full_identifier" }).length > 0);
     expect([headerIndex, draftIndex, taskIndex]).toEqual([0, 1, 2]);
     await act(async () => { rows[draftIndex]!.findByType("input").props.onKeyDown({ key: "Escape", preventDefault: () => undefined }); });
 
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-inline-create-group-trigger-list_one" }).props.onClick(); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-inline-create-group-trigger-high" }).props.onClick(); });
     rows = renderer!.root.findByType("tbody").findAllByType("tr");
-    headerIndex = rows.findIndex((row) => row.props["data-testid"] === "task-group-row-list_one");
-    draftIndex = rows.findIndex((row) => row.props["data-testid"] === "task-inline-create-row-group-list_one");
+    headerIndex = rows.findIndex((row) => row.props["data-testid"] === "task-group-row-high");
+    draftIndex = rows.findIndex((row) => row.props["data-testid"] === "task-inline-create-row-group-high");
     taskIndex = rows.findIndex((row) => row.findAllByProps({ "data-testid": "task-title-cell-task_todo_with_full_identifier" }).length > 0);
     expect(headerIndex).toBeLessThan(taskIndex);
     expect(taskIndex).toBeLessThan(draftIndex);
@@ -1197,13 +1197,12 @@ test("Start grouping toolbar draft defaults to Today", async () => {
   } finally { await act(async () => renderer!.unmount()); }
 });
 
-test("Task-list grouping toolbar draft defaults to No task list", async () => {
+test("toolbar opens an ungrouped draft after restoring a legacy List grouping", async () => {
   let renderer: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, group: "list", status: "all" })); });
   try {
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-inline-create-top-trigger" }).props.onClick(); });
-    expect(renderer!.root.findByProps({ "data-testid": "task-group-toggle-" }).props["aria-expanded"]).toBe(true);
-    const row = renderer!.root.findByProps({ "data-testid": "task-inline-create-row-group-" });
+    const row = renderer!.root.findByProps({ "data-testid": "task-inline-create-row-top" });
     expect(row.findByType("input").props.autoFocus).toBe(true);
     expect(row.findAll((node) => node.props.children === "No task list")).toHaveLength(1);
   } finally { await act(async () => renderer!.unmount()); }

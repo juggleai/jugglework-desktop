@@ -736,10 +736,10 @@ test("list titles save on blur across root and expanded placements and preserve 
   } finally { await act(async () => renderer.unmount()); }
 });
 
-test("list group drop moves only the dragged filing and confirms the destination's current sharing version", async () => {
+test("board group drop moves only the dragged filing and confirms the destination's current sharing version", async () => {
   const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
   sessionValues.set(taskSectionStorageKey(scope), "assigned");
-  localValues.set(taskWorkbenchStorageKey(scope, "assigned"), JSON.stringify({ group: "list", sort: "due_at" }));
+  localValues.set(taskWorkbenchStorageKey(scope, "assigned"), JSON.stringify({ view: "board", group: "list", sort: "due_at" }));
   const source = { ...destination, id: "source", name: "Source" };
   const retained = { ...destination, id: "retained", name: "Retained" };
   const target = { ...destination, id: "target", name: "Shared target", grantsTaskAccess: true, visibility: "organization" as const, version: 17 };
@@ -765,18 +765,17 @@ test("list group drop moves only the dragged filing and confirms the destination
   let renderer!: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
   try {
-    const rows = () => renderer.root.findAll((node) => node.type === "tr");
-    const header = (id: string) => rows().find((row) => row.props["data-testid"] === `task-group-row-${id}`)!;
-    const placed = (id: string) => rows()[rows().indexOf(header(id)) + 1]?.props["data-task-id"] === entry.id;
+    const lane = (id: string) => renderer.root.findByProps({ "data-testid": `task-board-group-${id}` });
+    const placed = (id: string) => renderer.root.findAllByProps({ "data-testid": `task-board-group-${id}` }).some(group => group.findAllByProps({ "data-testid": "task-board-card-entry" }).length > 0);
     for (let i = 0; i < 10 && !placed(source.id); i++) await settle();
     expect(placed(retained.id)).toBe(true);
     expect(placed(source.id)).toBe(true);
     expect(placed(target.id)).toBe(false);
-    expect(renderer.root.findAllByProps({ "data-testid": "task-reorder-older" })).toHaveLength(0);
+    expect(renderer.root.findByProps({ "data-testid": "task-board-card-older" }).props.draggable).toBe(false);
     const drop = async (id: string) => {
       const dataTransfer = { setData() {}, dropEffect: "none" };
-      const handle = rows()[rows().indexOf(header(source.id)) + 1]!.findByProps({ "data-testid": "task-reorder-entry" });
-      await act(async () => { handle.props.onDragStart({ dataTransfer }); header(id).props.onDragOver({ preventDefault() {}, dataTransfer }); header(id).props.onDrop({ preventDefault() {}, dataTransfer }); handle.props.onDragEnd(); });
+      const handle = lane(source.id).findByProps({ "data-testid": "task-board-card-entry" });
+      await act(async () => { handle.props.onDragStart({ dataTransfer }); lane(id).props.onDragOver({ preventDefault() {}, dataTransfer }); lane(id).props.onDrop({ preventDefault() {}, dataTransfer }); handle.props.onDragEnd(); });
       await settle();
       return dataTransfer.dropEffect;
     };
