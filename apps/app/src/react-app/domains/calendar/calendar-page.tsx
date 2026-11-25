@@ -207,13 +207,18 @@ function CalendarReadyView(props: { scope: CalendarScope; workspaceKind: Calenda
     includeInvited: true,
   }), [timeZone, visibleRange.endDateExclusive, visibleRange.startDate]);
   const bootstrapQuery = useCalendarBootstrapQuery({ client: cloud.client, scope: props.scope, range: eventRange, active: online });
+  const authoritativeDefaultCalendarId = bootstrapQuery.data?.calendars.find((calendar) => calendar.isDefault)?.id ?? null;
   const schedulingQuery = useCalendarSchedulingEventsQuery({ client: cloud.client, scope: props.scope, range: schedulingRange, active: online });
   const offlineView = useCalendarOfflineView({ runtime: offlineRuntime, scope: props.scope, range: eventRange, online });
   const eventDrafts = useCalendarEventDrafts(offlineRuntime, props.scope);
   // Offline shows only what the scoped local cache fully covers; in-memory online results are not reused.
   const collaborationResources = supportsTeamCalendars ? collaborationQuery.data?.items ?? [] : [];
+  // Collaboration resources omit the default flag; use the scoped core bootstrap to identify it.
   const sourceCalendars = online
-    ? supportsTeamCalendars ? collaborationResources.map(denCalendarFromCollaborationResource) : calendarsQuery.data ?? []
+    ? supportsTeamCalendars ? collaborationResources.map((resource) => ({
+        ...denCalendarFromCollaborationResource(resource),
+        isDefault: resource.id === authoritativeDefaultCalendarId,
+      })) : calendarsQuery.data ?? []
     : offlineView.state === "offline-covered" || offlineView.state === "offline-uncovered" ? offlineView.calendars : [];
   const calendars = withDefaultCalendarColors(sourceCalendars.map((calendar) => colorOverrides[calendar.id] ? { ...calendar, color: colorOverrides[calendar.id]! } : calendar));
   const activeIds = calendars.map((calendar) => calendar.id);
@@ -299,7 +304,6 @@ function CalendarReadyView(props: { scope: CalendarScope; workspaceKind: Calenda
     return supportsTeamCalendars ? resource?.capabilities.canEditEvents === true : true;
   }), [calendars, supportsTeamCalendars, resourcesById]);
   const isInvitedEvent = (event: DenCalendarEvent) => online && invitedEventIds.has(event.id);
-  const authoritativeDefaultCalendarId = bootstrapQuery.data?.calendars.find((calendar) => calendar.isDefault)?.id ?? null;
   // Project invitations into the viewer's default calendar without changing the organizer's event.
   const displayCalendarId = (event: DenCalendarEvent) => isInvitedEvent(event) ? authoritativeDefaultCalendarId ?? "" : event.calendarId;
   const isVisibleEvent = (event: DenCalendarEvent) => visibleIds.includes(displayCalendarId(event));

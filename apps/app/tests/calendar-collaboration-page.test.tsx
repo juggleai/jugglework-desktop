@@ -5,7 +5,7 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
-import { DenApiError, type DenCalendar, type DenCalendarCollaborationResource, type DenCalendarEvent, type DenCalendarMembership, type DenCalendarCollaborationRole } from "../src/app/lib/den";
+import { DenApiError, type DenCalendar, type DenCalendarCollaborationResource, type DenCalendarEvent, type DenCalendarMembership, type DenCalendarCollaborationRole, type DenCalendarSchedulingEvent, type DenCalendarSchedulingOccurrenceList } from "../src/app/lib/den";
 import { requestCalendarReminderNavigation } from "../src/react-app/domains/calendar/calendar-reminder-navigation";
 import { writeCalendarReminderMinutes } from "../src/react-app/domains/calendar/calendar-reminder-preferences";
 import { writeHiddenCalendarIds } from "../src/react-app/domains/calendar/calendar-month-model";
@@ -59,7 +59,7 @@ const resource = (id: string, kind: "personal" | "team", role: DenCalendarCollab
   version: 1, authorizationVersion: 1, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z",
 });
 const resources = [
-  resource("personal", "personal", "manager"),
+  { ...resource("personal", "personal", "manager"), name: "Personal" },
   resource("managed-team", "team", "manager"),
   resource("editable-team", "team", "editor"),
   resource("view-team", "team", "viewer"),
@@ -76,6 +76,8 @@ const defaultPersonalCalendar: DenCalendar = {
 };
 
 let workspaceKind: "personal" | "organization" | undefined;
+const defaultSignedInUser = { id: "user-a", name: "Ada Manager", account: "ada", email: "ada@example.com" };
+let signedInUser = defaultSignedInUser;
 const collaborationCalls: string[] = [];
 const snapshotCalls: string[] = [];
 const putMembershipCalls: Array<{ memberId: string; role: DenCalendarCollaborationRole; expectedAuthorizationVersion: number }> = [];
@@ -89,7 +91,7 @@ let membershipItems: DenCalendarMembership[] = [];
 let directoryOffsets: number[] = [];
 let membershipMutationGate: Promise<void> | null = null;
 const client = {
-  listCalendarSchedulingEvents: async (): Promise<import("../src/app/lib/den").DenCalendarSchedulingOccurrenceList> => ({ items: [] }),
+  listCalendarSchedulingEvents: async (): Promise<DenCalendarSchedulingOccurrenceList> => ({ items: [] }),
   listCalendars: async () => [defaultPersonalCalendar],
   listCalendarCollaboration: async (org: string) => {
     collaborationCalls.push(org);
@@ -154,7 +156,7 @@ const client = {
   },
 };
 mock.module("../src/react-app/domains/settings/cloud/cloud-session-provider", () => ({
-  useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", user: { id: "user-a", name: "Ada Manager", account: "ada", email: "ada@example.com" }, activeOrganization: { id: "org-a", slug: "studio", kind: workspaceKind, orgMemberId: "member-a" }, client }),
+  useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", user: signedInUser, activeOrganization: { id: "org-a", slug: "studio", kind: workspaceKind, orgMemberId: "member-a" }, client }),
 }));
 
 const { CalendarPage } = await import("../src/react-app/domains/calendar/calendar-page");
@@ -163,6 +165,7 @@ const noop = () => undefined;
 
 beforeEach(() => {
   values.clear(); snapshotCalls.length = 0; collaborationCalls.length = 0; putMembershipCalls.length = 0; revokeMembershipCalls.length = 0; teamEventCreateCalls.length = 0; teamEventUpdateCalls.length = 0; personalCalendarCreateCalls.length = 0; teamCalendarCreateCalls.length = 0; directoryOffsets = []; workspaceKind = "organization";
+  signedInUser = defaultSignedInUser;
   membershipAuthorizationVersion = 1; membershipMutationGate = null;
   membershipItems = [
     { memberId: "member-a", role: "manager", createdByMemberId: "member-a", createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" },
@@ -215,6 +218,7 @@ test("groups real role projections and snapshots only visible detail-capable tea
     await click(renderer, "calendar-view-week");
     expect(has(renderer, "calendar-all-day-event-event-view-team")).toBe(true);
     await click(renderer, "calendar-all-day-event-event-view-team");
+    expect(text(byId(renderer, "calendar-event-detail-calendar"))).toBe("view-team");
     expect(has(renderer, "calendar-event-detail-edit")).toBe(false);
     expect(has(renderer, "calendar-event-detail-delete")).toBe(false);
     await click(renderer, "calendar-event-detail-close");
@@ -224,6 +228,39 @@ test("groups real role projections and snapshots only visible detail-capable tea
 });
 
 const scope = { deployment: "https://den.example/api", organizationId: "org-a", memberId: "member-a" };
+
+test.each([
+  { label: "current nickname", name: "  Ada Manager  ", account: "ada", directoryName: "Old directory name", expected: "Ada Manager" },
+  { label: "account when the nickname is blank", name: "  ", account: "ada", directoryName: "", expected: "ada" },
+  { label: "stored calendar name when the viewer has no display identity", name: "  ", account: "", directoryName: "", expected: "Personal" },
+])("an organization invitation uses the $label for the viewer's default calendar", async ({ name, account, directoryName, expected }) => {
+  signedInUser = { ...defaultSignedInUser, name, account, email: "" };
+  const invitation: DenCalendarSchedulingEvent = {
+    ...event("organizer-calendar"), ownerMemberId: "member-b", status: "active",
+    attendees: [{ memberId: "member-a", responseStatus: "accepted" }],
+    recurrence: { frequency: "weekly", interval: 1, end: { kind: "never" } },
+  };
+  const list = spyOn(client, "listCalendarSchedulingEvents").mockResolvedValue({ items: [{ event: invitation, time: invitation.time, occurrenceIndex: 1 }] });
+  const originalMembers = client.listOrganizationMembers;
+  const members = spyOn(client, "listOrganizationMembers").mockImplementation(async (...args) => {
+    const page = await originalMembers(...args);
+    return { ...page, members: page.members.map((member) => member.id === "member-a" ? { ...member, user: { ...member.user, name: directoryName, account: "", email: "" } } : member) };
+  });
+  let renderer: TestRenderer.ReactTestRenderer | undefined;
+  try {
+    renderer = await render();
+    await click(renderer, "calendar-all-day-event-scheduling:event-organizer-calendar:1");
+    expect(text(byId(renderer, "calendar-event-detail-calendar"))).toBe(expected);
+    expect(text(byId(renderer, "calendar-event-detail-body"))).toContain("Ben Editor");
+    expect(has(renderer, "calendar-event-detail-rsvp")).toBe(true);
+    expect(has(renderer, "calendar-event-detail-edit")).toBe(false);
+    expect(has(renderer, "calendar-event-detail-delete")).toBe(false);
+  } finally {
+    if (renderer) await act(async () => renderer?.unmount());
+    members.mockRestore();
+    list.mockRestore();
+  }
+});
 
 test("a queued reminder waits for the hidden team's snapshot without changing filters or replaying on remount", async () => {
   writeHiddenCalendarIds(scope, ["view-team", "managed-team"]);

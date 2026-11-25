@@ -135,8 +135,9 @@ export function CalendarEventDetail(props: {
   const pending = scheduling?.attendees.filter((item) => item.responseStatus === "needs-action").length ?? 0;
   const eventColor = props.calendar?.color ?? "#3370ff";
   const calendarOwner = props.calendar ? props.membersById?.get(props.calendar.ownerMemberId) : undefined;
+  const signedInOwnerLabel = props.calendar?.ownerMemberId === props.currentMemberId ? props.currentUserLabel?.trim() : undefined;
   const calendarLabel = props.calendar?.isDefault
-    ? calendarOwner?.user.name?.trim() || calendarOwner?.user.account?.trim() || calendarOwner?.user.email?.trim() || (props.calendar.ownerMemberId === props.currentMemberId ? props.currentUserLabel?.trim() : "") || props.calendar.name
+    ? signedInOwnerLabel || calendarOwner?.user.name?.trim() || calendarOwner?.user.account?.trim() || calendarOwner?.user.email?.trim() || props.calendar.name
     : props.calendar?.name;
   const [scopeAction, setScopeAction] = React.useState<{ kind: "delete" } | { kind: "rsvp"; responseStatus: "accepted" | "declined" | "tentative" } | null>(null);
   const [scopeSelection, setScopeSelection] = React.useState<"this" | "following">("this");

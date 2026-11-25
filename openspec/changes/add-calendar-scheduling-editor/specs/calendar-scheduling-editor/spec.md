@@ -110,6 +110,12 @@ Desktop MUST NOT 把参与人选择表述为已完成的 RSVP、邀请投递、�
 - **THEN** 日、周、月视图在该成员的默认个人日历中显示原日程实例，沿用个人日历的颜色和显隐设置，不创建独立日历或日程副本；成员可以打开详情和回应，但不能编辑、删除或发起该日程的会议
 - **AND** Desktop 不把受邀实例写入个人离线缓存；刷新后不再返回的邀请不继续显示
 
+#### Scenario: An invitee opens the event detail
+
+- **WHEN** 已登录成员在个人或组织工作区打开投影到其默认个人日历的受邀日程
+- **THEN** 详情的日历名称优先显示当前登录账户的非空昵称；昵称不可用时回退到可用的账户标识、成员显示名或默认日历原名
+- **AND** 这只改变显示，不修改日历资源、日程创建人、原始归属或 RSVP 权限；非默认日历保留原名
+
 ### Requirement: Video meeting intent is durable and explicit
 
 日程 SHALL 持久化 `videoConferenceEnabled`。新建表单默认启用，用户显式移除后 MUST 保存为禁用；详情卡只有在该字段启用时才可提供发起会议动作。发起会议 SHALL 使用既有组织 Meeting 服务创建真实即时会议，把日程 attendee member IDs 映射为当前组织 user IDs，排除当前发起人并向其余参与人发送会议邀请。无法映射全部参与人或 Meeting readiness 不满足时 MUST fail closed，不得声称会议已创建或邀请已送达。
