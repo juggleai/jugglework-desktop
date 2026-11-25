@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Database } from "bun:sqlite";
 import { spawnSync } from "node:child_process";
+import constants from "../../../constants.json";
 import { syntheticProvider, configureSyntheticProvider } from "./real-engine-acceptance-provider";
 import { consumeSse, streamHealth, roundSseEvidence, isTerminalEvent } from "./real-engine-acceptance-helpers.mjs";
 
@@ -33,10 +34,11 @@ let engine: Awaited<ReturnType<typeof import("../../server/src/managed-opencode"
 let provider: ReturnType<typeof syntheticProvider> | undefined;
 let sessionId = "smoke-session";
 if (realEngine) {
+  const expectedVersion = constants.opencodeVersion.replace(/^v/, "");
   provider = syntheticProvider();
   await configureSyntheticProvider(provider.server.port);
   const version = spawnSync(process.env.REAL_ENGINE_BIN!, ["--version"], { cwd: workspaceRoot, env: process.env, encoding: "utf8", timeout: 10000 });
-  assert.equal(version.status, 0, version.stderr); assert.equal(version.stdout.trim(), "1.19.3");
+  assert.equal(version.status, 0, version.stderr); assert.equal(version.stdout.trim(), expectedVersion);
   const { createManagedOpencodeServer } = await import("../../server/src/managed-opencode");
   engine = await createManagedOpencodeServer({ bin: process.env.REAL_ENGINE_BIN, cwd: workspaceRoot, timeoutMs: 15000 });
   allowedOrigins.add(engine.url);
@@ -45,12 +47,12 @@ if (realEngine) {
     const response = await fetch(engine.url + route, { headers, ...(body ? { method: "POST", body: JSON.stringify(body) } : {}) });
     assert.ok(response.ok, `engine ${route}: ${response.status}`); return response.json() as any;
   };
-  assert.equal((await read("/global/health")).version, "1.19.3");
+  assert.equal((await read("/global/health")).version, expectedVersion);
   assert.deepEqual((await read("/provider")).connected, ["fixture"]);
   assert.deepEqual((await read("/config")).plugin ?? [], []);
   sessionId = (await read("/session", { title: "Real engine dual renderer acceptance" })).id;
   assert.ok(sessionId.startsWith("ses_"));
-  console.info("PASS managed OpenCode 1.19.3 health/provider/config/real session");
+  console.info(`PASS managed OpenCode ${expectedVersion} health/provider/config/real session`);
 }
 const session = { id: sessionId, slug: "isolated", title: "Real Server acceptance", directory: workspaceRoot,
   version: "1", time: { created: Date.now(), updated: Date.now() } };

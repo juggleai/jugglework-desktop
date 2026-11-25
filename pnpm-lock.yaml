@@ -303,8 +303,8 @@ importers:
         specifier: 1.2.3
         version: 1.2.3
       '@opencode-ai/sdk':
-        specifier: 1.19.3
-        version: 1.19.3
+        specifier: 1.19.6
+        version: 1.19.6
       '@paper-design/shaders-react':
         specifier: 0.0.72
         version: 0.0.72(@types/react@19.2.14)(react@19.2.4)
@@ -497,8 +497,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
       '@opencode-ai/sdk':
-        specifier: 1.19.3
-        version: 1.19.3
+        specifier: 1.19.6
+        version: 1.19.6
       '@xmldom/xmldom':
         specifier: 0.8.15
         version: 0.8.15
@@ -586,8 +586,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
       '@opencode-ai/sdk':
-        specifier: 1.19.3
-        version: 1.19.3
+        specifier: 1.19.6
+        version: 1.19.6
       '@xmldom/xmldom':
         specifier: 0.8.15
         version: 0.8.15
@@ -2326,8 +2326,8 @@ packages:
   '@open-draft/until@2.1.0':
     resolution: {integrity: sha512-U69T3ItWHvLwGg5eJ0n3I62nWuE6ilHlmz7zM0npLBRvPRd7e6NYmg54vvRtP5mZG7kZqZCFVdsTWo7BPtBujg==}
 
-  '@opencode-ai/sdk@1.19.3':
-    resolution: {integrity: sha512-G63bZD2r6plqgjFdenWVj3HBFWmLQSVuG9CXMQuTjakzA5aL6wFLmI23Biz5ESE4lQQ08UTHcY2N4NOShJFb2w==}
+  '@opencode-ai/sdk@1.19.6':
+    resolution: {integrity: sha512-jYV7s+Tlc5jDILOyWFIgISkPlfk7z3ByqeC8/T9aESZBgSZosQR784U2UoM3ZrJ8S0LJ2cB+IA9xZN7Jj8tnhQ==}
 
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
@@ -8152,7 +8152,7 @@ snapshots:
 
   '@open-draft/until@2.1.0': {}
 
-  '@opencode-ai/sdk@1.19.3':
+  '@opencode-ai/sdk@1.19.6':
     dependencies:
       cross-spawn: 7.0.6
 

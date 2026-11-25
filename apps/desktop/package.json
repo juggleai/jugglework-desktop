@@ -42,7 +42,7 @@
   },
   "dependencies": {
     "@jugglework/types": "workspace:*",
-    "@opencode-ai/sdk": "1.19.3",
+    "@opencode-ai/sdk": "1.19.6",
     "@xmldom/xmldom": "0.8.15",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2",
