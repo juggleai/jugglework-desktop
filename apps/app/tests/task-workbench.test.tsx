@@ -2,7 +2,8 @@ import { afterAll, expect, mock, spyOn, test } from "bun:test";
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 
-import type { DenOrganizationMember, DenProductTask, DenProductTaskCompletionPolicy, DenProductTaskList } from "../src/app/lib/den";
+import type { DenOrganizationMember, DenProductTask, DenProductTaskCompletionPolicy, DenProductTaskList, DenProductTaskPage } from "../src/app/lib/den";
+import { DenApiError } from "../src/app/lib/den";
 
 const Container = ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => <div {...props}>{children}</div>;
 mock.module("../src/components/ui/dropdown-menu", () => ({
@@ -22,7 +23,12 @@ mock.module("../src/components/ui/popover", () => ({
   PopoverContent: Container,
   PopoverTrigger: ({ children, render }: React.PropsWithChildren<{ render?: React.ReactElement }>) => render ? React.cloneElement(render, {}, children) : <>{children}</>,
 }));
-import { defaultTaskWorkbenchSettings } from "../src/react-app/domains/tasks/task-view-state";
+mock.module("../src/components/ui/tooltip", () => ({
+  Tooltip: Container,
+  TooltipContent: ({ children }: React.PropsWithChildren) => <div role="tooltip">{children}</div>,
+  TooltipTrigger: ({ children, render, ...props }: React.PropsWithChildren<{ render: React.ReactElement }>) => React.cloneElement(render, props, children),
+}));
+import { defaultTaskWorkbenchSettings, readTaskWorkbenchSettings, taskWorkbenchStorageKey } from "../src/react-app/domains/tasks/task-view-state";
 import { TaskWorkbench, sortLoadedProductTasks, taskWorkbenchServerSort } from "../src/react-app/domains/tasks/task-workbench";
 import { defaultCustomTaskGroupKey, taskGroupCreateDefaults, taskTimeGroup } from "../src/react-app/domains/tasks/task-list-table";
 import { TaskDateTimeCell, type TaskReminderDraft } from "../src/react-app/domains/tasks/task-date-time-cell";
@@ -48,7 +54,7 @@ const lists: DenProductTaskList[] = [{ id: "list_one", creatorMemberId: "member_
 const membersByTaskId = { task_todo_with_full_identifier: [{ memberId: "member_assignee", role: "assignee" as const, createdByMemberId: "member_creator" }, { memberId: "member_creator", role: "follower" as const }], task_done: [], task_canceled: [] };
 
 function workbench(settings = defaultTaskWorkbenchSettings, onSettingsChange = () => undefined, onTransition = () => undefined, onQuickCreate = async () => true, onAssigneesChange?: (task: DenProductTask, memberIds: string[]) => Promise<boolean>, onCompletionPolicyChange?: (task: DenProductTask, policy: DenProductTaskCompletionPolicy) => Promise<boolean>, onListChange?: (task: DenProductTask, listId: string) => Promise<boolean>, onListCreate?: (task: DenProductTask, name: string) => Promise<string | null>) {
-  return <TaskWorkbench tasks={tasks} membersByTaskId={membersByTaskId} members={members} lists={lists} settings={settings} selectedTaskId={null} canLoadMore={false} loadingMore={false} quickCreateMemberId="member_assignee" onLoadMore={() => undefined} onSettingsChange={onSettingsChange} onSelect={() => undefined} onTransition={onTransition} onQuickCreate={onQuickCreate} onAssigneesChange={onAssigneesChange} onCompletionPolicyChange={onCompletionPolicyChange} onListChange={onListChange} onListCreate={onListCreate} />;
+  return <TaskWorkbench isTaskList={settings.group === "custom"} tasks={tasks} membersByTaskId={membersByTaskId} members={members} lists={lists} settings={settings} selectedTaskId={null} canLoadMore={false} loadingMore={false} quickCreateMemberId="member_assignee" onLoadMore={() => undefined} onSettingsChange={onSettingsChange} onSelect={() => undefined} onTransition={onTransition} onQuickCreate={onQuickCreate} onAssigneesChange={onAssigneesChange} onCompletionPolicyChange={onCompletionPolicyChange} onListChange={onListChange} onListCreate={onListCreate} />;
 }
 
 function refreshingWorkbench() {
@@ -64,9 +70,10 @@ test("assigned workbench renders exactly List and Board tabs plus requested join
     expect(tabs.map((node) => React.Children.toArray(node.props.children).filter((child) => typeof child === "string").join(""))).toEqual(["List", "Board"]);
     expect(tabs.every((node) => node.findAll((child) => child.type === "svg").length > 0)).toBe(true);
     expect(renderer!.root.findByProps({ "data-testid": "task-view-active-indicator" }).parent?.props["data-testid"]).toBe("task-view-tab-list");
-    for (const label of ["Assignee", "Start time", "Due time", "Creator", "Created time", "Task ID", "Priority", "Task list", "Alex Assignee", "Casey Creator", "Launch"]) {
+    for (const label of ["Assignee", "Start time", "Due time", "Creator", "Created time", "Task ID", "Priority", "Task list", "Casey Creator", "Launch"]) {
       expect(renderer!.root.findAll((node) => node.props.children === label).length).toBeGreaterThan(0);
     }
+    expect(renderer!.root.findByProps({ role: "img", "aria-label": "Alex Assignee" })).toBeDefined();
     expect(renderer!.root.findByProps({ "data-testid": "task-priority-high" }).children).toContain("High priority");
     const headers = renderer!.root.findByType("thead").findAllByType("th");
     const headerText = (node: TestRenderer.ReactTestInstance): string => node.children.map((child) => typeof child === "string" ? child : headerText(child)).join("");
@@ -84,6 +91,159 @@ test("list title icons and labels keep a fixed gap as the table grows", async ()
     expect(renderer!.root.findByProps({ "data-testid": "assigned-task-table" }).findByType("table").props.className).toContain("after:left-[38px]");
     expect(renderer!.root.findByProps({ "data-testid": "assigned-task-table" }).findByType("table").props.className).toContain("after:right-6");
   } finally { await act(async () => renderer!.unmount()); }
+});
+
+const hierarchyParent: DenProductTask = {
+  ...tasks[0], id: "tree-parent", title: "Plan launch", subtaskCount: 3, completedSubtaskCount: 1, commentCount: 4,
+  description: '[brief.pdf](https://files.test/brief.pdf "task-file")\n[notes.txt](https://files.test/notes.txt "task-file:123")\n![diagram](https://files.test/diagram.png "task-file")\n`[example](https://files.test/example "task-file")`\n[ordinary link](https://files.test/page)',
+};
+const hierarchyChild: DenProductTask = {
+  ...tasks[1], id: "tree-child", title: "Review plan", parentTask: { id: hierarchyParent.id, title: hierarchyParent.title }, subtaskCount: 1, commentCount: 0,
+};
+const hierarchyGrandchild: DenProductTask = {
+  ...tasks[2], id: "tree-grandchild", title: "Check budget", parentTask: { id: hierarchyChild.id, title: hierarchyChild.title }, subtaskCount: 0, completedSubtaskCount: 0,
+};
+
+function hierarchyWorkbench(overrides: Partial<React.ComponentProps<typeof TaskWorkbench>> = {}) {
+  return <TaskWorkbench tasks={[hierarchyParent, hierarchyChild]} membersByTaskId={{}} members={members} lists={lists} settings={defaultTaskWorkbenchSettings} selectedTaskId={null} canLoadMore={false} loadingMore={false} onLoadMore={() => undefined} onSettingsChange={() => undefined} onSelect={() => undefined} onTransition={() => undefined} {...overrides} />;
+}
+
+function hierarchyRows(renderer: TestRenderer.ReactTestRenderer) {
+  return renderer.root.findAll((node) => node.type === "tr" && node.props["data-task-id"]);
+}
+
+test("list expands reachable subtasks by default and keeps independently matching root rows", async () => {
+  const select = mock((_id: string) => undefined);
+  const load = mock(async (id: string): Promise<DenProductTaskPage> => id === hierarchyParent.id
+    ? { items: [hierarchyChild], membersByTaskId: { [hierarchyChild.id]: [{ memberId: members[1].id, role: "assignee" }] }, nextCursor: "" }
+    : { items: [hierarchyGrandchild], nextCursor: "" });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(hierarchyWorkbench({ onLoadSubtasks: load, onSelect: select })); });
+  try {
+    const placements = () => hierarchyRows(renderer).map((row) => [row.props["data-task-id"], row.props["data-task-depth"]]);
+    const row = (id: string, depth: number) => renderer.root.findByProps({ "data-task-id": id, "data-task-depth": depth });
+    const toggle = (id: string, depth: number) => row(id, depth).findByProps({ "data-testid": `task-subtasks-toggle-${id}` });
+    expect(placements()).toEqual([[hierarchyParent.id, 0], [hierarchyChild.id, 1], [hierarchyGrandchild.id, 2], [hierarchyChild.id, 0], [hierarchyGrandchild.id, 1]]);
+
+    const link = row(hierarchyChild.id, 0).findByProps({ "data-testid": `task-parent-link-${hierarchyChild.id}` });
+    expect(link.findByType("span").children).toEqual([hierarchyParent.title]);
+    await act(async () => { link.props.onClick(); });
+    expect(select.mock.calls).toEqual([[hierarchyParent.id]]);
+    expect(row(hierarchyChild.id, 1).findAllByType("td")[0].props.style.paddingInlineStart).toBeGreaterThan(row(hierarchyChild.id, 0).findAllByType("td")[0].props.style.paddingInlineStart);
+    expect(row(hierarchyChild.id, 1).findAllByProps({ "data-testid": `task-parent-link-${hierarchyChild.id}` })).toHaveLength(0);
+    expect(row(hierarchyChild.id, 1).findByProps({ role: "img", "aria-label": "Alex Assignee" })).toBeDefined();
+
+    await act(async () => { toggle(hierarchyChild.id, 1).props.onClick(); });
+    expect(toggle(hierarchyChild.id, 0).props["aria-expanded"]).toBe(true);
+    expect(placements()).toEqual([[hierarchyParent.id, 0], [hierarchyChild.id, 1], [hierarchyChild.id, 0], [hierarchyGrandchild.id, 1]]);
+    await act(async () => { toggle(hierarchyParent.id, 0).props.onClick(); });
+    expect(placements()).toEqual([[hierarchyParent.id, 0], [hierarchyChild.id, 0], [hierarchyGrandchild.id, 1]]);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("list shows projected direct-child and comment counts, and counts only file attachments", async () => {
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(hierarchyWorkbench({ tasks: [hierarchyParent, hierarchyChild, hierarchyGrandchild, tasks[2]] })); });
+  try {
+    const count = (row: TestRenderer.ReactTestInstance, kind: string) => row.findByProps({ "data-testid": `task-title-count-${kind}` }).find((node) => node.type === "span" && node.props["aria-hidden"] === "true").children;
+    const [parent, child, grandchild, legacy] = hierarchyRows(renderer);
+    expect(count(parent, "subtasks")).toEqual(["1/3"]);
+    expect(count(parent, "attachments")).toEqual(["2"]);
+    expect(count(parent, "comments")).toEqual(["4"]);
+    expect(parent.findByProps({ "data-testid": "task-title-count-comments" }).props.title).toBe("Comments: 4");
+    expect(count(child, "subtasks")).toEqual(["0/1"]);
+    expect(child.findAllByProps({ "data-testid": "task-title-count-comments" })).toHaveLength(0);
+    for (const row of [grandchild, legacy]) {
+      expect(row.findAll((node) => node.props["data-testid"]?.startsWith("task-title-count-"))).toHaveLength(0);
+    }
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("open branches reload after invalidation, retry pagination, and ignore stale requests", async () => {
+  let finishOld!: (page: DenProductTaskPage) => void;
+  const firstLoad = mock(() => new Promise<DenProductTaskPage>((resolve) => { finishOld = resolve; }));
+  const leaf = { ...hierarchyChild, subtaskCount: 0 };
+  const nextChild = { ...leaf, id: "tree-next", title: "Another child" };
+  let failPage = true;
+  const load = mock(async (_id: string, cursor?: string): Promise<DenProductTaskPage> => {
+    if (!cursor) return { items: [leaf, hierarchyGrandchild], nextCursor: "next" };
+    if (cursor === "last") throw new DenApiError(403, "forbidden", "No longer visible");
+    if (failPage) throw new Error("Failed page");
+    return { items: [leaf, nextChild], nextCursor: "last" };
+  });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  const render = (revision: number, loader: React.ComponentProps<typeof TaskWorkbench>["onLoadSubtasks"]) => hierarchyWorkbench({ tasks: [hierarchyParent], subtasksRevision: revision, onLoadSubtasks: loader });
+  await act(async () => { renderer = TestRenderer.create(render(0, firstLoad)); });
+  try {
+    expect(firstLoad).toHaveBeenCalledTimes(1);
+    await act(async () => { renderer.update(render(1, load)); });
+    await act(async () => { finishOld({ items: [{ ...hierarchyChild, id: "stale-child" }], nextCursor: "" }); });
+    const ids = () => hierarchyRows(renderer).map((row) => row.props["data-task-id"]);
+    const status = () => renderer.root.findByProps({ "data-testid": `task-subtasks-status-${hierarchyParent.id}` });
+    expect(ids()).toEqual([hierarchyParent.id, hierarchyChild.id]);
+    await act(async () => { status().findByType("button").props.onClick(); });
+    expect(status().findByProps({ role: "alert" })).toBeDefined();
+    expect(ids()).toEqual([hierarchyParent.id, hierarchyChild.id]);
+    failPage = false;
+    await act(async () => { status().findByType("button").props.onClick(); });
+    expect(ids()).toEqual([hierarchyParent.id, hierarchyChild.id, nextChild.id]);
+    expect(load.mock.calls).toEqual([[hierarchyParent.id, undefined], [hierarchyParent.id, "next"], [hierarchyParent.id, "next"]]);
+    await act(async () => { status().findByType("button").props.onClick(); });
+    expect(status().findByProps({ role: "alert" })).toBeDefined();
+    expect(ids()).toEqual([hierarchyParent.id]);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("a task list keeps its hierarchy independent of the system subtask visibility preference", async () => {
+  const originalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const storage = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) } });
+  const scope = { baseUrl: "https://den.test", userId: "user_one", organizationId: "organization" };
+  storage.set(taskWorkbenchStorageKey(scope, "all", "list_one"), JSON.stringify({ subtaskVisibility: "hide" }));
+  const load = mock(async (id: string): Promise<DenProductTaskPage> => ({ items: id === hierarchyParent.id ? [hierarchyChild] : [], nextCursor: "" }));
+  let renderer: TestRenderer.ReactTestRenderer | undefined;
+  try {
+    const settings = readTaskWorkbenchSettings(scope, "all", "list_one");
+    await act(async () => { renderer = TestRenderer.create(hierarchyWorkbench({ isTaskList: true, tasks: [hierarchyParent], settings, onLoadSubtasks: load })); });
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-subtask-visibility-menu" })).toHaveLength(0);
+    expect(hierarchyRows(renderer!).map((row) => row.props["data-task-id"])).toEqual([hierarchyParent.id, hierarchyChild.id]);
+  } finally {
+    await act(async () => { renderer?.unmount(); });
+    if (originalStorage) Object.defineProperty(globalThis, "localStorage", originalStorage);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});
+
+test("list assignees use the fourth slot for overflow only when more than four are assigned", async () => {
+  const [first, second] = members;
+  const others = ["Morgan", "Taylor", "Jamie"].map((name) => ({ ...second, id: name, userId: name, user: { ...second.user, id: name, name } }));
+  const people = [first, second, ...others];
+  const task = { ...tasks[0], completionPolicy: "all_assignees" as const };
+  const assignees = people.map((member, index) => ({ memberId: member.id, role: "assignee" as const, completedAt: index === 0 ? task.createdAt : null }));
+  const render = (status: DenProductTask["status"], count = assignees.length) => <TaskWorkbench tasks={[{ ...task, status }]} membersByTaskId={{ [task.id]: assignees.slice(0, count) }} members={people} lists={lists} settings={defaultTaskWorkbenchSettings} selectedTaskId={null} canLoadMore={false} loadingMore={false} onLoadMore={() => undefined} onSettingsChange={() => undefined} onSelect={() => undefined} onTransition={() => undefined} onAssigneesChange={async () => true} />;
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(render("todo", 1)); });
+  try {
+    const trigger = () => renderer.root.find((node) => node.type === "button" && node.props["data-testid"] === `task-assignee-trigger-${task.id}`);
+    const avatars = () => trigger().findAll((node) => node.type === "span" && node.props["data-slot"] === "avatar");
+    const tooltip = () => renderer.root.findByProps({ role: "tooltip" }).findByType("span").children;
+    expect(avatars()).toHaveLength(1);
+    expect(trigger().findAll((node) => node.type === "span" && node.props.children === "Casey Creator")).toHaveLength(1);
+    expect(tooltip()).toEqual(["Casey Creator"]);
+    await act(async () => { renderer.update(render("todo", 4)); });
+    expect(avatars()).toHaveLength(4);
+    expect(trigger().findAll((node) => node.type === "span" && node.children.join("").startsWith("+"))).toHaveLength(0);
+    expect(trigger().findAll((node) => node.type === "span" && node.props.children === "Casey Creator")).toHaveLength(0);
+    expect(tooltip()).toEqual(["Casey Creator, Alex Assignee, Morgan, Taylor"]);
+    await act(async () => { renderer.update(render("todo")); });
+    expect(avatars()).toHaveLength(3);
+    expect(trigger().find((node) => node.type === "span" && node.children.join("") === "+2").children).toEqual(["+", "2"]);
+    expect(tooltip()).toEqual(["Casey Creator, Alex Assignee, Morgan, Taylor, Jamie"]);
+    expect(trigger().props["aria-description"]).toContain("Morgan, Taylor, Jamie");
+    expect(trigger().findAllByProps({ "data-testid": "task-assignee-completed" })).toHaveLength(1);
+    await act(async () => { renderer.update(render("completed")); });
+    expect(trigger().findAllByProps({ "data-testid": "task-assignee-completed" })).toHaveLength(1);
+  } finally { await act(async () => renderer.unmount()); }
 });
 
 test("assignee cells open a searchable people picker and persist multi-assignee changes", async () => {
@@ -246,17 +406,18 @@ test("task-list cell searches existing lists and creates a missing list", async 
   } finally { await act(async () => renderer!.unmount()); }
 });
 
-test("all-assignees rows show the current assignee completion without transitioning again", async () => {
+test("list completion circle remains empty and actionable after the current assignee finishes their part", async () => {
   const transitions: string[] = [];
   const allTasks = [{ ...tasks[0]!, completionPolicy: "all_assignees" as const }];
   const allMembers = { [allTasks[0]!.id]: [{ memberId: "member_assignee", role: "assignee" as const, completedAt: "2026-11-03T10:00:00Z" }] };
   let renderer: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(<TaskWorkbench tasks={allTasks} membersByTaskId={allMembers} members={members} lists={lists} settings={defaultTaskWorkbenchSettings} selectedTaskId={null} canLoadMore={false} loadingMore={false} quickCreateMemberId="member_assignee" onLoadMore={() => undefined} onSettingsChange={() => undefined} onSelect={() => undefined} onTransition={(_task, operation) => transitions.push(operation)} />); });
   try {
-    const button = renderer!.root.findByProps({ "aria-label": "Your part is complete" });
-    expect(button.props.disabled).toBe(true);
+    const button = renderer!.root.findByProps({ "aria-label": "Complete task" });
+    expect(button.findAllByType("svg")).toHaveLength(0);
+    expect(renderer!.root.findByProps({ "data-testid": "task-assignee-completed" })).toBeDefined();
     await act(async () => { button.props.onClick(); });
-    expect(transitions).toEqual([]);
+    expect(transitions).toEqual(["complete-whole"]);
   } finally { await act(async () => renderer!.unmount()); }
 });
 
@@ -447,8 +608,8 @@ test("optional people and lifecycle fields render joined member and task data", 
     const headerText = (node: TestRenderer.ReactTestInstance): string => node.children.map((child) => typeof child === "string" ? child : headerText(child)).join("");
     expect(renderer!.root.findByType("thead").findAllByType("th").map(headerText)).toEqual(["Task title", "Assigner", "Followers", "Completed time", "Updated time"]);
     expect(renderer!.root.findAll((node) => node.props.children === "Casey Creator").length).toBeGreaterThan(1);
-    const completedTaskRow = renderer!.root.find((node) => node.type === "button" && node.props.children === "Review brief").parent?.parent?.parent;
-    expect(headerText(completedTaskRow!.findAllByType("td")[3]!)).not.toBe("Unavailable");
+    const completedTaskRow = renderer!.root.findByProps({ "data-task-id": "task_done" });
+    expect(headerText(completedTaskRow.findAllByType("td")[3]!)).not.toBe("Unavailable");
   } finally { await act(async () => renderer!.unmount()); }
 });
 
@@ -550,14 +711,14 @@ test("board renders workbench groups and accessible lifecycle actions", async ()
   } finally { await act(async () => renderer!.unmount()); }
 });
 
-test("entering board defaults an ungrouped workbench to custom grouping", async () => {
+test("entering a system board defaults an ungrouped workbench to priority grouping", async () => {
   const settings: typeof defaultTaskWorkbenchSettings[] = [];
   let renderer: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, group: "none" }, (next) => settings.push(next))); });
   try {
     const tabs = renderer!.root.findAll((node) => typeof node.props.onValueChange === "function")[0]!;
     await act(async () => { tabs.props.onValueChange("board"); });
-    expect(settings.at(-1)).toMatchObject({ view: "board", group: "custom" });
+    expect(settings.at(-1)).toMatchObject({ view: "board", group: "priority" });
   } finally { await act(async () => renderer!.unmount()); }
 });
 
@@ -665,24 +826,86 @@ test("board group quick-create accepts a title and due date draft", async () => 
 test("board drag moves tasks between custom groups and time groups", async () => {
   const changes: typeof defaultTaskWorkbenchSettings[] = [];
   const timeChanges: Array<{ field: string; value: string | null }> = [];
-  const data = new Map<string, string>();
-  const dataTransfer = { effectAllowed: "move", dropEffect: "move", setData: (type: string, value: string) => data.set(type, value), getData: (type: string) => data.get(type) ?? "" };
-  const custom = { ...defaultTaskWorkbenchSettings, view: "board" as const, group: "custom" as const, customGroups: [{ id: "custom-review", name: "Review" }] };
+  const dataTransfer = { effectAllowed: "move", dropEffect: "none", setData() {} };
+  const event = { preventDefault: mock(() => {}), dataTransfer };
+  const custom = { ...defaultTaskWorkbenchSettings, view: "board" as const, group: "custom" as const, sort: "due_at" as const, direction: "asc" as const, manualOrder: [tasks[1]!.id, tasks[0]!.id], customGroups: [{ id: "custom-review", name: "Review" }] };
   let renderer: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(workbench(custom, (next) => changes.push(next))); });
   try {
-    renderer!.root.findByProps({ "data-testid": "task-board-card-task_todo_with_full_identifier" }).props.onDragStart({ dataTransfer });
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-board-group-custom-review" }).props.onDrop({ preventDefault: () => undefined, dataTransfer }); });
-    expect(changes.at(-1)?.customGroupAssignments.task_todo_with_full_identifier).toBe("custom-review");
+    const source = renderer!.root.findByProps({ "data-testid": "task-board-card-task_todo_with_full_identifier" });
+    const defaultLane = renderer!.root.findByProps({ "data-testid": `task-board-group-${defaultCustomTaskGroupKey}` });
+    const reviewLane = renderer!.root.findByProps({ "data-testid": "task-board-group-custom-review" });
+    await act(async () => { reviewLane.props.onDrop(event); });
+    source.props.onDragStart({ dataTransfer });
+    await act(async () => { defaultLane.props.onDragOver(event); defaultLane.props.onDrop(event); });
+    expect(changes).toHaveLength(0);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    await act(async () => { reviewLane.props.onDragOver(event); reviewLane.props.onDrop(event); });
+    expect(dataTransfer.dropEffect).toBe("move");
+    expect(changes).toEqual([{ ...custom, customGroupAssignments: { task_todo_with_full_identifier: "custom-review" } }]);
   } finally { await act(async () => renderer!.unmount()); }
 
   const due = { ...defaultTaskWorkbenchSettings, view: "board" as const, group: "due" as const };
   await act(async () => { renderer = TestRenderer.create(<TaskWorkbench tasks={tasks} membersByTaskId={membersByTaskId} members={members} lists={lists} settings={due} selectedTaskId={null} canLoadMore={false} loadingMore={false} onLoadMore={() => undefined} onSettingsChange={() => undefined} onSelect={() => undefined} onTransition={() => undefined} onTimeChange={async (_task, field, value) => { timeChanges.push({ field, value }); return true; }} />); });
   try {
     renderer!.root.findByProps({ "data-testid": "task-board-card-task_todo_with_full_identifier" }).props.onDragStart({ dataTransfer });
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-board-group-tomorrow" }).props.onDrop({ preventDefault: () => undefined, dataTransfer }); });
-    expect(timeChanges.at(-1)).toMatchObject({ field: "dueAt", value: expect.any(String) });
+    const sourceLane = renderer!.root.findByProps({ "data-testid": `task-board-group-${taskTimeGroup(tasks[0]!.dueAt, "due", new Date())}` });
+    await act(async () => { sourceLane.props.onDrop(event); });
+    expect(timeChanges).toHaveLength(0);
+    const target = sourceLane.props["data-testid"] === "task-board-group-tomorrow" ? "unscheduled" : "tomorrow";
+    await act(async () => { renderer!.root.findByProps({ "data-testid": `task-board-group-${target}` }).props.onDrop(event); });
+    expect(timeChanges.at(-1)).toMatchObject({ field: "dueAt", value: target === "unscheduled" ? null : expect.any(String) });
   } finally { await act(async () => renderer!.unmount()); }
+});
+
+test("manual list ordering does not allow dropping into a different creator group", async () => {
+  const changes: typeof defaultTaskWorkbenchSettings[] = [];
+  const settings = { ...defaultTaskWorkbenchSettings, group: "creator" as const, sort: "manual" as const, status: "all" as const };
+  const groupedTasks = [tasks[0]!, { ...tasks[1]!, creatorMemberId: "member_assignee" }];
+  const writes = mock(async () => true);
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(React.cloneElement(workbench(settings, (next) => changes.push(next)), { isTaskList: true, tasks: groupedTasks, onPriorityChange: writes, onTimeChange: writes, onListMove: writes })); });
+  try {
+    const dataTransfer = { setData() {}, dropEffect: "none" };
+    const event = { preventDefault: mock(() => {}), dataTransfer };
+    const handle = renderer.root.findByProps({ "data-testid": `task-reorder-${tasks[0]!.id}` });
+    const target = renderer.root.findByProps({ "data-task-id": tasks[1]!.id });
+    await act(async () => { handle.props.onDragStart({ dataTransfer }); target.props.onDragOver(event); target.props.onDrop(event); });
+    expect(target.props["data-drop-placement"]).toBeUndefined();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(changes).toHaveLength(0);
+    expect(writes).not.toHaveBeenCalled();
+    await act(async () => { renderer.update(React.cloneElement(workbench({ ...settings, view: "board" }), { isTaskList: true, tasks: groupedTasks, onPriorityChange: writes, onTimeChange: writes, onListMove: writes })); });
+    expect(renderer.root.findByProps({ "data-testid": `task-board-card-${tasks[0]!.id}` }).props.draggable).toBe(false);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test.each(["list", "board"] as const)("%s drop updates priority and dates without changing sort preferences", async (view) => {
+  const settings = { ...defaultTaskWorkbenchSettings, view, sort: "created_at" as const, direction: "asc" as const, status: "all" as const };
+  const entry = tasks[0]!;
+  const priority = mock(async () => true), time = mock(async () => true), preferences = mock(() => undefined);
+  const render = (group: "priority" | "start" | "due") => React.cloneElement(workbench({ ...settings, group }, preferences), { tasks: [entry], onPriorityChange: priority, onTimeChange: time });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(render("priority")); });
+  try {
+    const drop = async (key: string) => {
+      const dataTransfer = { setData() {}, dropEffect: "none" };
+      const source = renderer.root.findByProps({ "data-testid": view === "list" ? `task-reorder-${entry.id}` : `task-board-card-${entry.id}` });
+      const target = renderer.root.find((node) => node.type === (view === "list" ? "tr" : "section") && node.props["data-testid"] === `task-${view === "list" ? "group-row" : "board-group"}-${key}`);
+      await act(async () => { source.props.onDragStart({ dataTransfer }); target.props.onDragOver({ preventDefault() {}, dataTransfer }); target.props.onDrop({ preventDefault() {}, dataTransfer }); });
+      expect(dataTransfer.dropEffect).toBe("move");
+    };
+    await drop("none");
+    expect(priority).toHaveBeenCalledWith(entry, "none");
+    await act(async () => renderer.update(render("start")));
+    await drop("unscheduled");
+    expect(time).toHaveBeenCalledWith(entry, "startAt", null);
+    await act(async () => renderer.update(render("due")));
+    await drop("later");
+    expect(time).toHaveBeenCalledWith(entry, "dueAt", expect.any(String));
+    expect(taskTimeGroup(time.mock.calls[1]![2], "due")).toBe("later");
+    expect(preferences).not.toHaveBeenCalled();
+  } finally { await act(async () => renderer.unmount()); }
 });
 
 test("List view groups rows by task list", async () => {
@@ -694,12 +917,12 @@ test("List view groups rows by task list", async () => {
   } finally { await act(async () => renderer!.unmount()); }
 });
 
-test("group menu places Custom group immediately after None", async () => {
+test("task-list group menu places Custom group last", async () => {
   let renderer: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, group: "custom" })); });
   try {
     const menu = renderer!.root.findByProps({ "data-testid": "task-group-menu" });
-    expect(menu.findAll((node) => node.type === "button" && typeof node.props.value === "string").map((node) => node.props.value)).toEqual(["none", "custom", "list", "creator", "start", "due", "priority"]);
+    expect(menu.findAll((node) => node.type === "button" && typeof node.props.value === "string").map((node) => node.props.value)).toEqual(["none", "list", "creator", "start", "due", "priority", "custom"]);
     const selected = menu.find((node) => node.type === "button" && node.props.value === "custom");
     expect(selected.props.children).toBe("Custom group");
     expect(selected.props.className).toContain("text-blue-10");
@@ -815,7 +1038,7 @@ test("custom group assignments render tasks in their persisted target group", as
   const assignedTask = { ...tasks[0]!, id: "task_in_group_two", title: "Task in Group 2" };
   const settings = { ...defaultTaskWorkbenchSettings, group: "custom" as const, status: "all" as const, customGroups: [{ id: "custom-group-two", name: "Group 2" }], customGroupAssignments: { task_in_group_two: "custom-group-two" } };
   let renderer: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(<TaskWorkbench tasks={[assignedTask]} membersByTaskId={{ task_in_group_two: [] }} members={members} lists={lists} settings={settings} selectedTaskId={null} canLoadMore={false} loadingMore={false} onLoadMore={() => undefined} onSettingsChange={() => undefined} onSelect={() => undefined} onTransition={() => undefined} onQuickCreate={async () => true} />); });
+  await act(async () => { renderer = TestRenderer.create(<TaskWorkbench isTaskList tasks={[assignedTask]} membersByTaskId={{ task_in_group_two: [] }} members={members} lists={lists} settings={settings} selectedTaskId={null} canLoadMore={false} loadingMore={false} onLoadMore={() => undefined} onSettingsChange={() => undefined} onSelect={() => undefined} onTransition={() => undefined} onQuickCreate={async () => true} />); });
   try {
     const defaultGroup = renderer!.root.findByProps({ "data-testid": `task-group-row-${defaultCustomTaskGroupKey}` });
     const targetGroup = renderer!.root.findByProps({ "data-testid": "task-group-row-custom-group-two" });
@@ -837,7 +1060,7 @@ test("custom group renders its persisted renamed label", async () => {
 
 test("custom grouping keeps an empty Default group available for creation", async () => {
   let renderer: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(<TaskWorkbench tasks={[]} membersByTaskId={{}} members={members} lists={lists} settings={{ ...defaultTaskWorkbenchSettings, group: "custom" }} selectedTaskId={null} canLoadMore={false} loadingMore={false} onLoadMore={() => undefined} onSettingsChange={() => undefined} onSelect={() => undefined} onTransition={() => undefined} onQuickCreate={async () => true} />); });
+  await act(async () => { renderer = TestRenderer.create(<TaskWorkbench isTaskList tasks={[]} membersByTaskId={{}} members={members} lists={lists} settings={{ ...defaultTaskWorkbenchSettings, group: "custom" }} selectedTaskId={null} canLoadMore={false} loadingMore={false} onLoadMore={() => undefined} onSettingsChange={() => undefined} onSelect={() => undefined} onTransition={() => undefined} onQuickCreate={async () => true} />); });
   try {
     const toggle = renderer!.root.findByProps({ "data-testid": `task-group-toggle-${defaultCustomTaskGroupKey}` });
     expect(toggle.findAll((node) => node.props.children === "Default group")).toHaveLength(1);
@@ -1007,10 +1230,11 @@ test("Start sort is loaded-client-only and orders null values last", () => {
   expect(sortLoadedProductTasks(tasks, settings).map((task) => task.id)).toEqual(["task_done", "task_todo_with_full_identifier", "task_canceled"]);
 });
 
-test("Completed sort is loaded-client-only for older servers and orders null values last", () => {
+test("Completed sort preserves server order unless the legacy fallback is active", () => {
   const settings = { ...defaultTaskWorkbenchSettings, sort: "completed_at" as const, direction: "desc" as const };
-  expect(taskWorkbenchServerSort(settings)).toEqual({ sort: "updated_at", direction: "desc" });
-  expect(sortLoadedProductTasks(tasks, settings).map((task) => task.id)).toEqual(["task_done", "task_todo_with_full_identifier", "task_canceled"]);
+  expect(taskWorkbenchServerSort(settings)).toEqual({ sort: "completed_at", direction: "desc" });
+  expect(sortLoadedProductTasks(tasks, settings)).toBe(tasks);
+  expect(sortLoadedProductTasks(tasks, settings, true).map((task) => task.id)).toEqual(["task_done", "task_todo_with_full_identifier", "task_canceled"]);
 });
 
 test("List view displays the task number and copies the exact internal ID", async () => {

@@ -8,20 +8,28 @@ The system SHALL store tasks in JuggleWork Server as the sole write authority an
 - **THEN** the server creates the task and returns its stable internal ID, organization-scoped display number, and version
 
 ### Requirement: Task fields and lifecycle
-The system SHALL support a required title, optional description, priority, start time, due time, assignees, followers, visibility, list membership, reminder, a multi-assignee completion policy, and `todo`, `completed`, and `canceled` states. The completion policy SHALL default to `any_assignee` for backward compatibility. `all_assignees` SHALL persist each assignee's completion for the current round and SHALL clear that progress when the task is reopened or its assignees/completion policy change.
+The system SHALL support a required title, optional description, priority, start time, due time, assignees, followers, visibility, list membership, reminders, and `todo`, `completed`, and `canceled` states. Tasks with multiple assignees SHALL use effective `all_assignees` completion even when their stored compatibility policy is `any_assignee`. The API SHALL report the effective rule and retain existing rules for zero or one assignee.
 
 #### Scenario: Create an unassigned task
 - **WHEN** a member creates a task without assignees
 - **THEN** the task remains valid, appears in the creator's inbox, and does not appear in any assigned-to-me view
 
-#### Scenario: Any assignee completes a multi-assignee task
-- **WHEN** a task uses `any_assignee` and any assignee completes it
-- **THEN** the single task state becomes completed for every assignee and the system records the actor and completion time
+#### Scenario: Mark a shared task complete from List
+- **WHEN** an authorized editor uses the task row’s whole-task completion control
+- **THEN** the task changes to completed and records the actor while preserving each assignee’s personal progress
 
-#### Scenario: All assignees complete their portions
-- **WHEN** a task uses `all_assignees` and an assignee completes their portion
-- **THEN** the system records that assignee's completion while keeping the task in `todo` until every current assignee has completed their portion
+#### Scenario: Each assignee completes only their portion
+- **WHEN** a current assignee completes a task with multiple assignees, including a legacy task stored with `any_assignee`
+- **THEN** the system records only that assignee's completion while keeping the task in `todo` until every current assignee has completed their portion
 - **AND THEN** the final assignee completion changes the single task state to `completed`
+
+#### Scenario: Prevent proxy or duplicate completion
+- **WHEN** a non-assignee or an already-completed assignee tries to record individual completion on a multi-assignee task
+- **THEN** the system rejects the operation without changing completion progress, even for the creator or a list editor who is not assigned
+
+#### Scenario: Start a new completion round
+- **WHEN** a task is reopened or its assignee set or effective completion policy changes
+- **THEN** the system clears per-assignee progress; changing only a stored policy that does not affect the effective rule does not clear progress
 
 ### Requirement: Task visibility and authorization
 The system SHALL support `private`, `members`, and `organization` as compatibility values for direct visibility and SHALL authorize every read and mutation using the current organization member identity and the direct and list-derived grants defined in `task-list-derived-access`.

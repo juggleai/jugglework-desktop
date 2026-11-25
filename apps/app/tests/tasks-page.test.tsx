@@ -71,6 +71,11 @@ mock.module("../src/components/ui/popover", () => ({
   PopoverContent: PrimitiveContainer,
   PopoverTrigger: ({ children, render }: React.PropsWithChildren<{ render?: React.ReactElement }>) => render ? React.cloneElement(render, {}, children) : <>{children}</>,
 }));
+mock.module("../src/components/ui/tooltip", () => ({
+  Tooltip: PrimitiveContainer,
+  TooltipContent: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => <div role="tooltip" {...props}>{children}</div>,
+  TooltipTrigger: ({ children, render, ...props }: React.PropsWithChildren<{ render: React.ReactElement }>) => React.cloneElement(render, props, children),
+}));
 mock.module("../src/components/ui/dialog", () => ({
   Dialog: PrimitiveContainer,
   DialogContent: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => <div role="dialog" {...props}>{children}</div>,
@@ -92,6 +97,7 @@ const { TaskPage, TaskShellContent } = await import("../src/react-app/domains/ta
 const { TaskAttachmentSection } = await import("../src/react-app/domains/tasks/task-attachment-section");
 const { TaskCommentEditor, TaskDescriptionEditor } = await import("../src/react-app/domains/tasks/task-description-editor");
 const { TaskDateTimeCell } = await import("../src/react-app/domains/tasks/task-date-time-cell");
+const { TaskSubtasksSection } = await import("../src/react-app/domains/tasks/task-subtasks-section");
 const { useUiStateStore } = await import("../src/react-app/shell/ui-state-store");
 const queryClients = new Set<QueryClient>();
 
@@ -202,6 +208,10 @@ function connectedPage(client: DenClient, routeTaskId?: string) {
 
 async function settle() {
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+}
+
+function clickTaskRow(row: TestRenderer.ReactTestInstance) {
+  row.props.onClick({ target: row, currentTarget: row });
 }
 
 async function openDetailDescription(root: TestRenderer.ReactTestInstance) {
@@ -450,6 +460,10 @@ test("selecting Assigned by me queries explicit assignee exclusion and assigner 
 
 test("six task collection pages share the workbench and apply their visible default filters", async () => {
   const options: Array<Record<string, unknown>> = [];
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  for (const section of ["assigned", "following"] as const) {
+    localStorage.setItem(taskWorkbenchStorageKey(scope, section), JSON.stringify({ subtaskVisibility: "hide" }));
+  }
   const client = connectedClient({
     listProductTasks: async (_orgId, input) => {
       options.push(input ?? {});
@@ -460,12 +474,12 @@ test("six task collection pages share the workbench and apply their visible defa
   await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
   await settle();
   const cases = [
-    { label: "Assigned to me", fields: ["assignee"], query: (input: Record<string, unknown>) => input.view === "all" && input.assigneeMemberOperator === "contains" },
-    { label: "Following", fields: ["follower", "creator", "assignee"], query: (input: Record<string, unknown>) => input.view === "all" && input.followerMemberOperator === "contains" && input.creatorMemberOperator === "not_contains" && input.assigneeMemberOperator === "not_contains" },
-    { label: "All tasks", fields: [], query: (input: Record<string, unknown>) => input.view === "all" && JSON.stringify(input.status) === JSON.stringify(["todo", "completed", "canceled"]) },
-    { label: "Created by me", fields: ["creator"], query: (input: Record<string, unknown>) => input.view === "all" && input.creatorMemberOperator === "contains" },
-    { label: "Assigned by me", fields: ["assignee", "assigner"], query: (input: Record<string, unknown>) => input.view === "all" && input.assigneeMemberOperator === "not_contains" && input.assignerMemberOperator === "contains" },
-    { label: "Completed", fields: [], query: (input: Record<string, unknown>) => input.view === "all" && JSON.stringify(input.status) === JSON.stringify(["completed"]) },
+    { label: "Assigned to me", sort: "updated_at", fields: ["assignee"], query: (input: Record<string, unknown>) => input.view === "all" && input.assigneeMemberOperator === "contains" },
+    { label: "Following", sort: "updated_at", fields: ["follower", "creator", "assignee"], query: (input: Record<string, unknown>) => input.view === "all" && input.followerMemberOperator === "contains" && input.creatorMemberOperator === "not_contains" && input.assigneeMemberOperator === "not_contains" },
+    { label: "All tasks", sort: "due_at", fields: [], query: (input: Record<string, unknown>) => input.view === "all" && JSON.stringify(input.status) === JSON.stringify(["todo", "completed", "canceled"]) },
+    { label: "Created by me", sort: "due_at", fields: ["creator"], query: (input: Record<string, unknown>) => input.view === "all" && input.creatorMemberOperator === "contains" },
+    { label: "Assigned by me", sort: "due_at", fields: ["assignee", "assigner"], query: (input: Record<string, unknown>) => input.view === "all" && input.assigneeMemberOperator === "not_contains" && input.assignerMemberOperator === "contains" },
+    { label: "Completed", sort: "completed_at", fields: [], query: (input: Record<string, unknown>) => input.view === "all" && JSON.stringify(input.status) === JSON.stringify(["completed"]) },
   ];
   try {
     for (const item of cases) {
@@ -476,7 +490,23 @@ test("six task collection pages share the workbench and apply their visible defa
       await settle();
       expect(renderer!.root.findByProps({ "data-testid": "task-workbench-toolbar" })).toBeDefined();
       expect(renderer!.root.findAllByProps({ role: "tab" })).toHaveLength(2);
-      expect(options.slice(before).some(item.query)).toBe(true);
+      const groupMenu = renderer!.root.findByProps({ "data-testid": "task-group-menu" });
+      const groupOptions = groupMenu.findAll((node) => node.type === "button" && typeof node.props.value === "string").map((node) => node.props.value);
+      const subtaskMenus = renderer!.root.findAllByProps({ "data-testid": "task-subtask-visibility-menu" });
+      const sortChoices = renderer!.root.findByProps({ "data-testid": "task-sort-menu" }).findAll((node) => node.props["data-testid"]?.startsWith("task-sort-option-"));
+      if (item.label === "Assigned to me" || item.label === "Following") {
+        expect(sortChoices[0]?.props["data-testid"]).toBe("task-sort-option-manual");
+        expect(groupOptions.at(-1)).toBe("custom");
+        expect(subtaskMenus).toHaveLength(0);
+        await act(async () => { groupMenu.find((node) => typeof node.props.onValueChange === "function").props.onValueChange("custom"); });
+        expect(renderer!.root.findByProps({ "data-testid": "task-custom-group-create-trigger" })).toBeDefined();
+      } else {
+        expect(sortChoices.some((node) => node.props["data-testid"] === "task-sort-option-manual")).toBe(false);
+        expect(groupOptions).not.toContain("custom");
+        expect(subtaskMenus[0]!.find((node) => typeof node.props.onValueChange === "function").props.value).toBe("show");
+      }
+      expect(options.slice(before).some((input) => item.query(input) && !input.excludeSubtasks && input.sort === item.sort && input.direction === "desc")).toBe(true);
+      expect(renderer!.root.findByProps({ "data-testid": `task-sort-${item.sort}-desc` }).props["aria-pressed"]).toBe(true);
       for (const field of item.fields) expect(renderer!.root.findByProps({ "data-testid": `task-filter-condition-${field}` })).toBeDefined();
       expect(renderer!.root.findAll((node) => typeof node.props["data-testid"] === "string" && node.props["data-testid"].startsWith("task-filter-condition-"))).toHaveLength(item.fields.length);
       if (item.label === "Completed") expect(renderer!.root.findByProps({ "data-testid": "task-status-menu" }).props["data-disabled"]).toBeUndefined();
@@ -484,6 +514,353 @@ test("six task collection pages share the workbench and apply their visible defa
   } finally {
     await act(async () => { renderer!.unmount(); });
   }
+});
+
+test.each([false, true])("Completed keeps the same sort for subsequent pages (legacy: %s)", async (legacy) => {
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  sessionValues.set(taskSectionStorageKey(scope), "completed");
+  const older = { ...task(1, "Older completion", "", "older"), status: "completed" as const, completedAt: "2026-11-10T00:00:00Z", updatedAt: "2026-11-23T00:00:00Z" };
+  const newer = { ...task(1, "Newer completion", "", "newer"), status: "completed" as const, completedAt: "2026-11-20T00:00:00Z", updatedAt: "2026-11-21T00:00:00Z" };
+  const read = mock<DenClient["listProductTasks"]>(async (_org, options) => {
+    if (legacy && options?.sort === "completed_at") throw new DenApiError(400, "invalid_task_request", "Unsupported sort");
+    return options?.cursor ? { items: [legacy ? newer : older], nextCursor: "" } : { items: [legacy ? older : newer], nextCursor: "page-two" };
+  });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(connectedClient({ listProductTasks: read }))); });
+  try {
+    const loadMore = () => renderer.root.findAll((node) => node.type === "button" && node.children.includes("Load more"));
+    const ids = () => renderer.root.findAll((node) => node.type === "tr" && node.props["data-task-id"]).map((node) => node.props["data-task-id"]);
+    for (let attempt = 0; attempt < 10 && !loadMore().length; attempt++) await settle();
+    expect(ids()).toEqual([legacy ? "older" : "newer"]);
+    await act(async () => { loadMore()[0]!.props.onClick(); });
+    for (let attempt = 0; attempt < 10 && ids().length < 2; attempt++) await settle();
+    expect(ids()).toEqual(["newer", "older"]);
+    expect(read.mock.calls.map(([, options]) => [options?.sort, options?.direction, options?.cursor])).toEqual(legacy
+      ? [["completed_at", "desc", undefined], ["updated_at", "desc", undefined], ["updated_at", "desc", "page-two"]]
+      : [["completed_at", "desc", undefined], ["completed_at", "desc", "page-two"]]);
+    expect(renderer.root.findAll((node) => node.type === "p" && node.children.includes("This time field sorts the currently loaded tasks."))).toHaveLength(legacy ? 1 : 0);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("manual task ordering survives reload and pagination without writing tasks or changing other views", async () => {
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  sessionValues.set(taskSectionStorageKey(scope), "assigned");
+  localValues.set(taskWorkbenchStorageKey(scope, "assigned"), JSON.stringify({ sort: "due_at", direction: "asc" }));
+  const first = { ...task(1, "First", "", "first"), subtaskCount: 1 };
+  const second = task(1, "Second", "", "second");
+  const third = task(1, "Third", "", "third");
+  const child = task(1, "Child", "", "child");
+  const read = mock<DenClient["listProductTasks"]>(async (_org, options) => {
+    if (options?.parentTaskId) return { items: [child], nextCursor: "" };
+    return options?.cursor ? { items: [third], nextCursor: "" } : { items: [first, second], nextCursor: "next" };
+  });
+  const update = mock<DenClient["updateProductTask"]>();
+  const client = connectedClient({ listProductTasks: read, updateProductTask: update });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  const mount = async () => { await act(async () => { renderer = TestRenderer.create(connectedPage(client)); }); };
+  const find = (id: string) => renderer.root.findByProps({ "data-testid": id });
+  const rootRows = () => renderer.root.findAll((node) => node.type === "tr" && node.props["data-task-depth"] === 0);
+  const rootIds = () => rootRows().map((node) => node.props["data-task-id"]);
+  const waitFor = async (count: number) => { for (let attempt = 0; attempt < 10 && rootRows().length !== count; attempt++) await settle(); };
+  await mount();
+  try {
+    await waitFor(2);
+    expect(rootIds()).toEqual(["first", "second"]);
+    const childRow = () => renderer.root.findAll((node) => node.type === "tr" && node.props["data-task-depth"] === 1);
+    for (let attempt = 0; attempt < 10 && !childRow().length; attempt++) await settle();
+    expect(childRow()).toHaveLength(1);
+    expect(childRow()[0]!.props.onDrop).toBeUndefined();
+    expect(renderer.root.findAllByProps({ "data-testid": "task-reorder-child" })).toHaveLength(0);
+    const sortOption = (sort: string) => find(`task-sort-option-${sort}`).findByProps({ role: "radio" });
+    expect(sortOption("due_at").props["aria-checked"]).toBe(true);
+    expect(renderer.root.findAllByProps({ "data-testid": "task-reorder-second" })).toHaveLength(0);
+    expect(rootRows()[0]!.props.onDrop).toBeUndefined();
+    const before = read.mock.calls.filter(([, options]) => !options?.parentTaskId).length;
+    await act(async () => { sortOption("manual").props.onClick(); });
+    expect(rootIds()).toEqual(["first", "second"]);
+    const handle = find("task-reorder-second");
+    expect(handle.props.className).toContain("group-hover:opacity-100");
+    expect(handle.props.className).toContain("focus-visible:opacity-100");
+    const dataTransfer = { setData() {}, dropEffect: "none" };
+    const event = { preventDefault() {}, clientY: 1, dataTransfer, currentTarget: { getBoundingClientRect: () => ({ top: 0, height: 40 }) } };
+    await act(async () => { handle.props.onDragStart({ dataTransfer }); rootRows()[0]!.props.onDragOver(event); });
+    expect(rootRows()[1]!.props["data-dragging"]).toBe(true);
+    expect(rootRows()[0]!.props["data-drop-placement"]).toBe("before");
+    await act(async () => { handle.props.onDragEnd(); });
+    expect(rootRows().every((row) => !row.props["data-dragging"] && !row.props["data-drop-placement"])).toBe(true);
+    expect(rootIds()).toEqual(["first", "second"]);
+    await act(async () => { handle.props.onDragStart({ dataTransfer }); });
+    await act(async () => { rootRows()[0]!.props.onDrop(event); });
+    expect(rootIds()).toEqual(["second", "first"]);
+    expect(rootRows().every((row) => !row.props["data-dragging"])).toBe(true);
+    expect(find("task-sort-option-manual").findByProps({ role: "radio" }).props["aria-checked"]).toBe(true);
+    expect(read.mock.calls.filter(([, options]) => !options?.parentTaskId)).toHaveLength(before);
+    expect(JSON.parse(localValues.get(taskWorkbenchStorageKey(scope, "assigned"))!)).toMatchObject({ sort: "manual", manualOrder: ["second", "first"], manualFetchOrder: { sort: "due_at", direction: "asc" } });
+    await act(async () => { renderer.root.find((node) => node.type === "button" && node.children.includes("Load more")).props.onClick(); });
+    await waitFor(3);
+    expect(rootIds()).toEqual(["second", "first", "third"]);
+    expect(read.mock.calls.some(([, options]) => options?.sort === "due_at" && options.direction === "asc" && options.cursor === "next")).toBe(true);
+    await act(async () => { renderer.unmount(); });
+    await mount();
+    await waitFor(2);
+    expect(rootIds()).toEqual(["second", "first"]);
+    await act(async () => { find("task-sort-due_at-asc").props.onClick(); });
+    expect(rootIds()).toEqual(["first", "second"]);
+    expect(renderer.root.findAllByProps({ "data-testid": "task-reorder-first" })).toHaveLength(0);
+    await act(async () => { sortOption("manual").props.onClick(); });
+    expect(rootIds()).toEqual(["second", "first"]);
+    await act(async () => { find("task-reorder-first").props.onKeyDown({ key: "ArrowUp", preventDefault() {} }); });
+    expect(rootIds()).toEqual(["first", "second"]);
+    const following = find("tasks-sidebar").findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Following"))!;
+    await act(async () => { following.props.onClick(); });
+    await waitFor(2);
+    expect(find("task-sort-option-manual").findByProps({ role: "radio" }).props["aria-checked"]).toBe(false);
+    expect(update).not.toHaveBeenCalled();
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("list drag changes only personal custom-group membership under time sorting", async () => {
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  const storageKey = taskWorkbenchStorageKey(scope, "assigned");
+  const preferences = { sort: "start_at", direction: "asc", manualOrder: ["third", "second", "first"], manualFetchOrder: { sort: "due_at", direction: "desc" } };
+  sessionValues.set(taskSectionStorageKey(scope), "assigned");
+  localValues.set(storageKey, JSON.stringify({ ...preferences, group: "custom", customGroups: [{ id: "planning", name: "Planning" }] }));
+  const entries = [
+    { ...task(1, "Third", "", "third"), startAt: "2026-11-27T10:00:00Z" },
+    { ...task(1, "First", "", "first"), startAt: "2026-11-25T10:00:00Z" },
+    { ...task(1, "Second", "", "second"), startAt: "2026-11-26T10:00:00Z" },
+  ];
+  const update = mock<DenClient["updateProductTask"]>();
+  const client = connectedClient({ listProductTasks: async () => ({ items: entries, nextCursor: "" }), updateProductTask: update });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  const mount = async () => {
+    await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+    for (let attempt = 0; attempt < 10 && rows().length !== 3; attempt++) await settle();
+  };
+  const find = (id: string) => renderer.root.findByProps({ "data-testid": id });
+  const rows = () => renderer.root.findAll((node) => node.type === "tr" && node.props["data-task-depth"] === 0);
+  const row = (id: string) => rows().find((node) => node.props["data-task-id"] === id)!;
+  const header = (key: string) => renderer.root.find((node) => node.type === "tr" && node.props["data-testid"] === `task-group-row-${key}`);
+  const rowIds = () => rows().map((node) => node.props["data-task-id"]);
+  const saved = () => JSON.parse(localValues.get(storageKey)!);
+  const dataTransfer = { setData() {}, dropEffect: "none" };
+  const event = { preventDefault: mock(() => {}), dataTransfer, currentTarget: { getBoundingClientRect: () => ({ top: 0, height: 40 }) }, clientY: 39 };
+  const start = (id: string) => find(`task-reorder-${id}`).props.onDragStart({ dataTransfer });
+  const drop = async (id: string, target: () => TestRenderer.ReactTestInstance) => {
+    await act(async () => { start(id); target().props.onDragOver(event); });
+    expect(target().props["data-drop-placement"]).toBe("group");
+    await act(async () => { target().props.onDrop(event); });
+  };
+  await mount();
+  try {
+    expect(rowIds()).toEqual(["first", "second", "third"]);
+    expect(find("task-group-toggle-planning").props["aria-expanded"]).toBe(false);
+    expect(find("task-reorder-first").props.onKeyDown).toBeUndefined();
+    await act(async () => { start("first"); row("second").props.onDragOver(event); row("second").props.onDrop(event); header("custom-default").props.onDrop(event); });
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(row("second").props["data-drop-placement"]).toBeUndefined();
+    expect(rowIds()).toEqual(["first", "second", "third"]);
+    expect(saved()).toMatchObject(preferences);
+
+    await drop("third", () => header("planning"));
+    expect(rowIds()).toEqual(["first", "second", "third"]);
+    expect(find("task-group-toggle-planning").props["aria-expanded"]).toBe(true);
+    await drop("first", () => row("third"));
+    expect(rowIds()).toEqual(["second", "first", "third"]);
+    expect(saved()).toMatchObject({ ...preferences, customGroupAssignments: { first: "planning", third: "planning" } });
+
+    await act(async () => renderer.unmount());
+    await mount();
+    expect(rowIds()).toEqual(["second", "first", "third"]);
+    await drop("first", () => header("custom-default"));
+    expect(rowIds()).toEqual(["first", "second", "third"]);
+    expect(saved()).toMatchObject({ ...preferences, customGroupAssignments: { third: "planning" } });
+    expect(localValues.has(taskWorkbenchStorageKey(scope, "following"))).toBe(false);
+    expect(update).not.toHaveBeenCalled();
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("list titles save on blur across root and expanded placements and preserve concurrent changes", async () => {
+  const parent = { ...task(1, "Parent", "", "parent"), subtaskCount: 1 };
+  let child = { ...task(1, "Child", "Keep the description", "child"), parentTask: { id: parent.id, title: parent.title } };
+  sessionValues.set(taskSectionStorageKey({ baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" }), "all");
+  let allowed = true;
+  const detail = () => ({ ...result(child), permissions: { ...result(child).permissions, canEditContent: allowed } });
+  const update = mock<DenClient["updateProductTask"]>(async (_org, id, input) => {
+    expect(id).toBe(child.id);
+    child = { ...child, title: input.title!, version: child.version + 1 };
+    return detail();
+  });
+  const client = connectedClient({
+    listProductTasks: async (_org, options) => ({ items: options?.parentTaskId ? [child] : [parent, child], nextCursor: "" }),
+    getProductTask: async (_org, id) => id === child.id ? detail() : result(parent),
+    updateProductTask: update,
+  });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  const row = (depth: number) => renderer.root.find(node => node.type === "tr" && node.props["data-task-id"] === child.id && node.props["data-task-depth"] === depth);
+  const input = (depth: number) => row(depth).findByProps({ "aria-label": "Task title" });
+  const edit = async (depth: number, value: string) => {
+    await act(async () => { row(depth).findByProps({ title: child.title }).props.onClick(); });
+    await act(async () => { input(depth).props.onChange({ currentTarget: { value } }); });
+  };
+  const blur = (depth: number) => act(async () => { const editor = input(depth); editor.props.onBlur({ currentTarget: { value: editor.props.value } }); });
+  const cancel = (depth: number) => act(async () => { input(depth).props.onKeyDown({ key: "Escape", nativeEvent: {}, preventDefault() {} }); });
+  try {
+    await settle();
+    await edit(1, "  Renamed  ");
+    expect(renderer.root.findAllByProps({ "data-testid": "task-detail-panel" })).toHaveLength(0);
+    expect(update).not.toHaveBeenCalled();
+    await blur(1);
+    await settle();
+    expect(update.mock.calls[0]?.[2]).toEqual({ expectedVersion: 1, title: "Renamed", idempotencyKey: expect.any(String) });
+    for (const depth of [0, 1]) expect(row(depth).findByProps({ title: "Renamed" })).toBeDefined();
+    await edit(0, "Abandoned");
+    await cancel(0);
+    await edit(0, "   ");
+    await blur(0);
+    await edit(0, "My draft");
+    child = { ...child, title: "Changed elsewhere", version: 3 };
+    await blur(0);
+    await settle();
+    expect(input(0).props.value).toBe("My draft");
+    expect(row(0).findByProps({ role: "alert" })).toBeDefined();
+    await cancel(0);
+    allowed = false;
+    await edit(0, "Unauthorized");
+    await blur(0);
+    expect(update).toHaveBeenCalledTimes(1);
+    await act(async () => { clickTaskRow(row(1)); });
+    await settle();
+    expect(renderer.root.findByProps({ "data-testid": "task-detail-panel" })).toBeDefined();
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("list group drop moves only the dragged filing and confirms the destination's current sharing version", async () => {
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  sessionValues.set(taskSectionStorageKey(scope), "assigned");
+  localValues.set(taskWorkbenchStorageKey(scope, "assigned"), JSON.stringify({ group: "list", sort: "due_at" }));
+  const source = { ...destination, id: "source", name: "Source" };
+  const retained = { ...destination, id: "retained", name: "Retained" };
+  const target = { ...destination, id: "target", name: "Shared target", grantsTaskAccess: true, visibility: "organization" as const, version: 17 };
+  const lists = [source, retained, target];
+  let entry = { ...task(1, "Filed task", "", "entry"), listId: retained.id, listIds: [retained.id, source.id], listFilingMoveSupported: true };
+  const legacy = task(1, "Legacy task", "", "older");
+  const move = mock<DenClient["moveProductTaskFiling"]>(async (_org, taskId, { sourceListId, destinationListId }) => {
+    entry = { ...entry, listIds: [retained.id, target.id] };
+    return { taskId, sourceListId, destinationListId };
+  });
+  const toggle = mock<DenClient["setProductTaskListMembership"]>();
+  const client = connectedClient({
+    listProductTasks: async () => ({ items: [entry, legacy], nextCursor: "" }),
+    listProductTaskLists: async () => ({ items: lists.map((list) => ({ ...list, version: 1 })), nextCursor: "" }),
+    getProductTaskList: async (_org, id) => ({ ...destinationResult(), list: lists.find((list) => list.id === id)! }),
+    moveProductTaskFiling: move,
+    setProductTaskListMembership: toggle,
+  });
+  const originalConfirm = globalThis.confirm;
+  let accept = false;
+  const confirm = mock(() => accept);
+  globalThis.confirm = confirm;
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  try {
+    const rows = () => renderer.root.findAll((node) => node.type === "tr");
+    const header = (id: string) => rows().find((row) => row.props["data-testid"] === `task-group-row-${id}`)!;
+    const placed = (id: string) => rows()[rows().indexOf(header(id)) + 1]?.props["data-task-id"] === entry.id;
+    for (let i = 0; i < 10 && !placed(source.id); i++) await settle();
+    expect(placed(retained.id)).toBe(true);
+    expect(placed(source.id)).toBe(true);
+    expect(placed(target.id)).toBe(false);
+    expect(renderer.root.findAllByProps({ "data-testid": "task-reorder-older" })).toHaveLength(0);
+    const drop = async (id: string) => {
+      const dataTransfer = { setData() {}, dropEffect: "none" };
+      const handle = rows()[rows().indexOf(header(source.id)) + 1]!.findByProps({ "data-testid": "task-reorder-entry" });
+      await act(async () => { handle.props.onDragStart({ dataTransfer }); header(id).props.onDragOver({ preventDefault() {}, dataTransfer }); header(id).props.onDrop({ preventDefault() {}, dataTransfer }); handle.props.onDragEnd(); });
+      await settle();
+      return dataTransfer.dropEffect;
+    };
+    expect(await drop("")).toBe("none");
+    expect(confirm).not.toHaveBeenCalled();
+    expect(await drop(target.id)).toBe("move");
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(move).not.toHaveBeenCalled();
+    expect(placed(source.id)).toBe(true);
+    accept = true;
+    await drop(target.id);
+    expect(move).toHaveBeenCalledTimes(1);
+    expect(move).toHaveBeenCalledWith("org_one", entry.id, { sourceListId: source.id, destinationListId: target.id, confirmedAccessVersion: 17 });
+    for (let i = 0; i < 10 && !placed(target.id); i++) await settle();
+    expect(placed(target.id)).toBe(true);
+    expect(placed(retained.id)).toBe(true);
+    expect(placed(source.id)).toBe(false);
+    expect(toggle).not.toHaveBeenCalled();
+  } finally { globalThis.confirm = originalConfirm; await act(async () => renderer.unmount()); }
+});
+
+test("personal custom groups can organize existing tasks independently by view", async () => {
+  const entry = task(1, "Task to organize");
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  const assigned = taskWorkbenchStorageKey(scope, "assigned");
+  const following = taskWorkbenchStorageKey(scope, "following");
+  localStorage.setItem(assigned, JSON.stringify({ group: "custom", customGroups: [{ id: "planning", name: "Planning" }] }));
+  const client = connectedClient({
+    listProductTasks: async () => ({ items: [entry], nextCursor: "" }),
+    getProductTask: async () => result(entry),
+  });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  try {
+    const sidebar = renderer.root.findByProps({ "data-testid": "tasks-sidebar" });
+    const assignedButton = sidebar.findAllByType("button").find((node) => Array.isArray(node.props.children) && node.props.children.includes("Assigned to me"))!;
+    await act(async () => { assignedButton.props.onClick(); });
+    await settle();
+    await act(async () => { clickTaskRow(renderer.root.findByProps({ "data-task-id": entry.id })); });
+    await settle();
+    const panel = renderer.root.findByProps({ "data-testid": "task-detail-panel" });
+    await act(async () => { panel.findByProps({ "data-testid": "task-detail-group-planning" }).props.onClick(); });
+    expect(panel.findByProps({ "data-testid": "task-detail-group-trigger" }).props.title).toBe("Planning");
+    expect(JSON.parse(localStorage.getItem(assigned)!).customGroupAssignments).toEqual({ [entry.id]: "planning" });
+    expect(localStorage.getItem(following)).toBeNull();
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("hiding outer subtasks preserves nested expansion and applies the completed query filters", async () => {
+  const parent = { ...task(1, "Completed parent", "", "parent"), status: "completed" as const, subtaskCount: 1 };
+  const child = { ...task(1, "Completed child", "", "child"), status: "completed" as const, parentTask: { id: parent.id, title: parent.title } };
+  const read = mock<DenClient["listProductTasks"]>(async (_org, input) => ({
+    items: input?.parentTaskId === parent.id ? [child] : input?.excludeSubtasks ? [parent] : [parent, child],
+    nextCursor: "",
+  }));
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(connectedClient({ listProductTasks: read }))); });
+  try {
+    const selectCompleted = () => renderer.root.findByProps({ "data-testid": "tasks-sidebar" }).findAllByType("button").find((node) => Array.isArray(node.props.children) && node.props.children.includes("Completed"))!.props.onClick();
+    await act(async () => { selectCompleted(); });
+    const menu = () => renderer.root.findByProps({ "data-testid": "task-subtask-visibility-menu" }).find((node) => typeof node.props.onValueChange === "function");
+    const childDepths = () => renderer.root.findAll((node) => node.type === "tr" && node.props["data-task-id"] === child.id).map((node) => node.props["data-task-depth"]);
+    for (let attempt = 0; attempt < 10 && childDepths().length !== 2; attempt++) await settle();
+    expect(childDepths()).toEqual([1, 0]);
+
+    await act(async () => { menu().props.onValueChange("hide"); });
+    for (let attempt = 0; attempt < 10 && !read.mock.calls.some(([, options]) => options?.excludeSubtasks); attempt++) await settle();
+    expect(read).toHaveBeenCalledWith("org_one", expect.objectContaining({ view: "all", status: ["completed"], excludeSubtasks: true }), expect.any(Object));
+    const toggle = () => renderer.root.findByProps({ "data-testid": "task-subtasks-toggle-parent" });
+    expect(toggle().props["aria-expanded"]).toBe(true);
+    await act(async () => { toggle().props.onClick(); });
+    expect(childDepths()).toEqual([]);
+    const readsBeforeExpansion = read.mock.calls.length;
+    await act(async () => { toggle().props.onClick(); });
+    for (let attempt = 0; attempt < 10 && childDepths().length !== 1; attempt++) await settle();
+    expect(read.mock.calls.slice(readsBeforeExpansion).some(([, options]) => options?.parentTaskId === parent.id && !options.excludeSubtasks)).toBe(true);
+    expect(childDepths()).toEqual([1]);
+    const stored = localStorage.getItem(taskWorkbenchStorageKey({ baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" }, "completed"));
+    expect(JSON.parse(stored!).subtaskVisibility).toBe("hide");
+
+    await act(async () => { menu().props.onValueChange("show"); });
+    for (let attempt = 0; attempt < 10 && childDepths().length !== 2; attempt++) await settle();
+    expect(childDepths()).toEqual([1, 0]);
+  } finally { await act(async () => renderer.unmount()); }
 });
 
 test("selecting a sidebar task list constrains the shared workbench query", async () => {
@@ -509,6 +886,11 @@ test("selecting a sidebar task list constrains the shared workbench query", asyn
     expect(renderer!.root.findByProps({ "data-testid": "tasks-page-title" }).props.children).toBe("Sidebar list");
     expect(renderer!.root.findByProps({ "data-testid": "task-group-row-custom-default" })).toBeDefined();
     expect(renderer!.root.findByProps({ "data-testid": "task-custom-group-create-trigger" })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-subtask-visibility-menu" })).toHaveLength(0);
+    const sortMenu = renderer!.root.findByProps({ "data-testid": "task-sort-menu" });
+    expect(sortMenu.findAll((node) => node.props["data-testid"]?.startsWith("task-sort-option-"))[0]?.props["data-testid"]).toBe("task-sort-option-manual");
+    const groupMenu = renderer!.root.findByProps({ "data-testid": "task-group-menu" });
+    expect(groupMenu.findAll((node) => node.type === "button" && typeof node.props.value === "string").map((node) => node.props.value).at(-1)).toBe("custom");
     const updatedSidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
     const selectedListButton = updatedSidebar.findByProps({ "data-testid": "tasks-sidebar-list-list_sidebar" });
     const allTasksButton = updatedSidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("All tasks"))!;
@@ -975,8 +1357,10 @@ test("Assigned to me shows only List and Board tabs and the two creation options
     expect(renderer!.root.findByProps({ placeholder: "Enter a title and press Enter" })).toBeDefined();
     const descriptionEditor = fullCreateDialog.findByType(TaskDescriptionEditor);
     expect(descriptionEditor.props.value).toBe("");
-    expect(descriptionEditor.findByProps({ "data-testid": "task-create-description-editor" })).toBeDefined();
-    expect(descriptionEditor.findByProps({ "data-testid": "task-description-attachment" }).props.disabled).toBe(false);
+    expect(descriptionEditor.props.compact).toBe(true);
+    expect(descriptionEditor.props.separateAttachments).toBe(true);
+    expect(fullCreateDialog.findByProps({ "data-testid": "task-add-subtask" })).toBeDefined();
+    expect(fullCreateDialog.findByType(TaskAttachmentSection).props.upload).toBeFunction();
     expect(renderer!.root.findByProps({ "data-testid": "task-create-followers-trigger" })).toBeDefined();
     expect(renderer!.root.findByProps({ "data-testid": "task-create-footer" }).props.className).toContain("sm:justify-between");
     expect(fullCreateDialog.findAllByType("button").find((button) => button.props.type === "submit")?.props.children).toBe("Create");
@@ -1024,7 +1408,6 @@ test("task file consumers bind uploads to the current org/task, and creation wai
     await act(async () => root.findByProps({ "data-testid": "task-create-menu" }).findAllByType("button")[0].props.onClick());
     const dialog = root.findByProps({ "data-testid": "task-create-dialog" });
     await act(async () => dialog.findByProps({ autoFocus: true, placeholder: "Enter a title and press Enter" }).props.onChange({ target: { value: "Draft" } }));
-    await act(async () => dialog.findByProps({ "data-testid": "task-description-attachment" }).props.onClick());
     uploadBusinessFile.mockReturnValueOnce(receipt.promise);
     await act(async () => dialog.findByProps({ type: "file" }).props.onChange({ currentTarget: { files: [file] } }));
     expect(uploadBusinessFile).toHaveBeenLastCalledWith({ client, organizationId: "org_one", taskId: undefined, purpose: "task_attachment", file, signal: expect.any(AbortSignal) });
@@ -1034,6 +1417,55 @@ test("task file consumers bind uploads to the current org/task, and creation wai
     await act(async () => receipt.resolve({ url: "https://files.test/map.png", name: file.name }));
     await act(async () => dialog.findByType("form").props.onSubmit({ preventDefault() {} }));
     expect(create).toHaveBeenCalledWith("org_one", expect.objectContaining({ title: "Draft", description: '[map.png](https://files.test/map.png "task-file:4")' }));
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("full create stages children locally and retries only the remaining child after a partial save", async () => {
+  const parent = { ...task(1, "Parent", "", "parent"), subtaskCount: 0 };
+  let fail = true;
+  const create = mock<DenClient["createProductTask"]>(async (_org, input) => {
+    if (!input.parentTaskId) return result(parent);
+    if (input.title === "Second" && fail) { fail = false; throw new Error("Temporarily unavailable"); }
+    return result({ ...task(1, input.title, "", input.title), parentTask: { id: parent.id, title: parent.title } });
+  });
+  const client = connectedClient({ createProductTask: create, getProductTask: async () => result(parent) });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  const root = renderer.root;
+  const find = (id: string) => root.findByProps({ "data-testid": id });
+  const open = () => act(async () => { find("task-create-menu").findAllByType("button")[0]!.props.onClick(); });
+  const add = async (title: string) => {
+    await act(async () => { find("task-add-subtask").props.onClick(); });
+    await act(async () => { find("task-subtask-title").props.onChange({ currentTarget: { value: title } }); });
+  };
+  const submit = async () => { await act(async () => { find("task-create-dialog").findByType("form").props.onSubmit({ preventDefault() {} }); }); await settle(); };
+  try {
+    await act(async () => { find("tasks-sidebar").findAllByType("button").find(b => Array.isArray(b.props.children) && b.props.children.includes("Assigned to me"))!.props.onClick(); });
+    await open();
+    await add("Discarded");
+    await act(async () => { find("task-create-footer").findAllByType("button").find(b => b.props.children === "Cancel")!.props.onClick(); });
+    expect(create).not.toHaveBeenCalled();
+    await open();
+    await act(async () => { root.findByProps({ placeholder: "Enter a title and press Enter" }).props.onChange({ target: { value: "Parent" } }); });
+    await add("First");
+    const composer = find("task-subtask-composer");
+    const dateCell = composer.find(node => typeof node.type === "function" && node.props.dueOnly === true && node.props.task);
+    await act(async () => { await dateCell.props.onChange(dateCell.props.task, "dueAt", "2026-12-10T00:00:00Z"); });
+    const people = composer.find(node => typeof node.type === "function" && node.props.avatarOnly === true);
+    await act(async () => { await people.props.onChange(people.props.task, ["member_other"]); });
+    await act(async () => { find("task-subtask-title").props.onKeyDown({ key: "Enter", nativeEvent: {}, preventDefault() {}, currentTarget: { value: "First" } }); });
+    await add("Second");
+    expect(create).not.toHaveBeenCalled();
+    await submit();
+    expect(create.mock.calls.map(([, input]) => input.title)).toEqual(["Parent", "First", "Second"]);
+    expect(create.mock.calls[1]![1]).toMatchObject({ parentTaskId: "parent", dueAt: "2026-12-10T00:00:00Z", visibility: "members", members: [{ memberId: "member_other", role: "assignee" }] });
+    expect(find("task-create-dialog").findAllByProps({ role: "alert" }).length).toBeGreaterThan(0);
+    await submit();
+    expect(create.mock.calls.map(([, input]) => input.title)).toEqual(["Parent", "First", "Second", "Second"]);
+    expect(create.mock.calls[3]![1]).toEqual(create.mock.calls[2]![1]);
+    expect(root.findAllByProps({ "data-testid": "task-create-dialog" })).toHaveLength(0);
+    expect(find("task-detail-panel")).toBeDefined();
   } finally { await act(async () => renderer.unmount()); }
 });
 
@@ -1311,10 +1743,14 @@ test("full task creation keeps the selected start and due dates independent", as
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
-test("full task creation can set one priority and assign a custom group", async () => {
+test("full task creation can set a priority and a custom group for the chosen task list", async () => {
   const created = task(1, "Grouped task", "", "grouped_task");
+  const list: DenProductTaskList = { id: "list_grouped", creatorMemberId: "member_self", name: "Planning list", description: "", marker: "P", visibility: "private", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
   const priorities: Array<DenProductTask["priority"] | undefined> = [];
-  const client = connectedClient({ createProductTask: async (_orgId, input) => { priorities.push(input.priority); return result(created); } });
+  const client = connectedClient({
+    listProductTaskLists: async () => ({ items: [list], nextCursor: "" }),
+    createProductTask: async (_orgId, input) => { priorities.push(input.priority); return result({ ...created, listId: input.listId ?? null }); },
+  });
   let renderer: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
   await settle();
@@ -1324,6 +1760,8 @@ test("full task creation can set one priority and assign a custom group", async 
     await act(async () => { assigned.props.onClick(); });
     await settle();
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-menu" }).findAllByType("button")[0]!.props.onClick(); });
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-create-group-trigger" })).toHaveLength(0);
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-option-create-dialog-draft-list_grouped" }).props.onClick(); });
     await act(async () => { renderer!.root.findByProps({ placeholder: "Enter a title and press Enter" }).props.onChange({ target: { value: "Grouped task" } }); });
     const priority = renderer!.root.findByProps({ "data-testid": "task-create-priority" });
     expect(priority.props.value).toBe("none");
@@ -1334,7 +1772,7 @@ test("full task creation can set one priority and assign a custom group", async 
     await act(async () => { renderer!.root.findByProps({ role: "dialog" }).findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
     await settle();
     expect(priorities).toEqual(["medium"]);
-    const settings = JSON.parse(localValues.get(taskWorkbenchStorageKey({ baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" }, "assigned")) ?? "{}") as { customGroups?: Array<{ id: string; name: string }>; customGroupAssignments?: Record<string, string> };
+    const settings = JSON.parse(localValues.get(taskWorkbenchStorageKey({ baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" }, "all", list.id)) ?? "{}") as { customGroups?: Array<{ id: string; name: string }>; customGroupAssignments?: Record<string, string> };
     expect(settings.customGroups?.[0]?.name).toBe("Planning");
     expect(settings.customGroupAssignments?.grouped_task).toBe(settings.customGroups?.[0]?.id);
   } finally {
@@ -1373,7 +1811,7 @@ test("task priority saves from the workbench and detail only with current edit p
     await settle();
     expect(listPriority().props.value).toBe("low");
     expect(activityRefreshes).toEqual(["none", "low"]);
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-title-cell-priority_task" }).findByProps({ children: "Prioritize this task" }).props.onClick(); });
+    await act(async () => { clickTaskRow(renderer!.root.findByProps({ "data-task-id": "priority_task" })); });
     await settle();
     const detailPriority = () => renderer!.root.findByProps({ "data-testid": "task-detail-priority" });
     await act(async () => { detailPriority().props.onChange({ currentTarget: { value: "high" } }); });
@@ -1389,37 +1827,506 @@ test("task priority saves from the workbench and detail only with current edit p
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
-test("workbench transitions fetch authoritative detail before permission and confirmation checks", async () => {
-  const listed = task(1, "Shared task", "", "shared_task");
-  const authoritative = result({ ...listed, version: 4 });
-  authoritative.members = [{ memberId: "member_one", role: "assignee" }, { memberId: "member_two", role: "assignee" }];
-  const gets: string[] = [];
-  const transitions: Array<Record<string, unknown>> = [];
-  const client = connectedClient({
-    listProductTasks: async () => ({ items: [listed], nextCursor: "" }),
-    getProductTask: async (_orgId, taskId) => { gets.push(taskId); return authoritative; },
-    transitionProductTask: async (_orgId, _taskId, _operation, input) => { transitions.push(input); return authoritative; },
+test("detail creates a linked subtask and completes it independently with refreshed progress", async () => {
+  const parent = { ...task(1, "Parent", "", "parent"), listIds: ["parent_list"] };
+  let child: DenProductTask | undefined;
+  const currentParent = () => ({ ...parent, subtaskCount: child ? 1 : 0, completedSubtaskCount: child?.status === "completed" ? 1 : 0 });
+  const childReads: unknown[] = [];
+  const create = mock<DenClient["createProductTask"]>(async (_org, input) => {
+    child = { ...task(1, input.title, "", "child"), listIds: [], parentTask: { id: parent.id, title: parent.title }, subtaskCount: 0, completedSubtaskCount: 0 };
+    return result(child);
   });
-  const originalConfirm = globalThis.confirm;
-  let confirmations = 0;
-  globalThis.confirm = () => { confirmations += 1; return false; };
-  let renderer: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
-  await settle();
+  const transition = mock<DenClient["transitionProductTask"]>(async () => {
+    child = { ...child!, status: "completed", version: 2 };
+    return result(child);
+  });
+  const client = connectedClient({
+    getProductTask: async (_org, id) => result(id === parent.id ? currentParent() : child!),
+    listProductTasks: async (_org, options) => {
+      if (options?.parentTaskId) childReads.push(options);
+      return { items: options?.parentTaskId && child ? [child] : [], nextCursor: "" };
+    },
+    createProductTask: create,
+    transitionProductTask: transition,
+  });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, parent.id)); });
   try {
-    const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
+    await settle();
+    const find = (id: string) => renderer.root.find((node) => typeof node.type === "string" && node.props["data-testid"] === id);
+    await act(async () => { find("task-add-subtask").props.onClick(); });
+    await act(async () => { find("task-subtask-title").props.onChange({ currentTarget: { value: "Child" } }); });
+    const pressEnter = (isComposing: boolean) => act(async () => { find("task-subtask-title").props.onKeyDown({ key: "Enter", nativeEvent: { isComposing }, preventDefault() {}, currentTarget: { value: "Child" } }); });
+    await pressEnter(true);
+    expect(create).not.toHaveBeenCalled();
+    await pressEnter(false);
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await settle();
+      if (renderer.root.findAllByProps({ "data-testid": "task-subtask-transition-child" }).length) break;
+    }
+    expect(create).toHaveBeenCalledWith("org_one", { parentTaskId: parent.id, title: "Child", visibility: "private", members: [], dueAt: null, idempotencyKey: expect.any(String) });
+    expect(find("task-subtasks-progress").children.join("")).toBe("0 / 1");
+    expect(find("task-subtasks-progress-bar").props.className).toContain("bg-gray-6");
+    expect(find("task-subtasks-progress-bar").children).toHaveLength(0);
+    expect(childReads[0]).toEqual({ view: "all", parentTaskId: parent.id, sort: "created_at", direction: "asc", limit: 30, cursor: undefined });
+    await act(async () => { find("task-subtask-transition-child").props.onClick(); });
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await settle();
+      if (find("task-subtasks-progress").children.join("") === "1 / 1") break;
+    }
+    expect(transition).toHaveBeenCalledWith("org_one", "child", "complete", { expectedVersion: 1, idempotencyKey: expect.any(String) });
+    expect(find("task-subtasks-progress").children.join("")).toBe("1 / 1");
+    expect((find("task-subtasks-progress-bar").children[0] as TestRenderer.ReactTestInstance).props.className).toContain("bg-green-9");
+    expect(currentParent().status).toBe("todo");
+    expect(child?.listIds).toEqual([]);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("subtask detail shows partial progress and sends the shared picker deadline only on submission", async () => {
+  const parent = { ...task(1, "Parent", "", "parent"), subtaskCount: 3, completedSubtaskCount: 1 };
+  const existing = { ...task(1, "Existing child", "", "existing"), dueAt: new Date(2026, 10, 27).toISOString() };
+  const create = mock<DenClient["createProductTask"]>(async (_org, input) => result(task(1, input.title, "", "child")));
+  const update = mock<DenClient["updateProductTask"]>();
+  const client = connectedClient({ getProductTask: async () => result(parent), createProductTask: create, updateProductTask: update, listProductTasks: async (_org, query) => ({ items: query?.parentTaskId ? [existing] : [], nextCursor: "" }) });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, parent.id)); });
+  try {
+    await settle();
+    const find = (id: string) => renderer.root.find((node) => typeof node.type === "string" && node.props["data-testid"] === id);
+    const progress = find("task-subtasks-progress-bar");
+    expect(progress.props["aria-valuenow"]).toBe(1);
+    expect(progress.props["aria-valuemax"]).toBe(3);
+    const fill = progress.children[0] as TestRenderer.ReactTestInstance;
+    expect(fill.props.className).toContain("bg-blue-9");
+    expect(Number.parseFloat(fill.props.style.width)).toBeCloseTo(100 / 3);
+    for (let attempt = 0; attempt < 10 && !renderer.root.findAllByProps({ "data-testid": "task-subtask-row-existing" }).length; attempt++) await settle();
+    const existingDeadline = find("task-time-trigger-existing-dueAt");
+    expect(existingDeadline.props["aria-label"]).toBe("Nov 27 due");
+    expect(existingDeadline.findByType("svg").props.className).toContain("lucide-bell");
+
+    await act(async () => { find("task-add-subtask").props.onClick(); });
+    const draftId = "subtask-draft-parent";
+    const picker = find(`task-time-picker-${draftId}-dueAt`);
+    expect(picker.findAllByProps({ "data-testid": `task-time-date-input-${draftId}-startAt` })).toHaveLength(0);
+    expect(picker.findAll((node) => String(node.props["data-testid"]).startsWith("task-reminder-")).length).toBe(0);
+    const day = picker.find((node) => node.type === "button" && node.props["aria-current"] === "date");
+    const [year, month, date] = day.props["aria-label"].split("-").map(Number) as [number, number, number];
+    await act(async () => { day.props.onClick(); });
+    await act(async () => { find(`task-time-clear-${draftId}-dueAt`).props.onClick(); });
+    expect(day.props["aria-pressed"]).toBe(false);
+    await act(async () => { day.props.onClick(); });
+    await act(async () => { find(`task-time-specific-${draftId}-dueAt`).props.onChange({ target: { checked: true } }); });
+    await act(async () => { find(`task-time-option-${draftId}-dueAt-18-30`).props.onClick(); });
+    const deadline = find(`task-time-trigger-${draftId}-dueAt`);
+    expect(deadline.props["aria-label"]).toContain("18:30 due");
+    expect(deadline.props.className).toBe(existingDeadline.props.className);
+    expect(deadline.findByType("svg").props.className).toContain("lucide-bell");
+    expect(create).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+
+    await act(async () => { find("task-subtask-title").props.onChange({ currentTarget: { value: "Timed child" } }); });
+    await act(async () => { find("task-subtask-title").props.onKeyDown({ key: "Enter", nativeEvent: {}, preventDefault() {}, currentTarget: { value: "Timed child" } }); });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledWith("org_one", expect.objectContaining({ parentTaskId: parent.id, title: "Timed child", dueAt: new Date(year, month - 1, date, 18, 30).toISOString() }));
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("outside clicks save the current subtask draft, except clicks in its portaled pickers", async () => {
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const originalElement = Object.getOwnPropertyDescriptor(globalThis, "Element");
+  const eventTarget = new EventTarget();
+  class ClickElement {
+    constructor(private readonly owner?: string) {}
+    getAttribute(name: string) { return name === "data-task-draft-owner" ? this.owner ?? null : null; }
+  }
+  Object.defineProperty(globalThis, "document", { configurable: true, value: eventTarget });
+  Object.defineProperty(globalThis, "Element", { configurable: true, value: ClickElement });
+  const first = deferred<boolean>();
+  let attempts = 0;
+  const create = mock<React.ComponentProps<typeof TaskSubtasksSection>["onCreate"]>(async () => ++attempts === 1 ? first.promise : true);
+  const parent = { ...task(1, "Parent", "", "parent"), subtaskCount: 0 };
+  const member = { id: "member_one", userId: "user_one", role: "member" as const, user: { id: "user_one", name: "Self", account: null, email: null, avatar: null } };
+  const noop = () => undefined;
+  let renderer: TestRenderer.ReactTestRenderer | undefined;
+  try {
+    await act(async () => { renderer = TestRenderer.create(<TaskSubtasksSection task={parent} members={[member]} currentMemberId={member.id} canCreate page={undefined} loading={false} loadingMore={false} error={false} onRetry={noop} onLoadMore={noop} onSelect={noop} onCreate={create} onTransition={noop} />); });
+    const find = (id: string) => renderer!.root.find((node) => typeof node.type === "string" && node.props["data-testid"] === id);
+    const dispatchClick = (owner?: string, button = 0) => {
+      const event = new Event("click");
+      Object.defineProperties(event, { button: { value: button }, composedPath: { value: () => [new ClickElement(), new ClickElement(owner), eventTarget] } });
+      eventTarget.dispatchEvent(event);
+    };
+    await act(async () => { find("task-add-subtask").props.onClick(); });
+    await act(async () => { dispatchClick(); });
+    const input = find("task-subtask-title");
+    expect(create).not.toHaveBeenCalled();
+    await act(async () => { input.props.onChange({ currentTarget: { value: " Draft title " } }); input.props.onCompositionStart(); });
+    await act(async () => { dispatchClick(); });
+    expect(create).not.toHaveBeenCalled();
+    await act(async () => { input.props.onCompositionEnd(); dispatchClick(undefined, 2); });
+    expect(create).not.toHaveBeenCalled();
+
+    const draftId = "subtask-draft-parent";
+    const datePicker = find(`task-time-picker-${draftId}-dueAt`);
+    const date = datePicker.find((node) => node.type === "button" && node.props["aria-current"] === "date");
+    const [year, month, day] = date.props["aria-label"].split("-").map(Number) as [number, number, number];
+    const owner = find("task-subtask-composer").props["data-task-draft-owner"];
+    expect(datePicker.props["data-task-draft-owner"]).toBe(owner);
+    await act(async () => { dispatchClick(datePicker.props["data-task-draft-owner"]); date.props.onClick(); });
+    await act(async () => { find(`task-time-specific-${draftId}-dueAt`).props.onChange({ target: { checked: true } }); });
+    const option = find(`task-time-option-${draftId}-dueAt-18-30`);
+    let timeMenu = option.parent;
+    while (timeMenu && (typeof timeMenu.type !== "string" || !timeMenu.props["data-task-draft-owner"])) timeMenu = timeMenu.parent;
+    expect(timeMenu?.props["data-task-draft-owner"]).toBe(owner);
+    expect(timeMenu).not.toBe(datePicker);
+    await act(async () => { dispatchClick(timeMenu?.props["data-task-draft-owner"]); option.props.onClick(); });
+    const assigneePicker = find(`task-assignee-picker-${draftId}`);
+    expect(assigneePicker.props["data-task-draft-owner"]).toBe(owner);
+    await act(async () => { dispatchClick(assigneePicker.props["data-task-draft-owner"]); find(`task-assignee-option-${draftId}-${member.id}`).props.onClick(); });
+    expect(create).not.toHaveBeenCalled();
+
+    await act(async () => { dispatchClick(); dispatchClick(); });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledWith({ title: "Draft title", dueAt: new Date(year, month - 1, day, 18, 30).toISOString(), assigneeIds: [member.id], idempotencyKey: expect.any(String) });
+    await act(async () => { first.resolve(false); });
+    expect(input.props.value).toBe(" Draft title ");
+    expect(renderer!.root.findByProps({ role: "alert" })).toBeDefined();
+    await act(async () => { dispatchClick(); });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls[1]).toEqual(create.mock.calls[0]);
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-subtask-composer" })).toHaveLength(0);
+  } finally {
+    await act(async () => renderer?.unmount());
+    if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument); else Reflect.deleteProperty(globalThis, "document");
+    if (originalElement) Object.defineProperty(globalThis, "Element", originalElement); else Reflect.deleteProperty(globalThis, "Element");
+  }
+});
+
+test("existing subtask rows edit their own title, due date and assignees, and open from the separate arrow", async () => {
+  const parent = { ...task(1, "Parent", "", "parent"), subtaskCount: 2 };
+  const startAt = new Date(2026, 10, 26, 9).toISOString();
+  let child = { ...task(3, "Editable child", "", "child"), startAt, dueAt: new Date(2026, 10, 27, 18).toISOString() };
+  const readonly = { ...task(1, "Read-only child", "", "readonly"), dueAt: child.dueAt };
+  const people = ["A", "B", "C", "D"].map((name) => ({ id: `member_${name}`, userId: name, role: "member" as const, user: { id: name, name, account: null, email: null, avatar: null } }));
+  const assignment = (name: string) => ({ memberId: `member_${name}`, role: "assignee" as const });
+  let assignments = [assignment("A"), assignment("B")];
+  const follower = { memberId: "member_self", role: "follower" as const };
+  const childDetail = () => ({ ...result(child), members: [...assignments, follower] });
+  const update = mock<DenClient["updateProductTask"]>(async (_org, _id, patch) => {
+    child = { ...child, title: patch.title ?? child.title, dueAt: patch.dueAt === undefined ? child.dueAt : patch.dueAt, version: child.version + 1 };
+    if (patch.members) assignments = patch.members.filter((member) => member.role === "assignee").map(({ memberId }) => ({ memberId, role: "assignee" }));
+    return childDetail();
+  });
+  const read = mock<DenClient["getProductTask"]>(async (_org, id) => {
+    if (id === child.id) return childDetail();
+    const r = result(id === parent.id ? parent : readonly);
+    r.permissions.canEditContent = false;
+    r.permissions.canEditTime = false;
+    r.permissions.canManageMembers = false;
+    return r;
+  });
+  const client = connectedClient({ getProductTask: read, updateProductTask: update,
+    listOrganizationMembers: async () => ({ members: people, total: people.length, limit: 200, offset: 0 }),
+    listProductTasks: async (_org, query) => ({ items: query?.parentTaskId === parent.id ? [child, readonly] : [], membersByTaskId: { child: assignments }, nextCursor: "" }),
+  });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, parent.id)); });
+  try {
+    const matches = (id: string) => renderer.root.findAll((node) => typeof node.type === "string" && node.props["data-testid"] === id);
+    const find = (id: string) => renderer.root.find((node) => typeof node.type === "string" && node.props["data-testid"] === id);
+    for (let attempt = 0; attempt < 10 && !matches("task-subtask-row-child").length; attempt++) await settle();
+    expect(read.mock.calls.some(([, id]) => id === "child")).toBe(false);
+    expect(find("task-subtask-open-child").props.className).toContain("group-hover/subtask:opacity-100");
+    await act(async () => { find("task-subtask-row-readonly").props.onPointerEnter(); });
+    expect(matches("task-subtask-edit-title-readonly")).toHaveLength(0);
+    expect(matches("task-subtask-clear-due-readonly")).toHaveLength(0);
+    expect(matches("task-assignee-trigger-readonly")).toHaveLength(0);
+
+    await act(async () => { find("task-subtask-edit-title-child").props.onClick(); });
+    const input = find("task-subtask-title-input-child");
+    await act(async () => { input.props.onChange({ currentTarget: { value: " Renamed child " } }); });
+    await act(async () => { input.props.onBlur({ currentTarget: { value: " Renamed child " } }); });
+    expect(update.mock.calls[0]).toEqual(["org_one", "child", { expectedVersion: 3, idempotencyKey: expect.any(String), title: "Renamed child" }]);
+
+    await act(async () => { find("task-subtask-clear-due-child").props.onClick(); });
+    expect(update.mock.calls[1]).toEqual(["org_one", "child", { expectedVersion: 4, idempotencyKey: expect.any(String), dueAt: null }]);
+    expect(child.startAt).toBe(startAt);
+    for (let attempt = 0; attempt < 10 && matches("task-subtask-clear-due-child").length; attempt++) await settle();
+    expect(matches("task-subtask-clear-due-child")).toHaveLength(0);
+    expect(find("task-subtask-deadline-child").props.className).toContain("opacity-0");
+
+    const assigneeTrigger = find("task-assignee-trigger-child");
+    expect(assigneeTrigger.findAllByProps({ "data-testid": "task-assignee-overflow" })).toHaveLength(0);
+    assignments = [...assignments, assignment("D")]; // Simulate a newer assignment not in the visible picker.
+    await act(async () => { find("task-assignee-option-child-member_C").props.onClick(); });
+    expect(update.mock.calls[2]).toEqual(["org_one", "child", { expectedVersion: 5, idempotencyKey: expect.any(String), visibility: "members", members: [follower, assignment("A"), assignment("B"), assignment("D"), assignment("C")] }]);
+    for (let attempt = 0; attempt < 10 && !find("task-assignee-trigger-child").findAll((node) => node.props["data-testid"] === "task-assignee-overflow" && node.children.join("") === "+3").length; attempt++) await settle();
+    expect(find("task-assignee-trigger-child").findByProps({ "data-testid": "task-assignee-overflow" }).children.join("")).toBe("+3");
+
+    await act(async () => { find("task-subtask-open-child").props.onClick(); });
+    await settle();
+    expect(matches("task-subtask-row-child")).toHaveLength(0);
+    expect(renderer.root.find((node) => node.type === "input" && node.props.value === "Renamed child")).toBeDefined();
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test.each(["Root task", "Parent task"])("child detail opens %s from the ancestor breadcrumbs", async (target) => {
+  const root = task(1, "Root task", "", "root");
+  const parent = { ...task(1, "Parent task", "", "parent"), parentTask: { id: root.id, title: root.title } };
+  const child = { ...task(1, "Child task", "", "child"), parentTask: { id: parent.id, title: parent.title } };
+  const details = new Map([root, parent, child].map((value) => [value.id, result(value)]));
+  details.get(child.id)!.permissions.canEditContent = false;
+  const client = connectedClient({ getProductTask: async (_org, id) => details.get(id)! });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, child.id)); });
+  try {
+    const panel = () => renderer.root.findByProps({ "data-testid": "task-detail-panel" });
+    const trail = () => panel().findAll((node) => node.type === "nav")[0];
+    const crumbs = () => trail()?.findAllByType("button") ?? [];
+    for (let attempt = 0; attempt < 10 && crumbs().length < 2; attempt++) await settle();
+
+    expect(crumbs().map((button) => button.props.title)).toEqual([root.title, parent.title]);
+    expect(trail().parent?.children[0]).toBe(trail());
+    expect(panel().find((node) => node.type === "input" && node.props.value === child.title)).toBeDefined();
+
+    await act(async () => { crumbs().find((button) => button.props.title === target)!.props.onClick(); });
+    for (let attempt = 0; attempt < 10 && !panel().findAll((node) => node.type === "input" && node.props.value === target).length; attempt++) await settle();
+    expect(panel().find((node) => node.type === "input" && node.props.value === target)).toBeDefined();
+    expect(crumbs().map((button) => button.props.title)).toEqual(target === root.title ? [] : [root.title]);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("child detail stops the ancestor breadcrumbs at a task that is no longer visible", async () => {
+  const parent = { ...task(1, "Visible parent", "", "parent"), parentTask: { id: "restricted", title: "Restricted task" } };
+  const child = { ...task(1, "Child task", "", "child"), parentTask: { id: parent.id, title: parent.title } };
+  const read = mock<DenClient["getProductTask"]>(async (_org, id) => {
+    if (id === child.id) return result(child);
+    if (id === parent.id) return result(parent);
+    throw new DenApiError(404, "task_not_found", "Task not found");
+  });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(connectedClient({ getProductTask: read }), child.id)); });
+  try {
+    const crumbs = () => renderer.root.findByProps({ "data-testid": "task-detail-panel" }).findAllByType("nav")[0]?.findAllByType("button") ?? [];
+    for (let attempt = 0; attempt < 10 && !read.mock.calls.some(([, id]) => id === "restricted"); attempt++) await settle();
+    await settle();
+    expect(read).toHaveBeenCalledWith("org_one", "restricted", expect.any(Object));
+    expect(crumbs().map((button) => button.props.title)).toEqual([parent.title]);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("dragging a subtask persists relative placement and refreshes the detail and expanded list", async () => {
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  sessionValues.set(taskSectionStorageKey(scope), "all");
+  localValues.set(taskWorkbenchStorageKey(scope, "all"), JSON.stringify({ sort: "due_at", direction: "desc", group: "none" }));
+  const parent = { ...task(1, "Parent", "", "parent"), subtaskCount: 2, subtaskOrderSupported: true };
+  const first = { ...task(3, "First", "", "first"), subtaskCount: 0 };
+  const second = { ...task(4, "Second", "", "second"), subtaskCount: 0 };
+  let children = [first, second];
+  let fail = true;
+  const update = mock<DenClient["updateProductTask"]>(async (_org, id, patch) => {
+    if (fail) throw new DenApiError(409, "task_version_conflict", "Conflict");
+    const moved = { ...children.find((child) => child.id === id)!, version: patch.expectedVersion + 1 };
+    children = children.filter((child) => child.id !== id);
+    const anchor = children.findIndex((child) => child.id === patch.subtaskOrder?.anchorTaskId);
+    children.splice(anchor + (patch.subtaskOrder?.placement === "after" ? 1 : 0), 0, moved);
+    return result(moved);
+  });
+  const list = mock<DenClient["listProductTasks"]>(async (_org, options) => ({ items: options?.parentTaskId ? children : [parent], nextCursor: "" }));
+  const client = connectedClient({ listProductTasks: list, updateProductTask: update, getProductTask: async (_org, id) => result(children.find((child) => child.id === id) ?? parent) });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, parent.id)); });
+  try {
+    const find = (id: string) => renderer.root.find((node) => typeof node.type === "string" && node.props["data-testid"] === id);
+    const detailOrder = () => renderer.root.findAll((node) => node.type === "li" && node.props["data-testid"]?.startsWith("task-subtask-row-")).map((node) => node.props["data-testid"].slice("task-subtask-row-".length));
+    const listOrder = () => renderer.root.findAll((node) => node.type === "tr" && node.props["data-task-depth"] === 1).map((node) => node.props["data-task-id"]);
+    const waitForOrder = async (order: string[]) => {
+      for (let attempt = 0; attempt < 10 && (detailOrder().join() !== order.join() || listOrder().join() !== order.join()); attempt++) await settle();
+      expect(detailOrder()).toEqual(order);
+      expect(listOrder()).toEqual(order);
+    };
+    await waitForOrder(["first", "second"]);
+    expect(list.mock.calls.some(([, options]) => !options?.parentTaskId && options?.sort === "due_at")).toBe(true);
+    expect(list.mock.calls.filter(([, options]) => options?.parentTaskId).every(([, options]) => options?.sort === "created_at" && options.direction === "asc")).toBe(true);
+    const dragFirstAfterSecond = async () => {
+      const dataTransfer = { setData() {}, dropEffect: "none" };
+      await act(async () => { find("task-subtask-reorder-first").props.onDragStart({ dataTransfer }); });
+      const event = { clientY: 39, preventDefault() {}, dataTransfer, currentTarget: { getBoundingClientRect: () => ({ top: 0, height: 40 }) } };
+      await act(async () => { find("task-subtask-row-second").props.onDragOver(event); });
+      expect(dataTransfer.dropEffect).toBe("move");
+      await act(async () => { find("task-subtask-row-second").props.onDrop(event); });
+    };
+    await dragFirstAfterSecond();
+    for (let attempt = 0; attempt < 10 && find("task-subtask-reorder-first").props["aria-disabled"]; attempt++) await settle();
+    expect(renderer.root.findAll((node) => node.type === "p" && node.props.role === "alert" && node.children.includes("Could not save the subtask order. Try again."))).toHaveLength(1);
+    expect(detailOrder()).toEqual(["first", "second"]);
+    expect(listOrder()).toEqual(["first", "second"]);
+    fail = false;
+    await dragFirstAfterSecond();
+    await waitForOrder(["second", "first"]);
+    expect(update.mock.calls[1]).toEqual(["org_one", "first", { expectedVersion: 3, idempotencyKey: expect.any(String), subtaskOrder: { anchorTaskId: "second", placement: "after" } }]);
+    expect(update.mock.calls[1]?.[2].idempotencyKey).toBe(update.mock.calls[0]?.[2].idempotencyKey);
+    for (let attempt = 0; attempt < 10 && find("task-subtask-reorder-first").props["aria-disabled"]; attempt++) await settle();
+    await act(async () => { find("task-subtask-reorder-first").props.onKeyDown({ key: "ArrowUp", preventDefault() {} }); });
+    await waitForOrder(["first", "second"]);
+    expect(update.mock.calls[2]?.[2]).toMatchObject({ expectedVersion: 4, subtaskOrder: { anchorTaskId: "second", placement: "before" } });
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test.each(["old server", "read-only parent"] as const)("subtasks are readable without reorder controls for a %s", async (mode) => {
+  sessionValues.set(taskSectionStorageKey({ baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" }), "all");
+  const detail = result({ ...task(1, "Parent", "", "parent"), subtaskCount: 2, ...(mode === "read-only parent" ? { subtaskOrderSupported: true } : {}) });
+  detail.permissions.canEditContent = mode !== "read-only parent";
+  const children = [task(3, "First", "", "first"), task(4, "Second", "", "second")];
+  const update = mock<DenClient["updateProductTask"]>();
+  const client = connectedClient({ getProductTask: async () => detail, updateProductTask: update, listProductTasks: async (_org, options) => ({ items: options?.parentTaskId ? children : [detail.task], nextCursor: "" }) });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, detail.task.id)); });
+  try {
+    const rows = () => renderer.root.findAll((node) => node.type === "li" && node.props["data-testid"]?.startsWith("task-subtask-row-"));
+    for (let attempt = 0; attempt < 10 && rows().length < 2; attempt++) await settle();
+    expect(rows()).toHaveLength(2);
+    expect(renderer.root.findAll((node) => node.props["data-testid"]?.startsWith("task-subtask-reorder-"))).toHaveLength(0);
+    expect(update).not.toHaveBeenCalled();
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("both subtask surfaces restart at page one when a sibling cursor expires", async () => {
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  sessionValues.set(taskSectionStorageKey(scope), "all");
+  const parent = { ...task(1, "Parent", "", "parent"), subtaskCount: 2, subtaskOrderSupported: true };
+  const first = task(3, "First", "", "first");
+  const second = task(4, "Second", "", "second");
+  let changed = false;
+  const list = mock<DenClient["listProductTasks"]>(async (_org, options) => {
+    if (!options?.parentTaskId) return { items: [parent], nextCursor: "" };
+    if (options.cursor === "old") throw new DenApiError(400, "invalid_task_cursor", "Order changed");
+    if (options.cursor === "new") return { items: [first], nextCursor: "" };
+    return changed ? { items: [second], nextCursor: "new" } : { items: [first], nextCursor: "old" };
+  });
+  const client = connectedClient({ listProductTasks: list, getProductTask: async () => result(parent) });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, parent.id)); });
+  try {
+    const loadMore = () => renderer.root.findAll((node) => node.type === "button" && node.children.includes("Load more subtasks"));
+    const detailOrder = () => renderer.root.findAll((node) => node.type === "li" && node.props["data-testid"]?.startsWith("task-subtask-row-")).map((node) => node.props["data-testid"]);
+    const listOrder = () => renderer.root.findAll((node) => node.type === "tr" && node.props["data-task-depth"] === 1).map((node) => node.props["data-task-id"]);
+    const waitForOrder = async (ids: string[]) => {
+      for (let attempt = 0; attempt < 10 && (listOrder().join() !== ids.join() || loadMore().length !== (ids.length === 1 ? 2 : 0)); attempt++) await settle();
+      expect(listOrder()).toEqual(ids);
+      expect(detailOrder()).toEqual(ids.map((id) => `task-subtask-row-${id}`));
+    };
+    await waitForOrder(["first"]);
+    changed = true;
+    await act(async () => { for (const button of loadMore()) button.props.onClick(); });
+    await waitForOrder(["second"]);
+    await act(async () => { for (const button of loadMore()) button.props.onClick(); });
+    await waitForOrder(["second", "first"]);
+    expect(list.mock.calls.filter(([, options]) => options?.cursor === "old")).toHaveLength(2);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test.each(["old server", "read-only parent"] as const)("subtask creation is prevented for a %s", async (mode) => {
+  const parent = result({ ...task(1), ...(mode === "read-only parent" ? { subtaskCount: 0 } : {}) });
+  parent.permissions.canEditContent = mode !== "read-only parent";
+  const create = mock<DenClient["createProductTask"]>();
+  const client = connectedClient({ getProductTask: async () => parent, createProductTask: create });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, parent.task.id)); });
+  try {
+    await settle();
+    expect(renderer.root.findAllByProps({ "data-testid": "task-subtasks-section" })).toHaveLength(1);
+    const add = renderer.root.findAll((node) => node.type === "button" && node.props["data-testid"] === "task-add-subtask");
+    if (mode === "old server") {
+      expect(add).toHaveLength(1);
+      expect(add[0]!.props.disabled).toBe(true);
+      expect(renderer.root.findByProps({ id: add[0]!.props["aria-describedby"] }).children).toEqual(["Adding subtasks requires a server update."]);
+    } else expect(add).toHaveLength(0);
+    expect(create).not.toHaveBeenCalled();
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test.each(["creator", "assignee"] as const)("single-assignee completion by the %s marks only the actual actor in list and detail", async (actor) => {
+  const creatorId = "member_creator";
+  const assigneeId = "member_assignee";
+  const actorId = actor === "creator" ? creatorId : assigneeId;
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  sessionValues.set(taskSectionStorageKey(scope), "all");
+  let current = { ...task(1), creatorMemberId: creatorId, visibility: "members" as const };
+  const assignee = { memberId: assigneeId, role: "assignee" as const, completedAt: null };
+  const detail = () => {
+    const response = result(current);
+    response.members = [assignee];
+    response.permissions.canReopen = current.status === "completed";
+    return response;
+  };
+  const complete = mock<DenClient["transitionProductTask"]>(async () => {
+    current = { ...current, status: "completed", version: 2, completedAt: current.updatedAt, completedByMemberId: actorId };
+    return detail();
+  });
+  const client = connectedClient({
+    listProductTasks: async () => ({ items: [current], membersByTaskId: { [current.id]: [assignee] }, nextCursor: "" }),
+    getProductTask: async () => detail(),
+    transitionProductTask: complete,
+  });
+  setCloudSession(client);
+  cloudSession.activeOrganization = { id: scope.organizationId, orgMemberId: actorId };
+  const queryClient = createQueryClient();
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(taskPage(queryClient, current.id)); });
+  try {
+    await settle();
+    const panel = () => renderer.root.findByProps({ "data-testid": "task-detail-panel" });
+    const row = () => renderer.root.findAllByType("tr").find((item) => item.findAllByProps({ "data-testid": `task-title-cell-${current.id}` }).length > 0)!;
+    const badges = (surface: TestRenderer.ReactTestInstance) => surface.findAllByProps({ "data-testid": "task-assignee-completed" });
+    expect(badges(panel())).toHaveLength(0);
+    expect(badges(row())).toHaveLength(0);
+    await act(async () => {
+      panel().findAllByType("button").find((button) => React.Children.toArray(button.props.children).includes("Complete task"))!.props.onClick();
+    });
+    await settle();
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledWith(scope.organizationId, current.id, "complete", { expectedVersion: 1, idempotencyKey: expect.any(String) });
+    expect(panel().findAllByType("button").some((button) => React.Children.toArray(button.props.children).includes("Completed"))).toBe(true);
+    expect(row().findByProps({ "aria-label": "Reopen task" })).toBeDefined();
+    expect(badges(panel())).toHaveLength(actor === "assignee" ? 1 : 0);
+    expect(badges(row())).toHaveLength(actor === "assignee" ? 1 : 0);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test.each([true, false])("list circle completes the whole shared task when the server supports it (%s)", async (supported) => {
+  const listed = { ...task(1, "Shared task", "", "shared_task"), completionPolicy: "all_assignees" as const };
+  const authoritative = result({ ...listed, version: 4 });
+  authoritative.members = [{ memberId: "member_self", role: "assignee", completedAt: listed.updatedAt }, { memberId: "member_two", role: "assignee" }];
+  authoritative.permissions.canComplete = false;
+  if (supported) authoritative.permissions.canCompleteWhole = true;
+  let current = listed as DenProductTask;
+  const transition = mock<DenClient["transitionProductTask"]>(async () => {
+    current = { ...current, version: 5, status: "completed", completedByMemberId: "member_self", completedAt: listed.updatedAt };
+    return { ...authoritative, task: current };
+  });
+  const client = connectedClient({
+    listProductTasks: async () => ({ items: [current], nextCursor: "", membersByTaskId: { [current.id]: authoritative.members } }),
+    getProductTask: async () => authoritative,
+    transitionProductTask: transition,
+  });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  try {
+    const sidebar = renderer.root.findByProps({ "data-testid": "tasks-sidebar" });
     const assigned = sidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Assigned to me"))!;
     await act(async () => { assigned.props.onClick(); });
     await settle();
-    await act(async () => { renderer!.root.findByProps({ "aria-label": "Complete task" }).props.onClick(); });
+    await act(async () => { renderer.root.findByProps({ "aria-label": "Complete task" }).props.onClick(); });
     await settle();
-    expect(gets).toEqual(["shared_task"]);
-    expect(confirmations).toBe(1);
-    expect(transitions).toHaveLength(0);
-  } finally {
-    globalThis.confirm = originalConfirm;
-    await act(async () => { renderer!.unmount(); });
-  }
+    if (supported) {
+      expect(transition).toHaveBeenCalledWith("org_one", listed.id, "complete-whole", { expectedVersion: 4, idempotencyKey: expect.any(String) });
+      expect(renderer.root.findByProps({ "aria-label": "Reopen task" }).props.className).toContain("bg-green-8");
+    } else {
+      expect(transition).not.toHaveBeenCalled();
+      expect(toastErrors).toContain("Update the server to mark this entire task complete.");
+    }
+  } finally { await act(async () => renderer.unmount()); }
 });
 
 test("workbench transitions stop when authoritative detail denies permission", async () => {
@@ -1725,19 +2632,22 @@ test.each(["shared", "public", "owner-only", "historical", "old server"] as cons
     await toggle();
     await settle();
     if (requiresConfirmation) {
-      expect(option().props["aria-pressed"]).toBe(false);
+      expect(option().props["aria-pressed"]).toBeUndefined();
       expect(writes).toHaveLength(0);
       expect(prompts[0]).toContain(mode === "public" ? "Everyone in the organization" : "People with access to the list");
       accept = true;
       await toggle();
       await settle();
     }
-    expect(option().props["aria-pressed"]).toBe(true);
+    const row = () => renderer!.root.findAllByProps({ "data-testid": `task-detail-list-row-${list.id}` });
+    expect(row()).toHaveLength(1);
+    expect(renderer!.root.findAllByProps({ "data-testid": `task-list-option-${filing.id}-${list.id}` })).toHaveLength(0);
     const addArgs = ["org_one", filing.id, list.id, true];
     expect(writes).toEqual([requiresConfirmation ? [...addArgs, 24] : addArgs]);
-    await toggle();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": `task-detail-list-remove-${list.id}` }).props.onClick(); });
     await settle();
-    expect(option().props["aria-pressed"]).toBe(false);
+    expect(row()).toHaveLength(0);
+    expect(option().props["aria-pressed"]).toBeUndefined();
     expect(writes[1]).toEqual(["org_one", filing.id, list.id, false]);
     expect(prompts).toHaveLength(requiresConfirmation ? 2 : 0);
   } finally { globalThis.confirm = originalConfirm; await act(async () => renderer!.unmount()); }
@@ -1771,26 +2681,97 @@ for (const surface of ["table", "detail"] as const) {
       }
     };
     const option = (id: string) => renderer.root.findByProps({ "data-testid": `task-list-option-${listed.id}-${id}` });
+    const row = (id: string) => renderer.root.findAllByProps({ "data-testid": `task-detail-list-row-${id}` });
+    const expectFiled = (id: string) => {
+      if (surface === "detail") {
+        expect(row(id)).toHaveLength(1);
+        expect(renderer.root.findAllByProps({ "data-testid": `task-list-option-${listed.id}-${id}` })).toHaveLength(0);
+      } else expect(option(id).props["aria-pressed"]).toBe(true);
+    };
     await mount();
     try {
-      expect(option(original.id).props["aria-pressed"]).toBe(true);
+      expectFiled(original.id);
+      expect(row("legacy_hidden")).toHaveLength(0);
       expect(renderer!.root.findAllByProps({ "data-testid": `task-list-option-${listed.id}-none` })).toHaveLength(0);
       await act(async () => { renderer.root.findByProps({ "data-testid": `task-list-search-${listed.id}` }).props.onChange({ currentTarget: { value: destination.name } }); });
       await act(async () => { renderer.root.findByProps({ "data-testid": `task-list-create-${listed.id}` }).props.onClick(); });
       await settle();
-      expect(option(original.id).props["aria-pressed"]).toBe(true);
-      expect(option(destination.id).props["aria-pressed"]).toBe(true);
+      expectFiled(original.id);
+      expectFiled(destination.id);
       await act(async () => renderer.unmount());
       await mount(); // New query client; checked state must come from the server projection.
-      expect(option(destination.id).props["aria-pressed"]).toBe(true);
-      await act(async () => { option(destination.id).props.onClick(); });
+      expectFiled(destination.id);
+      await act(async () => {
+        if (surface === "detail") renderer.root.findByProps({ "data-testid": `task-detail-list-remove-${destination.id}` }).props.onClick();
+        else option(destination.id).props.onClick();
+      });
       await settle();
-      expect(option(original.id).props["aria-pressed"]).toBe(true);
-      expect(option(destination.id).props["aria-pressed"]).toBe(false);
+      expectFiled(original.id);
+      expect(row(destination.id)).toHaveLength(0);
+      expect(option(destination.id).props["aria-pressed"]).toBe(surface === "detail" ? undefined : false);
       expect(writes).toEqual([["org_one", listed.id, destination.id, true], ["org_one", listed.id, destination.id, false]]);
     } finally { await act(async () => renderer.unmount()); }
   });
 }
+
+test("each detail filing uses its own group settings and a failed removal leaves the row visible", async () => {
+  const original = { ...destination, id: "list_orig", name: "Original" };
+  const missing = "tasklist_missing_fixture";
+  const archived = { ...destination, id: "list_archived", name: "Archived", archivedAt: "2026-11-01T00:00:00Z" };
+  const listed = { ...task(1), listIds: [original.id, destination.id, missing] };
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  const originalKey = taskWorkbenchStorageKey(scope, "all", original.id);
+  const destinationKey = taskWorkbenchStorageKey(scope, "all", destination.id);
+  const originalSettings = JSON.stringify({ customGroupName: "Original default" });
+  localValues.set(originalKey, originalSettings);
+  localValues.set(destinationKey, JSON.stringify({ customGroups: [{ id: "planning", name: "Planning" }] }));
+  const removal = deferred<Awaited<ReturnType<DenClient["setProductTaskListMembership"]>>>();
+  const remove = mock(async () => removal.promise);
+  const directory = { items: [original, destination, archived], nextCursor: "" };
+  const refresh = deferred<typeof directory>();
+  const client = connectedClient({
+    getProductTask: async () => result(listed),
+    listProductTaskLists: async () => refresh.promise,
+    getProductTaskList: async () => destinationResult(),
+    setProductTaskListMembership: remove,
+  });
+  const queryClient = createQueryClient();
+  queryClient.setQueryData(productTaskKeys.taskLists(scope, false), directory);
+  setCloudSession(client);
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(taskPage(queryClient, listed.id)); });
+  try {
+    await settle();
+    const row = (id: string) => renderer.root.findByProps({ "data-testid": `task-detail-list-row-${id}` });
+    const group = (id: string) => row(id).findByProps({ "data-testid": `task-detail-list-group-${id}` }).props.title;
+    expect(group(original.id)).toBe("Original default");
+    expect(group(destination.id)).toBe("Default group");
+    expect(row(missing).findByProps({ title: "Syncing task list…" }).props.children).toBe("Syncing task list…");
+    await act(async () => { refresh.resolve(directory); });
+    await settle();
+    expect(row(missing).findByProps({ title: "Task list unavailable" }).props.children).toBe("Task list unavailable");
+    expect(row(missing).findAllByType("button")).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ "data-testid": `task-list-option-${listed.id}-${archived.id}` })).toHaveLength(0);
+    await act(async () => { row(destination.id).findByProps({ "data-testid": "task-detail-group-planning" }).props.onClick(); });
+    expect(group(destination.id)).toBe("Planning");
+    expect(group(original.id)).toBe("Original default");
+    expect(localValues.get(originalKey)).toBe(originalSettings);
+    expect(JSON.parse(localValues.get(destinationKey)!).customGroupAssignments).toEqual({ [listed.id]: "planning" });
+    expect(remove).not.toHaveBeenCalled();
+    await act(async () => {
+      const click = row(destination.id).findByProps({ "data-testid": `task-detail-list-remove-${destination.id}` }).props.onClick;
+      click();
+      click();
+    });
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(renderer.root.findByProps({ "data-testid": `task-list-trigger-${listed.id}` }).props.disabled).toBe(true);
+    await act(async () => { removal.reject(new DenApiError(403, "forbidden", "Membership denied")); });
+    await settle();
+    expect(remove).toHaveBeenCalledWith("org_one", listed.id, destination.id, false);
+    expect(group(destination.id)).toBe("Planning");
+    expect(toastErrors).toContain("Membership denied");
+  } finally { await act(async () => renderer.unmount()); }
+});
 
 for (const boundary of ["read-only", "archived", "org", "user", "deployment", "unmount", "server-denied"] as const) {
   test(`list membership respects ${boundary} boundary`, async () => {
@@ -1823,7 +2804,8 @@ for (const boundary of ["read-only", "archived", "org", "user", "deployment", "u
       await settle();
       expect(writes).toBe(boundary === "server-denied" ? 1 : 0);
       if (["read-only", "archived", "server-denied"].includes(boundary)) {
-        expect(option().props["aria-pressed"]).toBe(false);
+        expect(renderer.root.findAllByProps({ "data-testid": `task-detail-list-row-${destination.id}` })).toHaveLength(0);
+        expect(option().props.disabled).toBe(false);
         expect(toastErrors).toHaveLength(1);
       } else expect(toastErrors).toHaveLength(0);
     } finally { if (boundary !== "unmount") await act(async () => renderer.unmount()); }
@@ -1892,6 +2874,35 @@ test.each(["explicit denial", "legacy private in list"] as const)("assignee edit
     }
     expect(updates).toHaveLength(0);
   } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test.each([
+  { count: 1, completed: 0, status: "todo", editable: true, summary: "Alex", avatars: 1, badges: 0 },
+  { count: 2, completed: 0, status: "todo", editable: true, summary: "2 assignees", avatars: 2, badges: 0 },
+  { count: 4, completed: 2, status: "todo", editable: true, summary: "2/4 completed", avatars: 4, badges: 2 },
+  { count: 5, completed: 5, status: "completed", editable: false, summary: "5/5 completed", avatars: 3, badges: 3 },
+  { count: 5, completed: 0, status: "completed", editable: false, summary: "5 assignees", avatars: 3, badges: 0 },
+] as const)("task detail shows the assignee summary $summary and full nickname tooltip", async ({ count, completed, status, editable, summary, avatars, badges }) => {
+  const names = ["Alex", "Casey", "Morgan", "Taylor", "Jamie"].slice(0, count);
+  const members = names.map((name) => ({ id: `member_${name}`, userId: `user_${name}`, role: "member", user: { id: `user_${name}`, name, account: null, email: null, avatar: null } }));
+  const detail = result({ ...task(1), status, completionPolicy: completed ? "all_assignees" : "any_assignee" });
+  detail.members = members.map((member, index) => ({ memberId: member.id, role: "assignee", completedAt: index < completed ? detail.task.createdAt : null }));
+  detail.members.push({ memberId: "member_not_assigned", role: "follower", completedAt: detail.task.createdAt });
+  detail.permissions.canAssign = editable;
+  const client = connectedClient({ getProductTask: async () => detail, listOrganizationMembers: async () => ({ members, total: members.length, limit: 200, offset: 0 }) });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, detail.task.id)); });
+  try {
+    await settle();
+    const row = renderer.root.findByProps({ "data-testid": "task-detail-assignees" });
+    const group = row.findByProps({ role: "img" });
+    expect(group.findAll((node) => node.type === "span" && node.props.children === summary)).toHaveLength(1);
+    expect(group.findAll((node) => node.type === "span" && node.props["data-slot"] === "avatar")).toHaveLength(avatars);
+    expect(group.findAllByProps({ "data-testid": "task-assignee-completed" })).toHaveLength(badges);
+    expect(group.findAll((node) => node.type === "span" && node.children.join("") === "+2")).toHaveLength(count === 5 ? 1 : 0);
+    expect(row.findAllByProps({ role: "tooltip" }).some((node) => node.findAll((child) => child.type === "span" && child.props.children === names.join(", ")).length > 0)).toBe(true);
+    expect(row.findAll((node) => node.type === "div" && node.props["data-testid"] === `task-assignee-picker-${detail.task.id}`)).toHaveLength(editable ? 1 : 0);
+  } finally { await act(async () => renderer.unmount()); }
 });
 
 test("task detail shows the saved due date without a picker when time editing is denied", async () => {
@@ -2296,13 +3307,12 @@ test("switching tasks hides recovery while retaining the conflicted task draft",
     const button = (label: string) => renderer!.root.findAllByType("button").find((node) => node.props.children === label)!;
     await act(async () => { renderer!.root.findByProps({ value: "Task one draft" }).props.onBlur(); });
     await settle();
-    const taskButton = (title: string) => renderer!.root.findAllByType("button").find((node) => node.findAll((child) => child.props.children === title).length > 0)!;
-    await act(async () => { taskButton("Task two").props.onClick(); });
+    await act(async () => { clickTaskRow(renderer!.root.findByProps({ "data-task-id": "task_two" })); });
     await settle();
     expect(renderer!.root.findAllByProps({ children: "Load latest" })).toHaveLength(0);
     expect(renderer!.root.findByProps({ value: "Task two" })).toBeDefined();
 
-    await act(async () => { taskButton("Task one").props.onClick(); });
+    await act(async () => { clickTaskRow(renderer!.root.findByProps({ "data-task-id": "task_one" })); });
     await settle();
     expect(renderer!.root.findByProps({ value: "Task one draft" })).toBeDefined();
     expect(requested.filter((id) => id === "task_two")).toHaveLength(1);
@@ -2458,8 +3468,7 @@ test("switching tasks suppresses a stale load-latest failure", async () => {
     await settle();
     await act(async () => { button("Load latest").props.onClick(); });
 
-    const taskButton = (title: string) => renderer!.root.findAllByType("button").find((node) => node.findAll((child) => child.props.children === title).length > 0)!;
-    await act(async () => { taskButton("Task two").props.onClick(); });
+    await act(async () => { clickTaskRow(renderer!.root.findByProps({ "data-task-id": "task_two" })); });
     await settle();
     await act(async () => { latest.reject(new Error("Stale switched load failure")); });
     await settle();
@@ -2495,8 +3504,7 @@ test("a pending comment from another task cannot clear the current task input", 
     await act(async () => { commentEditor().props.onSend(); });
     expect(commentEditor().props.pending).toBe(true);
 
-    const taskButton = (title: string) => renderer!.root.findAllByType("button").find((node) => node.findAll((child) => child.props.children === title).length > 0)!;
-    await act(async () => { taskButton("Task two").props.onClick(); });
+    await act(async () => { clickTaskRow(renderer!.root.findByProps({ "data-task-id": "task_two" })); });
     await settle();
     expect(commentEditor().props.value).toBe("");
     expect(commentEditor().props.pending).toBe(false);
@@ -2511,14 +3519,17 @@ test("a pending comment from another task cannot clear the current task input", 
   }
 });
 
-test("task detail follows, manages followers, and submits formatted comments", async () => {
+test("task detail follows, manages followers, and refreshes the list comment count after sending", async () => {
   const self = { id: "member_self", userId: "user_one", role: "member", user: { id: "user_one", name: "Self", account: null, email: null, avatar: null } };
   const other = { id: "member_other", userId: "user_two", role: "member", user: { id: "user_two", name: "Other", account: null, email: null, avatar: null } };
   const updates: Array<Record<string, unknown>> = [];
   const comments: string[] = [];
   const base = task(1);
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  sessionValues.set(taskSectionStorageKey(scope), "all");
   let latest = result(base);
   const client = connectedClient({
+    listProductTasks: async () => ({ items: [{ ...latest.task, commentCount: comments.length }], nextCursor: "" }),
     listOrganizationMembers: async () => ({ members: [self, other], total: 2, limit: 200, offset: 0 }),
     getProductTask: async () => latest,
     updateProductTask: async (_orgId, _taskId, patch) => {
@@ -2545,11 +3556,14 @@ test("task detail follows, manages followers, and submits formatted comments", a
     expect(fields.findAllByProps({ role: "tooltip" }).map((node) => node.props.children)).toEqual(["Assignees", "Due time", "Task list", "Description"]);
     expect(renderer!.root.findByProps({ "data-testid": "task-detail-backdrop" }).props.className).toContain("z-40");
     const commentEditor = panel.findByType(TaskCommentEditor);
+    const badge = { "data-testid": "task-title-count-comments" };
+    expect(renderer!.root.findAllByProps(badge)).toHaveLength(0);
     expect(commentEditor.props.members).toEqual([self, other]);
     await act(async () => { commentEditor.props.onChange("Review **these changes**"); });
     await act(async () => { commentEditor.props.onSend(); });
     await settle();
     expect(comments).toEqual(["Review **these changes**"]);
+    expect(renderer!.root.findByProps(badge).props.title).toBe("Comments: 1");
     expect(commentEditor.props.value).toBe("");
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-detail-backdrop" }).props.onClick(); });
     expect(renderer!.root.findAllByProps({ "data-testid": "task-detail-panel" })).toHaveLength(0);

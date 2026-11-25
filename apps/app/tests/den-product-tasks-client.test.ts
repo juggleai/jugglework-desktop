@@ -36,6 +36,53 @@ test("product task client sends scoped pagination and strict mutations", async (
   expect(JSON.parse(String(requests[2]!.init?.body))).toEqual({ idempotencyKey: "create-one", title: "Follow up", visibility: "private" });
 });
 
+test("product task client sends an explicit parent and normalizes authorized hierarchy metadata", async () => {
+  const parentTask = { id: "parent/one", title: "Parent" };
+  const hierarchy = { parentTask, subtaskCount: 2, completedSubtaskCount: 1, commentCount: 3 };
+  const child = { ...task, ...hierarchy };
+  const input = { title: "Follow up", parentTaskId: parentTask.id, idempotencyKey: "child-one" };
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  globalThis.fetch = async (url, init) => {
+    if (init?.method === "POST") {
+      expect(JSON.parse(String(init.body))).toEqual(input);
+      return Response.json({ ...result, task: child }, { status: 201 });
+    }
+    expect(Object.fromEntries(new URL(String(url)).searchParams)).toEqual({ view: "all", parentTaskId: parentTask.id, cursor: "next" });
+    return Response.json({ items: [child], nextCursor: "" });
+  };
+  expect((await client.createProductTask("org_one", input)).task).toMatchObject(hierarchy);
+  expect((await client.listProductTasks("org_one", { view: "all", parentTaskId: parentTask.id, cursor: "next" })).items[0]).toMatchObject(hierarchy);
+  for (const invalid of [{ parentTask: { id: task.id, title: "Self" } }, { subtaskCount: -1 }, { completedSubtaskCount: 3 }]) {
+    globalThis.fetch = async () => Response.json({ ...result, task: { ...child, ...invalid } });
+    await expect(client.getProductTask("org_one", task.id)).rejects.toMatchObject({ code: "invalid_task_payload" });
+  }
+  globalThis.fetch = async () => Response.json(result);
+  expect((await client.getProductTask("org_one", task.id)).task.subtaskCount).toBeUndefined();
+});
+
+test("product task client sends the optional outer subtask filter with the other list filters", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  globalThis.fetch = async (url) => {
+    expect(Object.fromEntries(new URL(String(url)).searchParams)).toEqual({ view: "all", status: "completed", excludeSubtasks: "true", cursor: "next" });
+    return Response.json({ items: [], nextCursor: "" });
+  };
+  await client.listProductTasks("org_one", { view: "all", status: ["completed"], excludeSubtasks: true, cursor: "next" });
+});
+
+test("product task client sends order-only changes and reads the optional capability", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const patch = { expectedVersion: 1, idempotencyKey: "reorder-one", subtaskOrder: { anchorTaskId: "sibling", placement: "after" as const } };
+  globalThis.fetch = async (url, init) => {
+    expect(String(url)).toEndWith("/v1/tasks/task%2Fone");
+    expect(init?.method).toBe("PATCH");
+    expect(JSON.parse(String(init?.body))).toEqual(patch);
+    return Response.json({ ...result, task: { ...task, version: 2, subtaskOrderSupported: true } });
+  };
+  expect((await client.updateProductTask("org_one", task.id, patch)).task).toMatchObject({ version: 2, subtaskOrderSupported: true });
+  globalThis.fetch = async () => Response.json(result);
+  expect((await client.getProductTask("org_one", task.id)).task.subtaskOrderSupported).toBeUndefined();
+});
+
 test("product task client sends the delegated view token", async () => {
   let requestUrl = "";
   globalThis.fetch = async (input) => {
@@ -64,6 +111,24 @@ test("membership writes encode both ids, send no body, and read the resulting st
     globalThis.fetch = async () => Response.json(bad);
     await expect(client.setProductTaskListMembership("org_one", taskId, listId, true)).rejects.toMatchObject({ code: "invalid_task_list_membership" });
   }
+});
+
+test("filing move requires a matching receipt and normalizes the server capability", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const input = { sourceListId: null, destinationListId: "target", confirmedAccessVersion: 23 };
+  const receipt = { taskId: task.id, sourceListId: null, destinationListId: "target" };
+  globalThis.fetch = async (url, init) => {
+    expect(String(url)).toEndWith("/v1/tasks/task%2Fone/lists/move");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual(input);
+    return Response.json(receipt);
+  };
+  expect(await client.moveProductTaskFiling("org_one", task.id, input)).toEqual(receipt);
+  globalThis.fetch = async () => Response.json({ ...receipt, sourceListId: "unexpected" });
+  await expect(client.moveProductTaskFiling("org_one", task.id, input)).rejects.toMatchObject({ code: "invalid_task_filing_move" });
+  globalThis.fetch = async () => Response.json({ items: [{ ...task, listFilingMoveSupported: true }, { ...task, id: "older" }], nextCursor: "" });
+  const page = await client.listProductTasks("org_one");
+  expect(page.items.map((item) => item.listFilingMoveSupported)).toEqual([true, undefined]);
 });
 
 test("detail and list honor the visible projection, including empty, before legacy listId", async () => {

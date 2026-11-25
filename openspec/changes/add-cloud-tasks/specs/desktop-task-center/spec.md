@@ -111,9 +111,9 @@ The Desktop SHALL provide a paginated task list, inline permitted actions, and a
 - **THEN** the Desktop opens the task detail and renders each field as editable or read-only according to server authorization
 
 ### Requirement: Task collection workbenches
-The Desktop SHALL render the same rich workbench for Assigned to me, Following, All tasks, Created by me, Assigned by me, and Completed, with exactly List and Board tabs persisted independently per ProductTask scope and section. List SHALL default to Task title, Assignee, Start time, Due time, Creator, Created time, Task ID, Priority, and Task list, with Priority immediately before Task list, title mandatory, and the remaining fields configurable. Board SHALL render horizontal lanes from the active workbench grouping and retain accessible complete and reopen actions without a task-card cancel action. Entering Board while grouping is None or Task list SHALL select Custom grouping. Board SHALL allow switching among Custom, Creator, Start time, Due time, and Priority grouping, but SHALL NOT offer None or Task list. Status, person, property, list, and time filters and sorting SHALL remain active in Board. Custom-group Board SHALL append a New group action that opens an inline name input and directly creates the group on Enter or blur; all other Board groupings SHALL hide this action.
+The Desktop SHALL render the same rich workbench for Assigned to me, Following, All tasks, Created by me, Assigned by me, and Completed, with exactly List and Board tabs persisted independently per ProductTask scope and section. List SHALL default to Task title, Assignee, Start time, Due time, Creator, Created time, Task ID, Priority, and Task list, with Priority immediately before Task list, title mandatory, and the remaining fields configurable. Board SHALL render horizontal lanes from the active workbench grouping and retain accessible complete and reopen actions without a task-card cancel action. Entering Board from No grouping SHALL select Custom in Assigned to me, Following, and specific task lists. The other system collections SHALL select Priority. Board grouping options SHALL include Task list, Creator, Start time, Due time, and Priority. Assigned to me, Following, and specific task lists SHALL offer Custom as the last option. Status, person, property, list, and time filters and sorting SHALL remain active in Board. Custom-group Board SHALL append a New group action that opens an inline name input and directly creates the group on Enter or blur; all other Board groupings SHALL hide this action.
 
-Every Board lane SHALL end with a New task action. Activating it SHALL open an inline card with a title input and the same Due time picker used by List cells; Enter SHALL create the task with the lane's representable defaults and persist a custom-group assignment when applicable. Board cards SHALL be draggable between Custom lanes and between Start-time or Due-time lanes, updating the custom assignment or corresponding task time respectively. Creator and Priority lanes SHALL NOT expose draggable cards.
+Every Board lane SHALL end with a New task action. Activating it SHALL open an inline card with a title input and the same Due time picker used by List cells; Enter SHALL create the task with the lane's representable defaults and persist a custom-group assignment when applicable.
 
 Each time a collection is opened, the Desktop SHALL populate its page semantics as ordinary editable initial filters. Assigned to me SHALL initially filter Assignee contains the current member. Following SHALL initially filter Follower contains the current member, Creator does not contain the current member, and Assignee does not contain the current member. All tasks SHALL initially have no person filter and all statuses. Created by me SHALL initially filter Creator contains the current member. Assigned by me SHALL initially filter Assignee does not contain the current member and Assigner contains the current member. Completed SHALL initially have no person filter and Completed status. The user MAY modify, remove, or clear any populated condition, and every change SHALL immediately affect the query until the collection is opened again.
 
@@ -121,7 +121,18 @@ Each time a collection is opened, the Desktop SHALL populate its page semantics 
 - **WHEN** the user opens Assigned to me, Following, All tasks, Created by me, Assigned by me, or Completed
 - **THEN** the Desktop shows the same List/Board workbench and visibly populates that collection's editable initial filters
 
-When the user activates an editable Assignee cell, the List SHALL open a people picker with organization-member search, current-assignee indicators, multi-select add/remove operations, and completion-rule choices for any-assignee or all-assignees completion. The completion rule SHALL use a compact selector in the picker's separated footer; its menu SHALL show both rules and mark the active rule with blue text and a check indicator. Each member or completion-rule change SHALL load the current task version and permissions, use optimistic concurrency, preserve unrelated task fields and member roles, and remain visually unchanged when persistence fails.
+When the user activates an editable Assignee cell, the List SHALL open a people picker with organization-member search, current-assignee indicators, and multi-select add/remove operations. For multiple assignees the footer SHALL show the fixed individual-completion rule rather than offering a way to complete for everyone. Member and permitted completion-rule changes SHALL use the latest version and permissions and preserve unrelated task fields and roles.
+
+#### Scenario: Scan assignees in the task list
+- **WHEN** a task row has assignees
+- **THEN** the Assignee cell shows an avatar and nickname for one assignee, overlapping avatars for two to four assignees, or the first three avatars followed by a `+N` count for the rest when there are five or more assignees
+- **AND** a tooltip on hover or keyboard focus shows every assignee nickname, including those represented by `+N`
+- **AND** an assignee's avatar shows a completion badge only when that member has an individual completion record or is the recorded actor of whole-task completion under `any_assignee`
+
+#### Scenario: The creator completes a task assigned to someone else
+- **WHEN** the creator has permission to complete an `any_assignee` task assigned to another member and marks it complete
+- **THEN** the task shows as completed in the list and detail
+- **AND** the assignee's avatar does not show a completion badge without their own completion record
 
 Editable Start time and Due time cells SHALL open one calendar picker containing editable Start date and Due date rows. A date MAY be stored without a specific time and SHALL then render each date as a full-width row at day precision. Enabling Specific time SHALL split each populated row into date and time columns and render at minute precision. Clicking either date input SHALL make it the active calendar target, so the next calendar selection updates that field. Time selection SHALL use a compact single-column menu in 30-minute intervals. Start date SHALL remain optional. Due reminder SHALL default to empty. For a specific due time, reminder choices SHALL be 5, 15, or 30 minutes, 1 or 2 hours, or 1 day before due. For a date-only due value, reminder choices SHALL be 18:00 on the due date, 09:00 one day before, or 09:00 two days before. Time changes SHALL load the latest task and permission, use the latest optimistic version, and persist reminder changes through the task reminder API.
 
@@ -179,19 +190,19 @@ The Assigned to me tool area SHALL expose exactly New task and New task list. Ne
 - **THEN** the Desktop offers exactly New task and New task list
 
 ### Requirement: Multi-assignee completion behavior
-The Desktop SHALL explicitly warn that completing a multi-assignee `any_assignee` task completes it for everyone. For `all_assignees`, completion SHALL submit only the current assignee's portion, keep the task visibly incomplete while other assignees remain, and prevent duplicate completion by an assignee whose portion is already complete.
+The leading completion control in a List row, including expanded subtasks, SHALL reflect the task status. An authorized click SHALL complete the whole open task or reopen a completed task. Personal progress appears on assignee avatars. The task detail’s Complete my part action SHALL use the signed-in assignee’s own completion record and the authoritative version.
 
-#### Scenario: Complete multi-assignee task
-- **WHEN** an authorized user chooses to complete a task with more than one assignee
-- **AND** the task uses `any_assignee`
-- **THEN** the Desktop requires confirmation before sending the completion mutation
+#### Scenario: Old server reports whole-task completion for a multi-assignee task
+- **WHEN** a personal completion action reads an authoritative task response reporting `any_assignee` for a task with multiple assignees
+- **THEN** the Desktop explains that individual completion is not supported for the task and sends no completion mutation
 
 #### Scenario: Complete one portion of an all-assignees task
 - **WHEN** the current assignee completes an `all_assignees` task while another assignee remains incomplete
 - **THEN** the Desktop displays that the current assignee's portion is complete, leaves the task in the todo presentation, and does not send the same completion again
+- **AND** the detail action is labeled Complete my part before submission and shows the personal completion state while waiting for the others
 
 ### Requirement: Task creation surfaces
-The Desktop SHALL support full creation in a compact dialog with a fixed, viewport-bounded height with a borderless title, assignees, a workbench custom group, Today/Tomorrow/Other-time due-date actions, a searchable or creatable task list, description, and followers. The description editor SHALL be expanded by default at a fixed 168px height without changing the fixed 460px outer dialog height. Top and bottom dialog padding SHALL remain compact. Hovering or keyboard-focusing the leading assignee, due-time, task-list, or description icon in either the creation dialog or task detail panel SHALL show a tooltip identifying that field. Activating description SHALL expand an editor with a bottom toolbar for bold, strikethrough, italic, underline, numbered list, bulleted list, quote, link, emoji, mention, and image markup; applied markup SHALL be included in the submitted description. The follower affordance SHALL remain left-aligned at the bottom-left of the dialog across responsive breakpoints, with its leading icon adjacent to its label or selected-member summary and without a trailing dropdown arrow. The primary submit button SHALL be labeled Create. New tasks SHALL leave assignees and followers empty until the user explicitly selects them. Selecting any member other than the signed-in member SHALL automatically use members visibility; otherwise creation SHALL remain private. Creating a list in the dialog SHALL persist the list before submitting its returned ID with the task. Creating or choosing a non-default custom group SHALL persist that group in the current workbench settings and assign the created task through `customGroupAssignments`. Empty assignee cells SHALL present an add-person affordance, while empty start-time and due-time cells SHALL present muted calendar affordances instead of textual unavailable values.
+The Desktop SHALL support full creation in a compact dialog with a fixed, viewport-bounded height with a borderless title, assignees, a custom group for the selected task list, Today/Tomorrow/Other-time due-date actions, a searchable or creatable task list, description, and followers. The description editor SHALL be expanded by default at a fixed 168px height without changing the fixed 460px outer dialog height. Top and bottom dialog padding SHALL remain compact. Hovering or keyboard-focusing the leading assignee, due-time, task-list, or description icon in either the creation dialog or task detail panel SHALL show a tooltip identifying that field. Activating description SHALL expand an editor with a bottom toolbar for bold, strikethrough, italic, underline, numbered list, bulleted list, quote, link, emoji, mention, and image markup; applied markup SHALL be included in the submitted description. The follower affordance SHALL remain left-aligned at the bottom-left of the dialog across responsive breakpoints, with its leading icon adjacent to its label or selected-member summary and without a trailing dropdown arrow. The primary submit button SHALL be labeled Create. New tasks SHALL leave assignees and followers empty until the user explicitly selects them. Selecting any member other than the signed-in member SHALL automatically use members visibility; otherwise creation SHALL remain private. Creating a list in the dialog SHALL persist the list before submitting its returned ID with the task. Creating or choosing a non-default custom group SHALL persist that group in the selected task list settings and assign the created task through `customGroupAssignments`. Empty assignee cells SHALL present an add-person affordance, while empty start-time and due-time cells SHALL present muted calendar affordances instead of textual unavailable values.
 
 #### Scenario: Create a fully attributed task
 - **WHEN** the user chooses assignees, followers, a non-default custom group, a due time, and a task list in the full creation dialog
@@ -201,11 +212,24 @@ The Desktop SHALL support full creation in a compact dialog with a fixed, viewpo
 ### Requirement: Task detail work panel
 The detail title and description SHALL autosave when the title loses focus or focus leaves the complete description editor. Activating another field selector SHALL therefore save pending content first. The detail description SHALL reuse the creation dialog’s 168px rich-text editor and toolbar. Moving focus within that editor, including to a formatting action, SHALL NOT save prematurely. The panel SHALL NOT show a separate Save button.
 
-The Desktop SHALL open a fixed right-side task detail panel. The panel SHALL render as an opaque isolated surface above workbench sticky headers and rows so underlying borders and content cannot overlap or show through it. Its top-left control SHALL complete a todo task or reopen a completed task, and its top-right Follow control SHALL add or remove the signed-in member as a follower. The detail body SHALL expose the title, assignees, due time, the task's visible list filings, and the current workbench custom group. Task-list selection SHALL support independent multi-selection, search and inline list creation. Custom-group selection SHALL support inline group creation and persist through current workbench settings. Subtasks and attachments are out of scope for this change.
+The Desktop SHALL open a fixed right-side task detail panel. The panel SHALL render as an opaque isolated surface above workbench sticky headers and rows so underlying borders and content cannot overlap or show through it. Its top-left control SHALL complete a todo task or reopen a completed task, and its top-right Follow control SHALL add or remove the signed-in member as a follower. The detail body SHALL expose the title, assignees, due time, and visible list filings. The detail SHALL keep system collection grouping separate from the groups shown for individual filings. Subtasks and attachments are out of scope for this requirement.
 
 Task-row separators in List view SHALL be inset from both the title-side content boundary and the right table edge. While the detail panel is open, clicking outside the panel SHALL close it and SHALL NOT activate an underlying task or workbench control.
 
 The panel SHALL separate task fields from comments with a divider, render comment author, timestamp, and body, and keep a comment composer near the panel bottom. The composer SHALL offer simple bold, emoji, mention, and image markup actions and submit the resulting text through the existing task comment API. Enter SHALL submit a non-empty comment, Shift+Enter SHALL insert a line break, and Enter during IME composition SHALL NOT submit. The bottom row SHALL display follower avatars and count plus an add control that supports adding and removing organization members. Adding another member to a private task SHALL use members visibility when authorized.
+
+#### Scenario: File a task into multiple lists from detail
+- **WHEN** the user opens task detail
+- **THEN** each visible filing has its own row with the list name and, for active resolved lists, a list-scoped local group selector and a remove action
+- **AND** the separate add-list picker searches or creates lists without offering existing filings or archived lists as destinations
+- **AND** adding or removing a filing uses existing permissions and audience confirmation, affects only that list, and preserves the task and all other filings
+- **AND** choosing or creating a local group in one list does not change another list's group or send a task mutation
+
+#### Scenario: Scan assignee counts and completion in task detail
+- **WHEN** a user opens a task with assignees
+- **THEN** the detail uses the same avatar, nickname, overlap, overflow and completion-badge rules as the List cell
+- **AND** for multiple assignees the avatar group shows the total assigned or, once there is completion progress, the completed count out of the total, including assignees represented by `+N`
+- **AND** hovering or focusing the group shows all assignee nicknames, including in read-only detail, without exposing the edit picker to users who cannot assign
 
 #### Scenario: Edit formatted descriptions and comments
 - **WHEN** a user opens task detail
@@ -231,11 +255,13 @@ Changing the Assigned to me status filter SHALL preserve the mounted workbench a
 
 The Assigned to me sort menu SHALL present each supported sort field as its own row with ascending and descending controls on that row. Choosing a field without an explicit direction SHALL default that field to descending order, while the active field and direction remain visually identifiable.
 
-The sort menu SHALL expose start time, due time, created time, updated time, and completed time. Priority remains a task property and filter but SHALL NOT appear as a sort-menu field. Start-time and completed-time sorting SHALL remain compatible with servers that do not accept those sort tokens by requesting the supported updated-time order and sorting the currently loaded tasks locally with null values last.
+The sort menu SHALL expose start time, due time, created time, updated time, and completed time. Priority remains a task property and filter but SHALL NOT appear as a sort-menu field. Start-time sorting SHALL request updated-time order and sort the currently loaded tasks locally with null values last. Completed-time sorting SHALL request server order across cursor pages; if a legacy server rejects the sort on the first page, the Desktop SHALL paginate in updated-time order and sort the loaded tasks locally with null values last.
+
+Without a saved sort preference, All tasks, Created by me, and Assigned by me SHALL default to due time descending, and Completed SHALL default to completion time descending. These defaults SHALL sort outer rows only and SHALL NOT override a saved sort preference or change the order of expanded subtasks.
 
 The active sort field label and only its currently applied direction control SHALL use the accent color without a checkmark or persistent row background. The active field's opposite direction control SHALL remain hidden until that row is pointer-hovered. Inactive fields SHALL hide both direction controls until their row is pointer-hovered, including when the menu automatically focuses its first item, and row backgrounds SHALL appear only on hover.
 
-The List grouping menu SHALL support Custom group, Start time, and Due time in addition to no grouping, task list, and creator. Custom grouping SHALL place every loaded task in a stable Default group, including an empty Default group when no tasks are loaded. The Default group SHALL expose hover/focus actions for renaming and a visible but disabled delete action; its renamed display label SHALL persist in the current ProductTask scope. Custom grouping SHALL also expose a trailing New group action that creates persisted empty display groups through an inline title input. Additional custom groups SHALL support rename and delete actions. A task created from an additional custom group's header or trailing action SHALL remain assigned to that display group after creation and refresh; deleting the group SHALL clear its display assignments so those tasks return to Default group. Start-time grouping SHALL present Started, Today, Tomorrow, Next 7 days, Later, and Unscheduled in that order. Due-time grouping SHALL present Overdue, Today, Tomorrow, Next 7 days, Later, and Unscheduled in that order. Today and future buckets SHALL use the user's local calendar-day boundaries; Next 7 days includes local dates from the day after Tomorrow through seven days after Today.
+The List grouping menu SHALL support no grouping, task list, creator, start time, due time, and priority. Assigned to me, Following, and workbenches opened from a specific task list SHALL offer Custom group as the last grouping option. Custom grouping SHALL place every loaded task in a stable Default group, including an empty Default group when no tasks are loaded. The Default group SHALL expose hover/focus actions for renaming and a visible but disabled delete action; its renamed display label SHALL persist in the current ProductTask scope. Custom grouping SHALL also expose a trailing New group action that creates persisted empty display groups through an inline title input. Additional custom groups SHALL support rename and delete actions. A task created from an additional custom group's header or trailing action SHALL remain assigned to that display group after creation and refresh; deleting the group SHALL clear its display assignments so those tasks return to Default group. Start-time grouping SHALL present Started, Today, Tomorrow, Next 7 days, Later, and Unscheduled in that order. Due-time grouping SHALL present Overdue, Today, Tomorrow, Next 7 days, Later, and Unscheduled in that order. Today and future buckets SHALL use the user's local calendar-day boundaries; Next 7 days includes local dates from the day after Tomorrow through seven days after Today.
 
 Every visible group SHALL render a header with its task count and an independent disclosure control. Groups with tasks start expanded, empty time groups start collapsed, and the user MAY expand or collapse any group without changing filters or task data. Expanding an empty group SHALL reveal its body rather than immediately collapsing it again.
 
@@ -256,6 +282,42 @@ Creator group headers SHALL display the creator avatar and display name with the
 #### Scenario: Assign another member to a private task
 - **WHEN** the user selects an assignee other than themselves while visibility is Private
 - **THEN** the Desktop switches visibility to Members or presents clear validation that prevents submission
+
+### Requirement: Personal manual task ordering
+Assigned to me, Following, and specific task lists SHALL show Custom drag order first in the sort menu. Desktop SHALL remember this order locally per user, organization, server and workbench without changing the tasks themselves.
+
+#### Scenario: Reorder outer task rows
+- **WHEN** a user has selected Custom drag order and hovers an outer task row in an eligible List or focuses its handle with the keyboard
+- **THEN** Desktop reveals the row-leading handle without shifting adjacent controls
+- **AND** a drop or arrow-key move within the same group changes only the manual order without changing group membership or nested subtask order
+
+#### Scenario: Keep the selected sort within a group
+- **WHEN** the selected sort is not Custom drag order
+- **THEN** a same-group drop or arrow-key action SHALL NOT change task order or switch the sort
+- **AND** List SHALL expose the hover/focus drag handle only if another group is available as a valid destination
+
+#### Scenario: Move a task to another custom group
+- **WHEN** a user drops an outer task on a different custom group's header or outer row in List, or drops a card in a different custom lane in Board
+- **THEN** Desktop SHALL persist only the local custom-group assignment and order tasks in the destination by the current sort
+- **AND** returning a task to Default SHALL clear the assignment without changing the selected sort, direction, saved manual order, task data, or nested subtask order
+
+#### Scenario: Filter and load more with a saved order
+- **WHEN** the user filters or loads more tasks while using custom order
+- **THEN** ranked tasks keep their saved relative order and unranked loaded tasks follow them in server order
+- **AND** filtering out a task does not discard its saved rank
+
+### Requirement: Move tasks between editable groups
+List and Board SHALL accept an outer task from a different group on the destination header, outer row, or lane, including empty groups. A successful move SHALL keep the selected sort, direction, and saved manual ranks. Creator groups SHALL NOT allow cross-group moves.
+
+#### Scenario: Move to a priority, start-time, or due-time group
+- **WHEN** the user drops a task into a different priority or time group
+- **THEN** Desktop SHALL change only the corresponding field using existing permission checks and optimistic versioning; No priority and Unscheduled SHALL clear the corresponding field
+- **AND** Desktop SHALL NOT move the task if the change is rejected, including an invalid start/due combination
+
+#### Scenario: Move a task between list groups
+- **WHEN** the task server supports atomic filing moves and both affected lists, if any, are active and writable
+- **THEN** Desktop SHALL move only the filing from which the task was dragged, preserving other filings, and ask for confirmation if adding the destination would grant shared access
+- **AND** Desktop SHALL NOT drop into No task list while any other visible filing would remain, and SHALL NOT replace the move with separate add/remove calls on an older server
 
 ### Requirement: Conflict and connectivity states
 The Desktop SHALL expose loading, empty, error, forbidden, offline, and optimistic-concurrency conflict states without silently overwriting cloud data.

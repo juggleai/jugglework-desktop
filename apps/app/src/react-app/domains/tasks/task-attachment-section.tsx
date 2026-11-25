@@ -9,7 +9,7 @@ import { TaskAttachmentPreview } from "./task-attachment-preview";
 
 const actionClass = "inline-flex size-7 items-center justify-center rounded text-dls-secondary hover:bg-dls-hover hover:text-dls-text focus-visible:ring-2 focus-visible:ring-blue-8 disabled:opacity-50";
 
-export function TaskAttachmentSection({ files, upload, onAdd, onRemove }: { files: AttachmentRef[]; upload?: TaskFileUpload; onAdd: (file: AttachmentRef) => void; onRemove?: (file: AttachmentRef, index: number) => Promise<boolean> }) {
+export function TaskAttachmentSection({ files, upload, onAdd, onRemove, onBusyChange }: { files: AttachmentRef[]; onBusyChange?: (busy: boolean) => void; upload?: TaskFileUpload; onAdd: (file: AttachmentRef) => void; onRemove?: (file: AttachmentRef, index: number) => Promise<boolean> }) {
   const input = React.useRef<HTMLInputElement>(null);
   const request = React.useRef<AbortController | null>(null);
   const latest = React.useRef(onAdd);
@@ -17,12 +17,12 @@ export function TaskAttachmentSection({ files, upload, onAdd, onRemove }: { file
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
   const [preview, setPreview] = React.useState<AttachmentRef | null>(null);
-  React.useLayoutEffect(() => { setBusy(false); return () => { request.current?.abort(); request.current = null; }; }, [upload]);
+  React.useLayoutEffect(() => { setBusy(false); return () => { request.current?.abort(); request.current = null; onBusyChange?.(false); }; }, [upload, onBusyChange]);
   async function run(action: (signal: AbortSignal) => Promise<void>, message: string) {
     if (request.current) return;
-    const ctl = new AbortController(); request.current = ctl; setBusy(true); setError("");
+    const ctl = new AbortController(); request.current = ctl; setBusy(true); onBusyChange?.(true); setError("");
     try { await action(ctl.signal); } catch { if (!ctl.signal.aborted) setError(message); }
-    finally { if (ctl === request.current) { request.current = null; setBusy(false); } }
+    finally { if (ctl === request.current) { request.current = null; setBusy(false); onBusyChange?.(false); } }
   }
   function choose(file?: File) {
     if (!file || !upload) return;

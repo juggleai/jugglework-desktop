@@ -101,7 +101,7 @@ function TodayTaskRow(props: {
   onComplete: (task: DenProductTask) => void;
 }) {
   const assignees = props.taskMembers.filter((member) => member.role === "assignee");
-  const currentAssigneeCompleted = props.task.completionPolicy === "all_assignees" && assignees.some((member) => member.memberId === props.currentMemberId && Boolean(member.completedAt));
+  const currentAssigneeCompleted = assignees.some((member) => member.memberId === props.currentMemberId && Boolean(member.completedAt));
   const listNames = productTaskListIds(props.task).map((id) => props.listById.get(id)?.name).filter(Boolean).join(", ");
   const time = taskTimeLabel(props.task, props.group, props.now);
   return <div data-testid={`today-task-row-${props.task.id}`} data-state={props.selected ? "selected" : undefined} className="group flex min-h-[72px] items-center gap-3 border-b border-dls-border px-4 py-3 last:border-b-0 hover:bg-dls-hover/70 data-[state=selected]:bg-dls-active">

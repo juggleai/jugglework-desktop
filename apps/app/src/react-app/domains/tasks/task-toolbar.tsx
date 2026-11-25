@@ -1,5 +1,5 @@
 import { useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Eye, EyeOff, Filter, GripVertical, Group, ListFilter, SlidersHorizontal } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Eye, EyeOff, Filter, GripVertical, Group, ListFilter, ListTree, SlidersHorizontal } from "lucide-react";
 
 import type { DenOrganizationMember, DenProductTaskList, DenProductTaskPriority } from "@/app/lib/den";
 import { Badge } from "@/components/ui/badge";
@@ -13,23 +13,22 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { t } from "@/i18n";
 import { TaskFilterPanel } from "./task-filter-panel";
-import { reorderTaskWorkbenchFields, taskWorkbenchFields, type TaskWorkbenchField, type TaskWorkbenchGroup, type TaskWorkbenchSettings, type TaskWorkbenchSort, type TaskWorkbenchStatus } from "./task-view-state";
+import { reorderTaskWorkbenchFields, taskTimeSorts, taskWorkbenchFields, type TaskWorkbenchCapabilities, type TaskWorkbenchField, type TaskWorkbenchGroup, type TaskWorkbenchSettings, type TaskWorkbenchSort, type TaskWorkbenchStatus } from "./task-view-state";
 
 const priorities: DenProductTaskPriority[] = ["none", "low", "medium", "high"];
-const sorts: TaskWorkbenchSort[] = ["start_at", "due_at", "created_at", "updated_at", "completed_at"];
 const fieldLabels: Record<TaskWorkbenchField, string> = {
   assignee: "tasks.field_assignee", start: "tasks.field_start", due: "tasks.field_due", creator: "tasks.field_creator",
   assigner: "tasks.field_assigner", followers: "tasks.field_followers", created: "tasks.field_created", completed: "tasks.field_completed",
   updated: "tasks.field_updated", id: "tasks.field_id", priority: "tasks.field_priority", list: "tasks.field_list",
 };
 
-function Menu(props: { label: string; icon: ReactNode; badge?: number; disabled?: boolean; children: ReactNode; testId: string; contentClassName?: string; hideChevron?: boolean }) {
+function Menu(props: { label: string; icon: ReactNode; badge?: number; disabled?: boolean; children: ReactNode; testId: string; contentClassName?: string; hideChevron?: boolean; align?: "start" | "end" }) {
   return <div data-testid={props.testId} title={props.disabled ? t("tasks.group_board_unavailable") : undefined}>
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="sm" disabled={props.disabled} className={`h-8 gap-1.5 rounded-md px-2 text-[13px] font-normal shadow-none ${props.badge ? "bg-blue-3 text-blue-11 hover:bg-blue-4 dark:bg-blue-4/30 dark:text-blue-10" : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text"}`} />}>
+      <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="sm" disabled={props.disabled} className={`h-8 gap-1.5 rounded-md px-2 text-[13px] font-normal shadow-none ${props.badge ? "bg-blue-3 text-blue-11 hover:bg-blue-4 dark:bg-blue-4/30 dark:text-blue-10" : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text aria-expanded:bg-dls-hover"}`} />}>
         {props.icon}<span>{props.label}</span>{props.badge ? <Badge className="h-[18px] min-w-[18px] border-0 bg-blue-4 px-1 text-[10px] text-blue-11 dark:bg-blue-5/35 dark:text-blue-10">{props.badge}</Badge> : null}{props.hideChevron ? null : <ChevronDown className="size-3 opacity-70" />}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className={`min-w-52 rounded-xl border border-dls-border bg-dls-surface p-2 shadow-xl mac:titlebar-no-drag ${props.contentClassName ?? ""}`}>
+      <DropdownMenuContent align={props.align ?? "end"} className={`min-w-52 rounded-xl border border-dls-border bg-dls-surface p-2 shadow-xl mac:titlebar-no-drag ${props.contentClassName ?? ""}`}>
         {props.children}
       </DropdownMenuContent>
     </DropdownMenu>
@@ -83,34 +82,36 @@ function sortLabel(sort: TaskWorkbenchSort) {
   return t(`tasks.sort_${sort.replace("_at", "")}`);
 }
 
-function SortMenu(props: { settings: TaskWorkbenchSettings; onChange: (next: TaskWorkbenchSettings) => void }) {
+function SortMenu(props: { settings: TaskWorkbenchSettings; localSort?: boolean; allowManualSort: boolean; onChange: (next: TaskWorkbenchSettings) => void }) {
   const select = (sort: TaskWorkbenchSort, direction: "asc" | "desc" = "desc") => props.onChange({ ...props.settings, sort, direction });
   return <Menu label={`${t("tasks.sort")}: ${sortLabel(props.settings.sort)}`} icon={<ArrowUpDown className="size-3.5" />} testId="task-sort-menu">
     <div className="flex flex-col gap-0.5" role="radiogroup" aria-label={t("tasks.sort")}>
-      {sorts.map((sort) => {
+      {(props.allowManualSort ? ["manual", ...taskTimeSorts] as const : taskTimeSorts).map((sort) => {
         const active = props.settings.sort === sort;
         const label = sortLabel(sort);
         return <div key={sort} data-testid={`task-sort-option-${sort}`} className="group flex min-h-10 items-center rounded-lg px-1.5 transition-colors hover:bg-dls-hover">
           <button type="button" role="radio" aria-checked={active} onClick={() => select(sort)} className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-2 text-left text-sm font-normal outline-none ${active ? "text-blue-10" : "text-dls-text"}`}>
             <span className="min-w-0 flex-1 truncate">{label}</span>
           </button>
-          <div className={`ml-1 flex shrink-0 items-center gap-0.5 ${active ? "" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100"}`}>
+          {sort !== "manual" ? <div className={`ml-1 flex shrink-0 items-center gap-0.5 ${active ? "" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100"}`}>
             <button type="button" data-testid={`task-sort-${sort}-asc`} aria-label={`${label} · ${t("tasks.ascending")}`} aria-pressed={active && props.settings.direction === "asc"} onClick={() => select(sort, "asc")} className={`flex size-8 items-center justify-center rounded-md transition-all hover:bg-dls-active ${active && props.settings.direction === "asc" ? "text-blue-10" : active ? "pointer-events-none w-0 overflow-hidden opacity-0 group-hover:pointer-events-auto group-hover:w-8 group-hover:opacity-100 text-dls-secondary" : "text-dls-secondary"}`}><ArrowUp className="size-4 shrink-0" /></button>
             <button type="button" data-testid={`task-sort-${sort}-desc`} aria-label={`${label} · ${t("tasks.descending")}`} aria-pressed={active && props.settings.direction === "desc"} onClick={() => select(sort, "desc")} className={`flex size-8 items-center justify-center rounded-md transition-all hover:bg-dls-active ${active && props.settings.direction === "desc" ? "text-blue-10" : active ? "pointer-events-none w-0 overflow-hidden opacity-0 group-hover:pointer-events-auto group-hover:w-8 group-hover:opacity-100 text-dls-secondary" : "text-dls-secondary"}`}><ArrowDown className="size-4 shrink-0" /></button>
-          </div>
+          </div> : null}
         </div>;
       })}
     </div>
-    {props.settings.sort === "start_at" || props.settings.sort === "completed_at" ? <p className="px-2 pt-2 text-xs text-dls-secondary">{t("tasks.time_sort_loaded")}</p> : null}
+    {props.localSort ? <p className="px-2 pt-2 text-xs text-dls-secondary">{t("tasks.time_sort_loaded")}</p> : null}
   </Menu>;
 }
 
-export function TaskToolbar(props: { settings: TaskWorkbenchSettings; lists: DenProductTaskList[]; members: DenOrganizationMember[]; onChange: (next: TaskWorkbenchSettings) => void }) {
+export function TaskToolbar(props: TaskWorkbenchCapabilities & { settings: TaskWorkbenchSettings; localSort?: boolean; lists: DenProductTaskList[]; members: DenOrganizationMember[]; onChange: (next: TaskWorkbenchSettings) => void }) {
   const overdueEnabled = props.settings.status !== "completed";
   const update = <K extends keyof TaskWorkbenchSettings>(key: K, value: TaskWorkbenchSettings[K]) => props.onChange({ ...props.settings, [key]: value });
   const statusLabels: Array<[TaskWorkbenchStatus, string]> = [["incomplete", "tasks.status_incomplete"], ["completed", "tasks.completed"], ["all", "tasks.status_all"]];
-  const groupLabels: Array<[TaskWorkbenchGroup, string]> = [["none", "tasks.group_none"], ["custom", "tasks.group_custom"], ["list", "tasks.group_list"], ["creator", "tasks.group_creator"], ["start", "tasks.group_start"], ["due", "tasks.group_due"], ["priority", "tasks.field_priority"]];
-  const availableGroupLabels = props.settings.view === "board" ? groupLabels.filter(([value]) => value !== "none") : groupLabels;
+  const groupLabels: Array<[TaskWorkbenchGroup, string]> = [["none", "tasks.group_none"], ["list", "tasks.group_list"], ["creator", "tasks.group_creator"], ["start", "tasks.group_start"], ["due", "tasks.group_due"], ["priority", "tasks.field_priority"], ["custom", "tasks.group_custom"]];
+  const availableGroupLabels = groupLabels.filter(([value]) => (value !== "custom" || props.allowCustomGrouping) && (value !== "none" || props.settings.view !== "board"));
+  const subtaskVisibility = props.settings.subtaskVisibility;
+  const subtaskLabels = { hide: t("common.hide"), show: t("tasks.subtasks_show") };
   return <div className="flex flex-wrap items-center gap-0.5" aria-label={t("tasks.quick_settings")}>
     <Menu label={t(statusLabels.find(([value]) => value === props.settings.status)?.[1] ?? "tasks.status")} icon={<ListFilter className="size-3.5" />} testId="task-status-menu">
       <DropdownMenuRadioGroup value={props.settings.status} onValueChange={(value) => props.onChange({ ...props.settings, status: value as TaskWorkbenchStatus, overdue: value === "completed" ? false : props.settings.overdue })}>
@@ -118,12 +119,17 @@ export function TaskToolbar(props: { settings: TaskWorkbenchSettings; lists: Den
       </DropdownMenuRadioGroup>
     </Menu>
     <TaskFilterPanel settings={{ ...props.settings, overdue: overdueEnabled && props.settings.overdue }} lists={props.lists} members={props.members} onChange={props.onChange} />
-    <SortMenu settings={props.settings} onChange={props.onChange} />
-    <Menu label={`${t("tasks.group")}: ${t(groupLabels.find(([value]) => value === props.settings.group)?.[1] ?? "tasks.group_custom")}`} icon={<Group className="size-3.5" />} testId="task-group-menu">
+    <SortMenu settings={props.settings} localSort={props.localSort} allowManualSort={props.allowManualSort} onChange={props.onChange} />
+    <Menu label={`${t("tasks.group")}: ${t(groupLabels.find(([value]) => value === props.settings.group)?.[1] ?? "tasks.group_none")}`} icon={<Group className="size-3.5" />} testId="task-group-menu">
       <DropdownMenuRadioGroup value={props.settings.group} onValueChange={(value) => update("group", value as TaskWorkbenchGroup)}>
         {availableGroupLabels.map(([value, label]) => <DropdownMenuRadioItem key={value} value={value} className={`rounded-lg px-2 py-1.5 text-sm font-normal ${props.settings.group === value ? "text-blue-10 [&_svg]:text-blue-10 focus:text-blue-10 focus:**:text-blue-10" : ""}`}>{t(label)}</DropdownMenuRadioItem>)}
       </DropdownMenuRadioGroup>
     </Menu>
+    {props.allowSubtaskVisibility ? <Menu label={`${t("tasks.subtasks")}: ${subtaskLabels[subtaskVisibility]}`} icon={<ListTree aria-hidden="true" className="size-3.5" />} testId="task-subtask-visibility-menu" align="start" contentClassName="min-w-40 rounded-lg p-1.5" hideChevron>
+      <DropdownMenuRadioGroup value={subtaskVisibility} onValueChange={(value) => update("subtaskVisibility", value as TaskWorkbenchSettings["subtaskVisibility"])}>
+        {(["hide", "show"] as const).map((value) => <DropdownMenuRadioItem key={value} value={value} closeOnClick className={`rounded-md text-sm font-normal ${subtaskVisibility === value ? "text-blue-10 [&_svg]:text-blue-10 focus:text-blue-10 focus:**:text-blue-10" : ""}`}>{subtaskLabels[value]}</DropdownMenuRadioItem>)}
+      </DropdownMenuRadioGroup>
+    </Menu> : null}
     <FieldSettingsMenu settings={props.settings} onChange={props.onChange} />
   </div>;
 }

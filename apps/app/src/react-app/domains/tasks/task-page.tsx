@@ -29,10 +29,10 @@ import { flattenProductTaskActivityPages, flattenProductTaskMembers, flattenProd
 import { productTaskEditDraft, readTaskSection, reapplyProductTaskDraft, taskSectionStorageKey, writeTaskSection, type ProductTaskEditDraft, type TaskSection } from "./task-page-state";
 import { TaskWorkbench, taskWorkbenchServerSort, taskWorkbenchStatuses } from "./task-workbench";
 import { TaskDateTimeCell, type TaskReminderDraft, type TaskTimeField } from "./task-date-time-cell";
-import { AssigneeCell, TaskListCell, TaskListSyncContext, type TaskQuickCreateDefaults } from "./task-list-table";
+import { AssigneeCell, TaskListCell, TaskListSyncContext, taskListName, type SaveTaskTitle, type TaskQuickCreateDefaults } from "./task-list-table";
 import { productTaskListIds } from "@/app/lib/den";
-import { applyTaskListMembership } from "./task-queries";
-import { isTaskWorkbenchSection, readTaskWorkbenchSettings, removeTaskWorkbenchSettings, taskSectionDefaultSettings, writeTaskWorkbenchSettings, type TaskWorkbenchSection, type TaskWorkbenchSettings } from "./task-view-state";
+import { applyTaskListMembership, directSubtaskOptions, isInvalidTaskCursor } from "./task-queries";
+import { isTaskWorkbenchSection, readTaskWorkbenchSettings, removeTaskWorkbenchSettings, taskSectionDefaultSettings, taskWorkbenchCapabilities, writeTaskWorkbenchSettings, type TaskWorkbenchSection, type TaskWorkbenchSettings } from "./task-view-state";
 import { TasksSidebar, taskSectionHeading, type TasksSidebarRegistration } from "./tasks-sidebar";
 import { TodayTaskView } from "./today-task-view";
 import { TaskActivityView } from "./task-activity-view";
@@ -40,6 +40,8 @@ import { TaskPrioritySelect, type EditableTaskPriority } from "./task-priority-s
 import { TaskCommentEditor, TaskDescriptionEditor } from "./task-description-editor";
 import { renderDescription, splitTaskAttachments, joinTaskAttachments, withoutTaskAttachment, type AttachmentRef } from "./task-description-markdown";
 import { TaskAttachmentSection } from "./task-attachment-section";
+import { TaskAncestorBreadcrumbs } from "./task-ancestor-breadcrumbs";
+import { TaskCreateSubtasks, TaskSubtasksSection, type StagedSubtask, type TaskSubtaskCreateInput } from "./task-subtasks-section";
 import { CommentAttachments } from "./task-comment-attachments";
 import { uploadBusinessFile } from "@/app/lib/business-file-upload";
 import type { TaskFileUpload } from "./task-file-picker";
@@ -158,6 +160,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   const availableMembers = membersQuery.data ?? (fallbackMember ? [fallbackMember] : []);
   const currentMemberId = fallbackMember?.id ?? availableMembers.find((member) => member.userId === cloud.user?.id)?.id ?? null;
   const workbenchSection = isTaskWorkbenchSection(section) ? section : null;
+  const { allowCustomGrouping, allowSubtaskVisibility } = taskWorkbenchCapabilities(workbenchSection, Boolean(selectedListId));
   const memberFilteredSection = workbenchSection !== null && workbenchSection !== "all" && workbenchSection !== "completed";
   const sectionSettings = (nextSection: TaskWorkbenchSection, listId?: string | null) => listId
     ? readTaskWorkbenchSettings(scope, "all", listId)
@@ -167,6 +170,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     if (workbenchSection) {
       return {
         view: "all" as const,
+        excludeSubtasks: allowSubtaskVisibility && workbenchSettings.subtaskVisibility === "hide" ? true : undefined,
         status: taskWorkbenchStatuses(workbenchSettings),
         priority: workbenchSettings.priorities.length ? workbenchSettings.priorities : undefined,
         listId: selectedListId ? [selectedListId] : workbenchSettings.listIds.length ? workbenchSettings.listIds : undefined,
@@ -192,7 +196,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     // Today has dedicated server-defined ordering, so omit the generic sort.
     if (section === "today") return common;
     return { ...common, sort, direction: sort === "due_at" ? "asc" as const : "desc" as const };
-  }, [priority, section, selectedListId, sort, workbenchSection, workbenchSettings]);
+  }, [allowSubtaskVisibility, priority, section, selectedListId, sort, workbenchSection, workbenchSettings]);
   const tasksQuery = useProductTasks({ client: cloud.client, scope, options: listOptions, active: section !== "activity" && (!memberFilteredSection || Boolean(currentMemberId)) });
   const activitySummaryQuery = useProductTaskActivityFeed({ client: cloud.client, scope, unreadOnly: false });
   const unreadActivityQuery = useProductTaskActivityFeed({ client: cloud.client, scope, unreadOnly: true, active: section === "activity" && activityUnreadOnly });
@@ -203,6 +207,25 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   const selectedListDetailQuery = useProductTaskListDetail({ client: cloud.client, scope, listId: selectedListId });
   const collaborationGroupsQuery = useProductTaskCollaborationGroups({ client: cloud.client, scope, active: listCollaborationDialog === "add" && Boolean(selectedListId) });
   const detailQuery = useProductTask({ client: cloud.client, scope, taskId: selectedTaskId });
+  const hasVisibleSubtasks = (detailQuery.data?.task.subtaskCount ?? 0) > 0;
+  const subtaskOptions = directSubtaskOptions(selectedTaskId ?? undefined);
+  const subtaskQuery = useProductTasks({ client: cloud.client, scope, options: subtaskOptions, active: Boolean(selectedTaskId && !detailQuery.isError && hasVisibleSubtasks) });
+  const [subtaskOrderRevision, bumpSubtaskOrderRevision] = React.useReducer((revision: number) => revision + 1, 0);
+  const lastSubtaskOrderAttempt = React.useRef<{ signature: string; key: string } | null>(null);
+  const subtaskPage = React.useMemo(() => {
+    if (!hasVisibleSubtasks || !subtaskQuery.data || subtaskQuery.isError) return undefined;
+    return {
+      items: flattenProductTaskPages(subtaskQuery.data),
+      membersByTaskId: flattenProductTaskMembers(subtaskQuery.data),
+      memberProjectionKnownByTaskId: Object.assign({}, ...subtaskQuery.data.pages.map((page) => page.memberProjectionKnownByTaskId)),
+      nextCursor: subtaskQuery.hasNextPage ? subtaskQuery.data.pages.at(-1)?.nextCursor ?? "" : "",
+    };
+  }, [hasVisibleSubtasks, subtaskQuery.data, subtaskQuery.isError, subtaskQuery.hasNextPage]);
+  React.useEffect(() => {
+    if (!scope || !selectedTaskId || !subtaskQuery.data || !isInvalidTaskCursor(subtaskQuery.error)) return;
+    // Discard all loaded pages, whether the stale cursor came from Load more or a background refetch.
+    void queryClient.resetQueries({ queryKey: productTaskKeys.list(scope, directSubtaskOptions(selectedTaskId)), exact: true });
+  }, [queryClient, scope, selectedTaskId, subtaskQuery.data, subtaskQuery.error]);
   const activityQuery = useProductTaskActivity({ client: cloud.client, scope, taskId: selectedTaskId });
   const remindersQuery = useProductTaskReminders({ client: cloud.client, scope, taskId: selectedTaskId });
   const createMutation = useCreateProductTask(cloud.client, scope);
@@ -356,7 +379,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     setWorkbenchSettings(next);
   };
 
-  const transitionWorkbenchTask = async (task: DenProductTask, operation: "complete" | "reopen" | "cancel") => {
+  const transitionWorkbenchTask = async (task: DenProductTask, operation: "complete" | "complete-whole" | "reopen" | "cancel") => {
     if (!scope) return;
     const capturedScope = scope;
     const detail = await runMutation(
@@ -365,23 +388,25 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     );
     if (!detail) return;
     queryClient.setQueryData(productTaskKeys.detail(capturedScope, task.id), detail);
-    const allowed = operation === "complete"
-      ? detail.permissions.canComplete
-      : operation === "cancel"
-        ? detail.permissions.canCancel
-        : detail.permissions.canReopen;
+    let action = operation;
+    if (operation === "complete-whole" && detail.permissions.canCompleteWhole === undefined) {
+      // The legacy endpoint completes the entire task only for non-individual completion.
+      if (detail.task.completionPolicy === "all_assignees" || detail.members.filter(member => member.role === "assignee").length > 1) {
+        toast.error(t("tasks.whole_completion_unavailable"));
+        return;
+      }
+      action = "complete";
+    }
+    const allowed = { "complete-whole": detail.permissions.canCompleteWhole, complete: detail.permissions.canComplete, cancel: detail.permissions.canCancel, reopen: detail.permissions.canReopen }[action];
     if (!allowed) {
       if (liveScopeKey.current === productTaskScopeKey(capturedScope)) toast.error(t("tasks.transition_not_allowed"));
       return;
     }
-    const assigneeCount = detail.members.filter((member) => member.role === "assignee").length;
-    const currentAssigneeCompleted = detail.task.completionPolicy === "all_assignees" && detail.members.some((member) => member.role === "assignee" && member.memberId === currentMemberId && Boolean(member.completedAt));
-    if (operation === "complete" && currentAssigneeCompleted) return;
-    if (operation === "complete" && detail.task.completionPolicy === "any_assignee" && assigneeCount > 1 && !globalThis.confirm(t("tasks.complete_multi_confirm"))) return;
-    await runMutation(() => transitionMutation.mutateAsync({ taskId: task.id, operation, expectedVersion: detail.task.version, idempotencyKey: mutationKey(`desktop-${operation}-task`) }));
+    if (operation === "complete" && !canSubmitTaskCompletion(detail, currentMemberId)) return;
+    await runMutation(() => transitionMutation.mutateAsync({ taskId: task.id, operation: action, expectedVersion: detail.task.version, idempotencyKey: mutationKey(`desktop-${action}-task`) }));
   };
 
-  const updateWorkbenchAssignees = async (task: DenProductTask, assigneeMemberIds: string[]) => {
+  const updateWorkbenchAssignees = async (task: DenProductTask, assigneeMemberIds: string[], previousIds?: string[]) => {
     if (!scope) return false;
     const capturedScope = scope;
     const detail = await runMutation(
@@ -395,6 +420,11 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
       return false;
     }
     const currentAssigneeIds = detail.members.filter((member) => member.role === "assignee").map((member) => member.memberId);
+    if (previousIds) {
+      // Apply only the picker change, preserving any assignees added since it opened.
+      const removed = new Set(previousIds.filter((id) => !assigneeMemberIds.includes(id)));
+      assigneeMemberIds = [...new Set([...currentAssigneeIds.filter((id) => !removed.has(id)), ...assigneeMemberIds.filter((id) => !previousIds.includes(id))])];
+    }
     if (currentAssigneeIds.length === assigneeMemberIds.length && assigneeMemberIds.every((id) => currentAssigneeIds.includes(id))) return true;
     const sharesPrivateTask = detail.task.visibility === "private" && assigneeMemberIds.some((memberId) => memberId !== detail.task.creatorMemberId);
     // Older servers require visibility management and reject sharing a private task in a list.
@@ -426,6 +456,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
       { isCurrent: () => liveScopeKey.current === productTaskScopeKey(capturedScope) },
     );
     if (!detail) return false;
+    if (detail.members.filter((member) => member.role === "assignee").length > 1) return false;
     if (!detail.permissions.canManageMembers) {
       toast.error(t("tasks.assignee_edit_not_allowed"));
       return false;
@@ -465,7 +496,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     return true;
   };
 
-  const updateTaskPriority = async (task: DenProductTask, priority: EditableTaskPriority) => {
+  const updateTaskPriority = async (task: DenProductTask, priority: DenProductTask["priority"]) => {
     if (!scope) return false;
     const capturedScope = scope;
     const isCurrent = () => liveScopeKey.current === productTaskScopeKey(capturedScope);
@@ -506,27 +537,52 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     return result === true;
   };
 
-  const setTaskMembership = async (task: DenProductTask, listId: string, added: boolean) => {
-    if (!scope || !listId || liveScopeKey.current !== scopeKey) return false;
+  const readWritableTaskList = async (listId: string) => {
+    if (!scope || !listId || liveScopeKey.current !== scopeKey) return;
     const list = await runMutation(() => cloud.client.getProductTaskList(scope.organizationId, listId));
+    if (!list || liveScopeKey.current !== scopeKey) return;
+    if (!list.permissions.canAddTasks || list.list.archivedAt) { toast.error(t("tasks.list_edit_not_allowed")); return; }
+    return list;
+  };
+  const confirmFilingShare = ({ list, members }: DenProductTaskListResult, adding: boolean): number | null | undefined => {
+    if (!adding || list.grantsTaskAccess !== true || (list.visibility !== "organization" && !members.some((member) => member.memberId !== list.creatorMemberId))) return;
+    return globalThis.confirm(t(list.visibility === "organization" ? "tasks.file_in_public_list_confirm" : "tasks.file_in_shared_list_confirm", { name: list.name })) ? list.version : null;
+  };
+  const refreshTaskFiling = (capturedScope: ProductTaskScope, taskId: string) => Promise.all([
+    queryClient.invalidateQueries({ queryKey: productTaskKeys.detail(capturedScope, taskId) }),
+    queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(capturedScope) }),
+    queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeeds(capturedScope) }),
+  ]);
+  const setTaskMembership = async (task: DenProductTask, listId: string, added: boolean) => {
+    if (!scope) return false;
+    const list = await readWritableTaskList(listId);
     if (!list || liveScopeKey.current !== scopeKey) return false;
-    if (!list.permissions.canAddTasks || list.list.archivedAt) { toast.error(t("tasks.list_edit_not_allowed")); return false; }
-    const sharesTask = added && list.list.grantsTaskAccess === true && (list.list.visibility === "organization" || list.members.some((member) => member.memberId !== list.list.creatorMemberId));
-    if (sharesTask && !globalThis.confirm(t(list.list.visibility === "organization" ? "tasks.file_in_public_list_confirm" : "tasks.file_in_shared_list_confirm", { name: list.list.name }))) return false;
-    const result = await runMutation(() => sharesTask
-      ? cloud.client.setProductTaskListMembership(scope.organizationId, task.id, listId, true, list.list.version)
+    const confirmedAccessVersion = confirmFilingShare(list, added);
+    if (confirmedAccessVersion === null || liveScopeKey.current !== scopeKey) return false;
+    const result = await runMutation(() => confirmedAccessVersion !== undefined
+      ? cloud.client.setProductTaskListMembership(scope.organizationId, task.id, listId, true, confirmedAccessVersion)
       : cloud.client.setProductTaskListMembership(scope.organizationId, task.id, listId, added));
     if (!result) return false;
     applyTaskListMembership(queryClient, scope, result);
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: productTaskKeys.detail(scope, task.id) }),
-      queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(scope) }),
-      queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeeds(scope) }),
-    ]);
+    await refreshTaskFiling(scope, task.id);
     return liveScopeKey.current === scopeKey && result.added === added;
   };
 
   const toggleTaskList = (task: DenProductTask, listId: string) => setTaskMembership(task, listId, !productTaskListIds(task).includes(listId));
+
+  const moveTaskFiling = async (task: DenProductTask, sourceListId: string | null, destinationListId: string | null) => {
+    if (!scope || liveScopeKey.current !== scopeKey || !task.listFilingMoveSupported || sourceListId === destinationListId) return false;
+    if (sourceListId && !(await readWritableTaskList(sourceListId))) return false;
+    const destination = destinationListId ? await readWritableTaskList(destinationListId) : undefined;
+    if ((destinationListId && !destination) || liveScopeKey.current !== scopeKey) return false;
+    const confirmedAccessVersion = destination && confirmFilingShare(destination, !productTaskListIds(task).includes(destination.list.id));
+    if (confirmedAccessVersion === null || liveScopeKey.current !== scopeKey) return false;
+    const result = await runMutation(() => cloud.client.moveProductTaskFiling(scope.organizationId, task.id, { sourceListId, destinationListId, ...(confirmedAccessVersion !== undefined ? { confirmedAccessVersion } : {}) }));
+    // Re-read permissions as well as membership: removing a filing can revoke access.
+    if (liveScopeKey.current !== scopeKey) return false;
+    await refreshTaskFiling(scope, task.id);
+    return Boolean(result) && liveScopeKey.current === scopeKey;
+  };
 
   const createListAndAddTask = async (task: DenProductTask, name: string) => {
     if (!scope) return null;
@@ -557,11 +613,25 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     return true;
   };
 
-  const setTaskGroup = (taskId: string, groupId: string) => {
-    const customGroupAssignments = { ...workbenchSettings.customGroupAssignments };
+  const [, refreshFiledGroups] = React.useReducer((revision: number) => revision + 1, 0);
+  const taskListGroupSettings = (listId: string) => listId === selectedListId ? workbenchSettings : readTaskWorkbenchSettings(scope, "all", listId);
+  const updateTaskListGrouping = (listId: string, settings: TaskWorkbenchSettings) => {
+    if (!scope || liveScopeKey.current !== scopeKey) return;
+    if (listId === selectedListId) updateWorkbenchSettings(settings);
+    else {
+      writeTaskWorkbenchSettings(scope, settings, "all", listId);
+      refreshFiledGroups();
+    }
+  };
+  const setTaskGroup = (taskId: string, listId: string | null, groupId: string, newGroupName?: string) => {
+    if (!scope || liveScopeKey.current !== scopeKey) return;
+    const settings = listId ? taskListGroupSettings(listId) : workbenchSettings;
+    const customGroupAssignments = { ...settings.customGroupAssignments };
     if (groupId === "custom-default") delete customGroupAssignments[taskId];
     else customGroupAssignments[taskId] = groupId;
-    updateWorkbenchSettings({ ...workbenchSettings, customGroupAssignments });
+    const next = { ...settings, customGroupAssignments, customGroups: newGroupName ? [...settings.customGroups, { id: groupId, name: newGroupName }] : settings.customGroups };
+    if (listId) updateTaskListGrouping(listId, next);
+    else updateWorkbenchSettings(next);
   };
 
   const mutationError = (error: unknown, capturedScopeKey = scopeKey) => {
@@ -588,6 +658,77 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   const canSaveTaskContent = (taskId: string) => Boolean(scope && liveScopeKey.current === scopeKey
     && liveSelectedTaskId.current === taskId && !detailQuery.isError
     && queryClient.getQueryData<DenProductTaskResult>(productTaskKeys.detail(scope, taskId))?.permissions.canEditContent);
+
+  const createChildTask = async (parentTaskId: string, { title, dueAt, assigneeIds, idempotencyKey }: TaskSubtaskCreateInput, isCurrent?: () => boolean) => {
+    const result = await runMutation(() => createMutation.mutateAsync({
+      idempotencyKey, parentTaskId, title, dueAt,
+      visibility: assigneeIds.some((id) => id !== currentMemberId) ? "members" : "private",
+      members: assigneeIds.map((memberId) => ({ memberId, role: "assignee" as const })),
+    }), { isCurrent });
+    return result?.task.parentTask?.id === parentTaskId;
+  };
+
+  const createSubtask: React.ComponentProps<typeof TaskSubtasksSection>["onCreate"] = async input => {
+    if (!scope || !selectedTaskId || detailQuery.data?.task.subtaskCount === undefined || !canSaveTaskContent(selectedTaskId)) return false;
+    return createChildTask(selectedTaskId, input, () => liveSelectedTaskId.current === selectedTaskId);
+  };
+
+  const updateTaskTitle: SaveTaskTitle = async (task, previousTitle, title) => {
+    if (!scope) return "failed";
+    const isCurrent = () => liveScopeKey.current === scopeKey;
+    const detail = await runMutation(() => cloud.client.getProductTask(scope.organizationId, task.id), { isCurrent });
+    if (!detail || detail.tombstone || !detail.permissions.canEditContent || !isCurrent()) return "failed";
+    if (detail.task.title !== title) {
+      if (detail.task.title !== previousTitle) {
+        queryClient.setQueryData(productTaskKeys.detail(scope, task.id), detail);
+        await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(scope) });
+        return "conflict";
+      }
+      const result = await runMutation(() => cloud.client.updateProductTask(scope.organizationId, task.id, {
+        expectedVersion: detail.task.version, idempotencyKey: mutationKey("desktop-update-task-title"), title,
+      }), { isCurrent });
+      if (!result) return "failed";
+      queryClient.setQueryData(productTaskKeys.detail(scope, task.id), result);
+      void queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeeds(scope) });
+    } else {
+      queryClient.setQueryData(productTaskKeys.detail(scope, task.id), detail);
+    }
+    await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(scope) });
+    return "saved";
+  };
+
+  const subtaskEditing: NonNullable<React.ComponentProps<typeof TaskSubtasksSection>["editing"]> = {
+    load: (task) => scope ? cloud.client.getProductTask(scope.organizationId, task.id) : Promise.resolve(undefined),
+    title: updateTaskTitle,
+    due: (task, value) => updateWorkbenchTime(task, "dueAt", value),
+    assignees: updateWorkbenchAssignees,
+  };
+
+  const reorderSubtask: NonNullable<React.ComponentProps<typeof TaskSubtasksSection>["onReorder"]> = async (child, subtaskOrder) => {
+    if (!scope || !selectedTaskId || !detailQuery.data?.task.subtaskOrderSupported || !canSaveTaskContent(selectedTaskId)) return false;
+    const captured = scope;
+    const signature = JSON.stringify([scopeKey, selectedTaskId, child.id, child.version, subtaskOrder.anchorTaskId, subtaskOrder.placement]);
+    const attempt = lastSubtaskOrderAttempt.current?.signature === signature ? lastSubtaskOrderAttempt.current : { signature, key: mutationKey("desktop-reorder-subtask") };
+    lastSubtaskOrderAttempt.current = attempt;
+    const result = await runMutation(() => cloud.client.updateProductTask(captured.organizationId, child.id, {
+      expectedVersion: child.version, idempotencyKey: attempt.key, subtaskOrder,
+    }), { suppressConflictAlert: true });
+    if (scopeKey !== liveScopeKey.current) return false;
+    if (result) {
+      if (lastSubtaskOrderAttempt.current === attempt) lastSubtaskOrderAttempt.current = null;
+      queryClient.setQueryData(productTaskKeys.detail(captured, child.id), result);
+      void queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeeds(captured) });
+    }
+    bumpSubtaskOrderRevision();
+    // Invalidate all placements; infinite queries refetch beginning at the first page.
+    await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(captured) });
+    return Boolean(result);
+  };
+
+  const loadSubtasks = (parentTaskId: string, cursor?: string) => {
+    if (!scope || liveScopeKey.current !== scopeKey) return Promise.reject(new Error("Task scope changed"));
+    return cloud.client.listProductTasks(scope.organizationId, { ...directSubtaskOptions(parentTaskId), cursor, limit: 30 });
+  };
 
   const saveAttachmentRemoval = async (task: DenProductTask, description: string) => {
     const taskId = task.id;
@@ -785,7 +926,8 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   else if (tasksQuery.isLoading) content = <TaskShellContent state={{ kind: "loading" }} />;
   else if (tasksQuery.isError) content = <TaskShellContent state={{ kind: "error", message: tasksQuery.error instanceof Error ? tasksQuery.error.message : undefined, onRetry: () => void tasksQuery.refetch() }} />;
   else if (section === "today") content = <TodayTaskView tasks={tasks} membersByTaskId={membersByTaskId} members={availableMembers} lists={activeListsQuery.data?.items ?? []} currentMemberId={currentMemberId} selectedTaskId={selectedTaskId} refreshing={tasksQuery.isFetching && !tasksQuery.isFetchingNextPage} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} onLoadMore={() => void tasksQuery.fetchNextPage()} onSelect={selectTask} onComplete={(task) => void transitionWorkbenchTask(task, "complete")} />;
-  else if (workbenchSection) content = <TaskWorkbench key={workbenchSection} tasks={tasks} membersByTaskId={membersByTaskId} members={availableMembers} lists={activeListsQuery.data?.items ?? []} listJoinError={activeListsQuery.isError ? (activeListsQuery.error instanceof Error ? activeListsQuery.error.message : t("tasks.list_join_error")) : null} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} settings={workbenchSettings} selectedTaskId={selectedTaskId} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} refreshing={tasksQuery.isFetching && !tasksQuery.isFetchingNextPage} quickCreatePending={createMutation.isPending} quickCreateMemberId={currentMemberId} onLoadMore={() => void tasksQuery.fetchNextPage()} onRetryListJoin={() => void activeListsQuery.refetch()} onRetryMemberDirectory={() => void membersQuery.refetch()} onSettingsChange={updateWorkbenchSettings} onSelect={selectTask} onTransition={(task, operation) => void transitionWorkbenchTask(task, operation)} onAssigneesChange={updateWorkbenchAssignees} onCompletionPolicyChange={updateWorkbenchCompletionPolicy} onTimeChange={updateWorkbenchTime} onPriorityChange={updateTaskPriority} onLoadReminders={loadWorkbenchReminders} onReminderChange={updateWorkbenchReminder} onListChange={toggleTaskList} onListCreate={createListAndAddTask} onQuickCreate={quickCreateTask} />;
+  else if (workbenchSection) content = <TaskWorkbench onTitleChange={updateTaskTitle} onListMove={moveTaskFiling}
+    key={`${workbenchSection}:${selectedListId ?? ""}`} section={workbenchSection} isTaskList={Boolean(selectedListId)} localCompletedSort={tasksQuery.data?.pages[0]?.localCompletedSort} tasks={tasks} membersByTaskId={membersByTaskId} members={availableMembers} lists={activeListsQuery.data?.items ?? []} listJoinError={activeListsQuery.isError ? (activeListsQuery.error instanceof Error ? activeListsQuery.error.message : t("tasks.list_join_error")) : null} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} settings={workbenchSettings} selectedTaskId={selectedTaskId} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} refreshing={tasksQuery.isFetching && !tasksQuery.isFetchingNextPage} quickCreatePending={createMutation.isPending} quickCreateMemberId={currentMemberId} onLoadMore={() => void tasksQuery.fetchNextPage()} onRetryListJoin={() => void activeListsQuery.refetch()} onRetryMemberDirectory={() => void membersQuery.refetch()} onSettingsChange={updateWorkbenchSettings} onSelect={selectTask} onTransition={(task, operation) => void transitionWorkbenchTask(task, operation)} onAssigneesChange={updateWorkbenchAssignees} onCompletionPolicyChange={updateWorkbenchCompletionPolicy} onTimeChange={updateWorkbenchTime} onPriorityChange={updateTaskPriority} onLoadReminders={loadWorkbenchReminders} onReminderChange={updateWorkbenchReminder} onListChange={toggleTaskList} onListCreate={createListAndAddTask} onQuickCreate={quickCreateTask} onLoadSubtasks={loadSubtasks} subtasksRevision={`${tasksQuery.dataUpdatedAt}:${subtaskOrderRevision}`} />;
   else content = <TaskList tasks={tasks} selectedTaskId={selectedTaskId} onSelect={selectTask} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} onLoadMore={() => void tasksQuery.fetchNextPage()} />;
 
   return (
@@ -795,8 +937,15 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
       {conflict ? <ConflictBanner conflict={conflict} pending={updateMutation.isPending} canRetry={canSaveTaskContent(conflict.taskId)} onDismiss={dismissConflict} onReload={() => void loadLatestForConflict()} onRetry={() => void retryConflictDraft()} /> : null}
       {content}
       <TaskUploadContext.Provider value={uploads}>
-      {selectedTaskId ? <TaskDetail onSaveAttachmentRemoval={saveAttachmentRemoval} key={`${scopeKey}:${selectedTaskId}`} result={detailQuery.data} activity={activityQuery.data} reminders={remindersQuery.data ?? []} members={availableMembers} lists={activeListsQuery.data?.items ?? []} groups={workbenchSettings.customGroups} defaultGroupName={workbenchSettings.customGroupName} groupId={workbenchSettings.customGroupAssignments[selectedTaskId] ?? "custom-default"} loading={detailQuery.isLoading} error={detailQuery.isError} currentMemberId={currentMemberId} preservedDraft={editDrafts[selectedTaskId] ?? null} onDraftChange={updateBufferedDraft} onClose={closeTask} onSave={saveTask} onComment={addComment} onFollowersChange={updateTaskFollowers} onAssigneesChange={updateWorkbenchAssignees} onListChange={toggleTaskList} onListCreate={createListAndAddTask} onTimeChange={updateWorkbenchTime} onPriorityChange={updateTaskPriority} onGroupChange={setTaskGroup} onGroupsChange={(customGroups) => updateWorkbenchSettings({ ...workbenchSettings, customGroups })} onSetReminder={(scheduledAt) => void runMutation(() => reminderMutations.set.mutateAsync({ idempotencyKey: mutationKey("desktop-set-reminder"), mode: "absolute", scheduledAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }))} onCancelReminder={() => void runMutation(() => reminderMutations.cancel.mutateAsync(mutationKey("desktop-cancel-reminder")))} onTransition={(task, operation) => void runMutation(() => transitionMutation.mutateAsync({ taskId: task.id, operation, expectedVersion: task.version, idempotencyKey: mutationKey(`desktop-${operation}-task`) }))} /> : null}
-      {showFullCreate ? <TaskCreateDialog pending={createMutation.isPending} members={availableMembers} memberDirectoryLoading={membersQuery.isLoading && !fallbackMember} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} onRetryMemberDirectory={() => void membersQuery.refetch()} lists={activeListsQuery.data?.items ?? []} currentMemberId={currentMemberId} defaultListId={selectedListId} groups={workbenchSettings.customGroups} defaultGroupName={workbenchSettings.customGroupName} onGroupsChange={(customGroups) => updateWorkbenchSettings({ ...workbenchSettings, customGroups })} onCreateList={async (name) => { const result = await runMutation(() => listMutations.create.mutateAsync({ idempotencyKey: mutationKey("desktop-create-dialog-list"), name, description: "", marker: name.slice(0, 1).toUpperCase() || "#", visibility: "private" })); return result?.list.id ?? null; }} onClose={() => setShowFullCreate(false)} onCreate={async (input, groupId) => { const result = await runMutation(() => createMutation.mutateAsync({ ...input, idempotencyKey: mutationKey("desktop-create-task") })); if (!result) return; if (groupId && groupId !== "custom-default") updateWorkbenchSettings({ ...workbenchSettings, customGroupAssignments: { ...workbenchSettings.customGroupAssignments, [result.task.id]: groupId } }); setShowFullCreate(false); selectTask(result.task.id); }} /> : null}
+      {selectedTaskId ? <TaskDetail onSaveAttachmentRemoval={saveAttachmentRemoval} key={`${scopeKey}:${selectedTaskId}`} result={detailQuery.data} activity={activityQuery.data} reminders={remindersQuery.data ?? []} members={availableMembers} lists={activeListsQuery.data?.items ?? []} loading={detailQuery.isLoading} error={detailQuery.isError} currentMemberId={currentMemberId} preservedDraft={editDrafts[selectedTaskId] ?? null} onDraftChange={updateBufferedDraft} onClose={closeTask} onSave={saveTask} onComment={addComment} onFollowersChange={updateTaskFollowers} onAssigneesChange={updateWorkbenchAssignees} listFilings={{ onMembership: setTaskMembership, onCreate: createListAndAddTask, groupSettings: taskListGroupSettings, onGroupChange: setTaskGroup }} onTimeChange={updateWorkbenchTime} onPriorityChange={updateTaskPriority} onSetReminder={(scheduledAt) => void runMutation(() => reminderMutations.set.mutateAsync({ idempotencyKey: mutationKey("desktop-set-reminder"), mode: "absolute", scheduledAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }))} onCancelReminder={() => void runMutation(() => reminderMutations.cancel.mutateAsync(mutationKey("desktop-cancel-reminder")))} onTransition={(task, operation) => void runMutation(() => transitionMutation.mutateAsync({ taskId: task.id, operation, expectedVersion: task.version, idempotencyKey: mutationKey(`desktop-${operation}-task`) }))}
+        groupPicker={!selectedListId && allowCustomGrouping && workbenchSettings.group === "custom" && detailTask && !detailQuery.data?.tombstone ? <DetailGroupPicker taskId={detailTask.id} settings={workbenchSettings} onChange={(groupId, name) => setTaskGroup(detailTask.id, null, groupId, name)} /> : undefined}
+        ancestorNavigation={scope && detailTask && !detailQuery.data?.tombstone ? <TaskAncestorBreadcrumbs task={detailTask} client={cloud.client} scope={scope} onSelect={selectTask} /> : undefined}
+        subtasks={detailQuery.data && !detailQuery.data.tombstone && (detailQuery.data.task.subtaskCount !== undefined || detailQuery.data.permissions.canEditContent) ? <TaskSubtasksSection task={detailQuery.data.task} members={availableMembers} currentMemberId={currentMemberId} canCreate={detailQuery.data.permissions.canEditContent} page={subtaskPage} loading={subtaskQuery.isLoading} loadingMore={subtaskQuery.isFetchingNextPage} error={hasVisibleSubtasks && subtaskQuery.isError} onRetry={() => void subtaskQuery.refetch()} onLoadMore={() => void subtaskQuery.fetchNextPage({ cancelRefetch: false })} onSelect={selectTask} onCreate={createSubtask} onTransition={(task, operation) => void transitionWorkbenchTask(task, operation)} onReorder={reorderSubtask} editing={subtaskEditing} /> : undefined} /> : null}
+      {showFullCreate ? <TaskCreateDialog pending={createMutation.isPending} members={availableMembers} memberDirectoryLoading={membersQuery.isLoading && !fallbackMember} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} onRetryMemberDirectory={() => void membersQuery.refetch()} lists={activeListsQuery.data?.items ?? []} currentMemberId={currentMemberId} defaultListId={selectedListId} groupSettings={taskListGroupSettings} onGroupsChange={(listId, customGroups) => updateTaskListGrouping(listId, { ...taskListGroupSettings(listId), customGroups })} onCreateList={async (name) => { const result = await runMutation(() => listMutations.create.mutateAsync({ idempotencyKey: mutationKey("desktop-create-dialog-list"), name, description: "", marker: name.slice(0, 1).toUpperCase() || "#", visibility: "private" })); return result?.list.id ?? null; }} onClose={() => setShowFullCreate(false)} onCreate={async (input, groupId) => {
+        const result = await runMutation(() => createMutation.mutateAsync(input));
+        if (result && input.listId && groupId !== "custom-default") setTaskGroup(result.task.id, input.listId, groupId);
+        return result?.task;
+      }} onCreateChild={createChildTask} onFinish={taskId => { setShowFullCreate(false); selectTask(taskId); }} /> : null}
       {listCollaborationDialog === "manage" && selectedListDetailQuery.data ? <TaskListCollaboratorsDialog key={`${selectedListDetailQuery.data.list.id}:${selectedListDetailQuery.data.list.version}`} result={selectedListDetailQuery.data} members={availableMembers} pending={listAccessPending} canTransferOwnership={currentMemberId === selectedListDetailQuery.data.list.creatorMemberId && selectedListDetailQuery.data.permissions.canTransferOwnership} onClose={() => setListCollaborationDialog(null)} onAdd={() => { setReturnToCollaboratorManagement(true); setListCollaborationDialog("add"); }} onTransferOwnership={transferTaskListOwnership} onSave={async (members) => { if (!await updateTaskListAccess(members)) return false; setListCollaborationDialog(null); return true; }} /> : null}
       {listCollaborationDialog === "add" && selectedListDetailQuery.data && selectedListId && scope ? <TaskListShareDialog result={selectedListDetailQuery.data} members={availableMembers} groups={collaborationGroupsQuery.data ?? []} groupsLoading={collaborationGroupsQuery.isLoading} pending={listAccessPending} onClose={() => setListCollaborationDialog(returnToCollaboratorManagement ? "manage" : null)} onLoadGroupMembers={async (groupId) => (await runMutation(async () => { const memberIds: string[] = []; let offset = 0; while (true) { const page = await cloud.client.listCollaborationGroupMembers(scope.organizationId, groupId, { limit: 100, offset }); for (const groupMember of page.members) { const organizationMember = availableMembers.find((member) => member.userId === groupMember.userId); if (organizationMember && !memberIds.includes(organizationMember.id)) memberIds.push(organizationMember.id); } offset += page.members.length; if (!page.members.length || offset >= page.total) break; } return memberIds; })) ?? null} onSave={async (memberIds) => { const existingRoles = new Map(selectedListDetailQuery.data!.members.map((member) => [member.memberId, member.role])); if (!await updateTaskListAccess(memberIds.map((memberId) => ({ memberId, role: existingRoles.get(memberId) ?? "member" })))) return false; setListCollaborationDialog(returnToCollaboratorManagement ? "manage" : null); return true; }} /> : null}
       {listOperationDialog === "rename" && selectedListDetailQuery.data ? <TaskListRenameDialog result={selectedListDetailQuery.data} pending={listMutations.update.isPending} onClose={() => setListOperationDialog(null)} onSave={async (name) => { const current = selectedListDetailQuery.data!; const result = await runMutation(() => listMutations.update.mutateAsync({ listId: current.list.id, patch: { expectedVersion: current.list.version, idempotencyKey: mutationKey("desktop-rename-task-list"), name } })); if (!result) return false; setSelectedListFallback({ id: result.list.id, name: result.list.name }); setListOperationDialog(null); return true; }} /> : null}
@@ -996,14 +1145,90 @@ function TaskList(props: { tasks: DenProductTask[]; selectedTaskId: string | nul
   </div>)}{props.canLoadMore ? <Button variant="outline" disabled={props.loadingMore} onClick={props.onLoadMore}>{props.loadingMore ? t("tasks.loading") : t("tasks.load_more")}</Button> : null}</div>;
 }
 
-function TaskDetail(props: { onSaveAttachmentRemoval: (task: DenProductTask, description: string) => Promise<boolean>;
-  result: ReturnType<typeof useProductTask>["data"]; activity: ReturnType<typeof useProductTaskActivity>["data"]; reminders: Array<{ scheduledAt: string; state: string }>; members: DenOrganizationMember[]; lists: DenProductTaskList[]; groups: Array<{ id: string; name: string }>; defaultGroupName: string; groupId: string; loading: boolean; error: boolean; currentMemberId: string | null; preservedDraft: ProductTaskEditDraft | null; onDraftChange: (draft: ProductTaskEditDraft) => void; onClose: () => void; onSave: (id: string, patch: { expectedVersion: number; idempotencyKey: string; title: string; description: string }) => Promise<void>; onComment: (taskId: string, body: string) => Promise<boolean>; onFollowersChange: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onAssigneesChange: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onListChange: (task: DenProductTask, listId: string) => Promise<boolean>; onListCreate: (task: DenProductTask, name: string) => Promise<string | null>; onTimeChange: (task: DenProductTask, field: TaskTimeField, value: string | null) => Promise<boolean>; onPriorityChange: (task: DenProductTask, priority: EditableTaskPriority) => Promise<boolean>; onGroupChange: (taskId: string, groupId: string) => void; onGroupsChange: (groups: Array<{ id: string; name: string }>) => void; onSetReminder: (scheduledAt: string) => void; onCancelReminder: () => void; onTransition: (task: DenProductTask, operation: "complete" | "cancel" | "reopen" | "restore") => void }) {
+function canSubmitTaskCompletion(result: NonNullable<ReturnType<typeof useProductTask>["data"]>, currentMemberId: string | null) {
+  const assignees = result.members.filter((member) => member.role === "assignee");
+  const currentAssignee = assignees.find((member) => member.memberId === currentMemberId);
+  if (result.task.status !== "todo" || currentAssignee?.completedAt) return false;
+  if (assignees.length > 1 && result.task.completionPolicy !== "all_assignees") {
+    // An older server could otherwise complete the whole task. Never send that request.
+    toast.error(t("tasks.safe_completion_unavailable"));
+    return false;
+  }
+  if ((assignees.length > 1 || result.task.completionPolicy === "all_assignees") && !currentAssignee) {
+    toast.error(t("tasks.transition_not_allowed"));
+    return false;
+  }
+  return true;
+}
+
+type DetailListFilings = {
+  onMembership: (task: DenProductTask, listId: string, added: boolean) => Promise<boolean>;
+  onCreate: (task: DenProductTask, name: string) => Promise<string | null>;
+  groupSettings: (listId: string) => TaskWorkbenchSettings;
+  onGroupChange: (taskId: string, listId: string, groupId: string, newGroupName?: string) => void;
+};
+
+function DetailGroupPicker({ taskId, settings, list, onChange }: { taskId: string; settings: TaskWorkbenchSettings; list?: DenProductTaskList; onChange: (groupId: string, newGroupName?: string) => void }) {
+  const [search, setSearch] = React.useState("");
+  const [open, setOpen] = React.useState(false);
+  const groups = [{ id: "custom-default", name: settings.customGroupName || t("tasks.group_default") }, ...settings.customGroups];
+  const current = groups.find((group) => group.id === settings.customGroupAssignments[taskId]) ?? groups[0];
+  const name = search.trim().slice(0, 80);
+  const query = name.toLocaleLowerCase();
+  const choose = (id: string, newName?: string) => { onChange(id, newName); setOpen(false); setSearch(""); };
+  return <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) setSearch(""); }}>
+    <PopoverTrigger render={<button type="button" title={current.name} aria-label={list ? t("tasks.change_group_in_list", { name: list.name, group: current.name }) : `${t("tasks.group")}: ${current.name}`} data-testid={list ? `task-detail-list-group-${list.id}` : "task-detail-group-trigger"} className="flex h-8 min-w-0 items-center gap-1 rounded-md px-2 text-sm hover:bg-dls-hover focus-visible:ring-2 focus-visible:ring-blue-8" />}><span className="truncate">{current.name}</span><ChevronDown aria-hidden="true" className="size-3.5 shrink-0 text-dls-secondary" /></PopoverTrigger>
+    <PopoverContent align="start" positionerClassName="z-[60]" className="w-64 gap-0 rounded-xl p-2">
+      <Input maxLength={80} value={search} onChange={(event) => setSearch(event.target.value)} aria-label={t("tasks.search_or_create_group")} placeholder={t("tasks.search_or_create_group")} className="mb-2 h-9" />
+      <div className="max-h-64 overflow-y-auto">
+        {groups.filter((group) => group.name.toLocaleLowerCase().includes(query)).map((group) => <button type="button" key={group.id} data-testid={`task-detail-group-${group.id}`} aria-pressed={group.id === current.id} onClick={() => choose(group.id)} className={`flex h-9 w-full items-center rounded-lg px-2 text-left text-sm hover:bg-dls-hover ${group.id === current.id ? "text-blue-10" : ""}`}><span className="flex-1 truncate">{group.name}</span>{group.id === current.id ? <Check className="size-4" /> : null}</button>)}
+        {name && !groups.some((group) => group.name.toLocaleLowerCase() === query) ? <button type="button" data-testid="task-detail-group-create" onClick={() => choose(`custom-${crypto.randomUUID()}`, name)} className="mt-1 flex h-10 w-full items-center gap-2 rounded-lg bg-dls-hover px-2 text-sm"><Plus className="size-4 shrink-0" />{t("tasks.create_group")} <strong className="truncate">{name}</strong></button> : null}
+      </div>
+    </PopoverContent>
+  </Popover>;
+}
+
+function TaskDetailListFilings({ task, lists, actions }: { task: DenProductTask; lists: DenProductTaskList[]; actions: DetailListFilings }) {
+  const syncing = React.useContext(TaskListSyncContext);
+  const [pending, setPending] = React.useState(false);
+  const inFlight = React.useRef(false);
+  const run = async <T,>(action: () => Promise<T>, fallback: T) => {
+    if (inFlight.current) return fallback;
+    inFlight.current = true;
+    setPending(true);
+    try { return await action(); } finally { inFlight.current = false; setPending(false); }
+  };
+  const listById = new Map(lists.map((list) => [list.id, list]));
+  return <div className="flex items-start gap-3" data-testid="task-detail-list-filings">
+    <span className="flex h-8 shrink-0 items-center"><TaskFieldIcon label={t("tasks.field_list")}><ListTodo className="size-4 text-dls-secondary" /></TaskFieldIcon></span>
+    <div className="min-w-0 flex-1 space-y-1">
+      {productTaskListIds(task).map((id) => {
+        const list = listById.get(id);
+        const name = taskListName(id, listById, syncing);
+        const active = list && !list.archivedAt;
+        const removeLabel = t("tasks.remove_from_named_list", { name });
+        return <div key={id} className="group/filing flex min-h-8 items-center gap-2 rounded-md text-sm" data-testid={`task-detail-list-row-${id}`}>
+          <span title={name} className="max-w-[54%] truncate rounded-md px-2 py-1 text-dls-text group-hover/filing:bg-dls-hover">{name}</span>
+          {active ? <><span aria-hidden="true" className="h-4 w-px shrink-0 bg-dls-border" />
+          <DetailGroupPicker taskId={task.id} list={list} settings={actions.groupSettings(id)} onChange={(groupId, name) => actions.onGroupChange(task.id, list.id, groupId, name)} />
+          <button type="button" title={removeLabel} aria-label={removeLabel} data-testid={`task-detail-list-remove-${id}`} disabled={pending} onClick={() => void run(() => actions.onMembership(task, id, false), false)} className="flex size-7 shrink-0 items-center justify-center rounded-md text-dls-secondary opacity-100 transition-opacity hover:bg-dls-hover focus-visible:ring-2 focus-visible:ring-blue-8 disabled:opacity-40 pointer-fine:opacity-0 pointer-fine:group-hover/filing:opacity-100 pointer-fine:group-focus-within/filing:opacity-100"><X aria-hidden="true" className="size-4" /></button></> : null}
+        </div>;
+      })}
+      <TaskListCell addOnly task={task} lists={listById} onChange={(_, id) => run(() => actions.onMembership(task, id, true), false)} onCreate={(_, name) => run(() => actions.onCreate(task, name), null)} disabled={pending} />
+    </div>
+  </div>;
+}
+
+function TaskDetail(props: { onSaveAttachmentRemoval: (task: DenProductTask, description: string) => Promise<boolean>; ancestorNavigation?: React.ReactNode; subtasks?: React.ReactNode; groupPicker?: React.ReactNode;
+  result: ReturnType<typeof useProductTask>["data"]; activity: ReturnType<typeof useProductTaskActivity>["data"]; reminders: Array<{ scheduledAt: string; state: string }>; members: DenOrganizationMember[]; lists: DenProductTaskList[]; loading: boolean; error: boolean; currentMemberId: string | null; preservedDraft: ProductTaskEditDraft | null; onDraftChange: (draft: ProductTaskEditDraft) => void; onClose: () => void; onSave: (id: string, patch: { expectedVersion: number; idempotencyKey: string; title: string; description: string }) => Promise<void>; onComment: (taskId: string, body: string) => Promise<boolean>; onFollowersChange: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onAssigneesChange: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; listFilings: DetailListFilings; onTimeChange: (task: DenProductTask, field: TaskTimeField, value: string | null) => Promise<boolean>; onPriorityChange: (task: DenProductTask, priority: EditableTaskPriority) => Promise<boolean>; onSetReminder: (scheduledAt: string) => void; onCancelReminder: () => void; onTransition: (task: DenProductTask, operation: "complete" | "cancel" | "reopen" | "restore") => void }) {
   const task = props.result?.task;
   const uploads = React.useContext(TaskUploadContext);
   const upload = React.useMemo(() => task && uploads?.(task.id), [task?.id, uploads]);
   const [picking, setPicking] = React.useState(false);
   const permissions = props.result?.permissions;
-  const assigneeIds = React.useMemo(() => props.result?.members.filter((member) => member.role === "assignee").map((member) => member.memberId) ?? [], [props.result?.members]);
+  const assignees = React.useMemo(() => props.result?.members.filter((member) => member.role === "assignee") ?? [], [props.result?.members]);
+  const assigneeIds = React.useMemo(() => assignees.map((member) => member.memberId), [assignees]);
+  const completedAssigneeIds = React.useMemo(() => new Set(assignees.filter((member) => member.completedAt).map((member) => member.memberId)), [assignees]);
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const attachmentView = React.useMemo(() => splitTaskAttachments(description), [description]);
@@ -1021,15 +1246,14 @@ function TaskDetail(props: { onSaveAttachmentRemoval: (task: DenProductTask, des
   const [comment, setComment] = React.useState("");
   const [commentPending, setCommentPending] = React.useState(false);
   const [followerIds, setFollowerIds] = React.useState<string[]>([]);
-  const [groupSearch, setGroupSearch] = React.useState("");
   const commentAttempt = React.useRef(0);
   const currentAssignee = props.result?.members.find((member) => member.role === "assignee" && member.memberId === props.currentMemberId);
-  const currentAssigneeCompleted = task?.status === "todo" && task.completionPolicy === "all_assignees" && Boolean(currentAssignee?.completedAt);
-  const canComplete = props.result?.permissions.canComplete && (task?.completionPolicy !== "all_assignees" || Boolean(currentAssignee));
+  const currentAssigneeCompleted = task?.status === "todo" && Boolean(currentAssignee?.completedAt);
+  const requiresOwnCompletion = assigneeIds.length > 1 || task?.completionPolicy === "all_assignees";
+  const canComplete = (props.result?.permissions.canComplete || currentAssigneeCompleted) && (!requiresOwnCompletion || Boolean(currentAssignee));
   const currentMemberId = props.currentMemberId;
   const isFollowing = Boolean(currentMemberId && followerIds.includes(currentMemberId));
   const memberById = new Map(props.members.map((member) => [member.id, member]));
-  const groupName = props.groupId === "custom-default" ? props.defaultGroupName : props.groups.find((group) => group.id === props.groupId)?.name ?? props.defaultGroupName;
   React.useEffect(() => {
     if (!task) return;
     const draft = reapplyProductTaskDraft(task, props.preservedDraft);
@@ -1046,12 +1270,15 @@ function TaskDetail(props: { onSaveAttachmentRemoval: (task: DenProductTask, des
   const changeFollowers = async (next: string[]) => { if (!task) return; const previous = followerIds; setFollowerIds(next); if (!await props.onFollowersChange(task, next)) setFollowerIds(previous); };
   const sendComment = () => { if (!task) return; const body = comment.trim(); if (!body || commentPending) return; const attempt = ++commentAttempt.current; setCommentPending(true); void props.onComment(task.id, body).then((saved) => { if (commentAttempt.current !== attempt) return; setCommentPending(false); if (saved) setComment((current) => current.trim() === body ? "" : current); }); };
   return <><button type="button" data-testid="task-detail-backdrop" aria-label={t("tasks.close_detail")} className="absolute inset-0 z-40 cursor-default bg-transparent" onClick={props.onClose} /><aside data-testid="task-detail-panel" className="absolute inset-y-0 right-0 z-50 isolate flex w-[min(560px,94%)] flex-col overflow-hidden border-l border-dls-border bg-background shadow-2xl" aria-label={t("tasks.detail")}>
-    <header className="flex h-16 shrink-0 items-center justify-between border-b border-dls-border px-6"><div>{task ? task.status === "todo" && canComplete ? <Button type="button" variant="outline" size="sm" className="border-blue-9 text-blue-10" disabled={currentAssigneeCompleted} onClick={() => { const assignees = props.result?.members.filter((member) => member.role === "assignee").length ?? 0; if (task.completionPolicy === "all_assignees" || assignees <= 1 || globalThis.confirm(t("tasks.complete_multi_confirm"))) props.onTransition(task, "complete"); }}><Check className="size-4" />{t("tasks.complete")}</Button> : task.status === "completed" && props.result?.permissions.canReopen ? <Button type="button" variant="outline" size="sm" className="border-green-8 text-green-10" onClick={() => props.onTransition(task, "reopen")}><Check className="size-4" />{t("tasks.completed")}</Button> : null : null}</div><div className="flex items-center gap-1">{task && currentMemberId ? <Button type="button" data-testid="task-detail-follow" variant="ghost" size="sm" className={isFollowing ? "text-blue-10" : "text-dls-secondary"} onClick={() => void changeFollowers(isFollowing ? followerIds.filter((id) => id !== currentMemberId) : [...followerIds, currentMemberId])}>{isFollowing ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}{isFollowing ? t("tasks.following_task") : t("tasks.follow_task")}</Button> : null}<Button type="button" variant="ghost" size="icon"><MoreHorizontal className="size-4" /></Button><Button type="button" variant="ghost" size="icon" onClick={props.onClose}><X className="size-4" /></Button></div></header>
+    <header className="flex h-16 shrink-0 items-center justify-between border-b border-dls-border px-6"><div>{task?.status === "todo" && canComplete ? <Button type="button" variant="outline" size="sm" className="border-blue-9 text-blue-10" disabled={currentAssigneeCompleted} title={currentAssigneeCompleted ? t("tasks.waiting_for_assignees") : undefined} onClick={() => { if (props.result && canSubmitTaskCompletion(props.result, currentMemberId)) props.onTransition(task, "complete"); }}><Check className="size-4" />{t(currentAssigneeCompleted ? "tasks.assignee_completed" : requiresOwnCompletion ? "tasks.complete_my_part" : "tasks.complete")}</Button> : task?.status === "completed" && props.result?.permissions.canReopen ? <Button type="button" variant="outline" size="sm" className="border-green-8 text-green-10" onClick={() => props.onTransition(task, "reopen")}><Check className="size-4" />{t("tasks.completed")}</Button> : null}</div><div className="flex items-center gap-1">{task && currentMemberId ? <Button type="button" data-testid="task-detail-follow" variant="ghost" size="sm" className={isFollowing ? "text-blue-10" : "text-dls-secondary"} onClick={() => void changeFollowers(isFollowing ? followerIds.filter((id) => id !== currentMemberId) : [...followerIds, currentMemberId])}>{isFollowing ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}{isFollowing ? t("tasks.following_task") : t("tasks.follow_task")}</Button> : null}<Button type="button" variant="ghost" size="icon"><MoreHorizontal className="size-4" /></Button><Button type="button" variant="ghost" size="icon" onClick={props.onClose}><X className="size-4" /></Button></div></header>
     {props.loading ? <div className="flex flex-1 items-center justify-center"><TaskShellContent state={{ kind: "loading" }} /></div> : props.error || !task ? <div className="flex flex-1 items-center justify-center"><TaskShellContent state={{ kind: "error", onRetry: () => undefined }} /></div> : <>
-      <div className="min-h-0 flex-1 overflow-y-auto"><section className="space-y-4 px-7 py-6"><Input value={title} readOnly={removingAttachment || !props.result?.permissions.canEditContent} onBlur={saveContent} onChange={(event) => { const value = event.target.value; setTitle(value); if (props.preservedDraft) props.onDraftChange({ ...props.preservedDraft, title: value, description }); }} className="h-auto border-0 px-0 py-1 !text-xl font-semibold shadow-none focus-visible:ring-0" />
-        <div className="flex items-center gap-3 text-sm"><TaskFieldIcon label={t("tasks.assignees")}><UserRound className="size-4 text-dls-secondary" /></TaskFieldIcon><AssigneeCell task={task} ids={assigneeIds} members={memberById} onChange={permissions && canAssignTask(permissions) ? props.onAssigneesChange : undefined} /><span className="h-5 w-px bg-dls-border" /><span>{groupName}</span></div>
+      <div className="min-h-0 flex-1 overflow-y-auto"><section className="space-y-4 px-7 py-6">
+        {props.ancestorNavigation}
+        <Input value={title} readOnly={removingAttachment || !props.result?.permissions.canEditContent} onBlur={saveContent} onChange={(event) => { const value = event.target.value; setTitle(value); if (props.preservedDraft) props.onDraftChange({ ...props.preservedDraft, title: value, description }); }} className="h-auto border-0 px-0 py-1 !text-xl font-semibold shadow-none focus-visible:ring-0" />
+        <div className="flex items-center gap-3 text-sm" data-testid="task-detail-assignees"><TaskFieldIcon label={t("tasks.assignees")}><UserRound className="size-4 text-dls-secondary" /></TaskFieldIcon><AssigneeCell detail task={task} ids={assigneeIds} completedIds={completedAssigneeIds} members={memberById} onChange={permissions && canAssignTask(permissions) ? props.onAssigneesChange : undefined} />{props.groupPicker ? <><span aria-hidden="true" className="h-5 w-px shrink-0 bg-dls-border" />{props.groupPicker}</> : null}</div>
         <div className="flex items-center gap-3"><TaskFieldIcon label={t("tasks.field_due")}><CalendarDays className="size-4 text-dls-secondary" /></TaskFieldIcon><TaskDateTimeCell task={task} field="dueAt" onChange={permissions?.canEditTime ? props.onTimeChange : undefined} /><span className="h-5 w-px bg-dls-border" /><TaskPrioritySelect testId="task-detail-priority" value={task.priority} disabled={!permissions?.canEditContent} onChange={(priority) => props.onPriorityChange(task, priority)} /></div>
-        <div className="flex items-center gap-3"><TaskFieldIcon label={t("tasks.field_list")}><ListTodo className="size-4 text-dls-secondary" /></TaskFieldIcon><TaskListCell task={task} lists={new Map(props.lists.map((list) => [list.id, list]))} onChange={props.onListChange} onCreate={props.onListCreate} /><span className="h-5 w-px bg-dls-border" /><Popover><PopoverTrigger render={<button type="button" data-testid="task-detail-group-trigger" className="flex h-8 items-center gap-1 rounded-md px-2 text-sm hover:bg-dls-hover" />}><span>{groupName}</span><ChevronDown className="size-3.5" /></PopoverTrigger><PopoverContent align="start" className="w-64 gap-0 rounded-xl p-2"><Input value={groupSearch} onChange={(event) => setGroupSearch(event.target.value)} placeholder={t("tasks.search_or_create_group")} className="mb-2 h-9" />{[{ id: "custom-default", name: props.defaultGroupName }, ...props.groups].filter((group) => group.name.toLocaleLowerCase().includes(groupSearch.trim().toLocaleLowerCase())).map((group) => <button type="button" key={group.id} data-testid={`task-detail-group-${group.id}`} onClick={() => props.onGroupChange(task.id, group.id)} className={`flex h-9 w-full items-center rounded-lg px-2 text-left text-sm hover:bg-dls-hover ${props.groupId === group.id ? "text-blue-10" : ""}`}><span className="flex-1 truncate">{group.name}</span>{props.groupId === group.id ? <Check className="size-4" /> : null}</button>)}{groupSearch.trim() && ![{ id: "custom-default", name: props.defaultGroupName }, ...props.groups].some((group) => group.name.toLocaleLowerCase() === groupSearch.trim().toLocaleLowerCase()) ? <button type="button" data-testid="task-detail-group-create" onClick={() => { const name = groupSearch.trim(); const id = `custom-${crypto.randomUUID()}`; props.onGroupsChange([...props.groups, { id, name }]); props.onGroupChange(task.id, id); setGroupSearch(""); }} className="mt-1 flex h-10 w-full items-center gap-2 rounded-lg bg-dls-hover px-2 text-sm"><Plus className="size-4" />{t("tasks.create_group")} <strong>{groupSearch.trim()}</strong></button> : null}</PopoverContent></Popover></div>
+        <TaskDetailListFilings task={task} lists={props.lists} actions={props.listFilings} />
+        {props.subtasks}
         <div className="flex items-start gap-3"><TaskFieldIcon label={t("tasks.description_field")}><AlignLeft className="mt-2 size-4 text-dls-secondary" /></TaskFieldIcon><TaskDescriptionEditor compact separateAttachments upload={upload} onPickerChange={setPicking} members={props.members} testId="task-detail-description-editor" value={attachmentView.body} readOnly={removingAttachment || !props.result?.permissions.canEditContent} onChange={(value) => { const next = joinTaskAttachments(value, attachmentView.files); setDescription(next); if (props.preservedDraft) props.onDraftChange({ ...props.preservedDraft, title, description: next }); }} onBlur={saveContent} /></div>
         <TaskAttachmentSection files={attachmentView.files} upload={permissions?.canEditContent ? upload : undefined} onRemove={permissions?.canEditContent ? removeAttachment : undefined} onAdd={file => {
           if (!permissions?.canEditContent) return;
@@ -1089,7 +1316,7 @@ function TaskFieldIcon(props: { label: string; children: React.ReactNode }) {
   return <span tabIndex={0} aria-label={props.label} className="group/task-create-icon relative inline-flex shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-blue-8">{props.children}<span role="tooltip" className="pointer-events-none absolute bottom-[calc(100%+9px)] left-1/2 z-[70] w-max max-w-40 -translate-x-1/2 rounded-lg bg-foreground px-3 py-2 text-xs text-background opacity-0 shadow-lg transition-opacity after:absolute after:left-1/2 after:top-full after:size-2 after:-translate-x-1/2 after:-translate-y-1/2 after:rotate-45 after:bg-foreground after:content-[''] group-hover/task-create-icon:opacity-100 group-focus/task-create-icon:opacity-100">{props.label}</span></span>;
 }
 
-function TaskCreateDialog(props: { pending: boolean; members: DenOrganizationMember[]; memberDirectoryLoading: boolean; memberDirectoryError: string | null; onRetryMemberDirectory: () => void; lists: DenProductTaskList[]; currentMemberId: string | null; defaultListId: string | null; groups: Array<{ id: string; name: string }>; defaultGroupName: string; onGroupsChange: (groups: Array<{ id: string; name: string }>) => void; onCreateList: (name: string) => Promise<string | null>; onClose: () => void; onCreate: (input: Omit<DenProductTaskCreateInput, "idempotencyKey">, groupId: string) => Promise<void> }) {
+function TaskCreateDialog(props: { pending: boolean; members: DenOrganizationMember[]; memberDirectoryLoading: boolean; memberDirectoryError: string | null; onRetryMemberDirectory: () => void; lists: DenProductTaskList[]; currentMemberId: string | null; defaultListId: string | null; groupSettings: (listId: string) => TaskWorkbenchSettings; onGroupsChange: (listId: string, groups: TaskWorkbenchSettings["customGroups"]) => void; onCreateList: (name: string) => Promise<string | null>; onClose: () => void; onCreate: (input: DenProductTaskCreateInput, groupId: string) => Promise<DenProductTask | undefined>; onCreateChild: (parentId: string, input: TaskSubtaskCreateInput) => Promise<boolean>; onFinish: (taskId: string) => void }) {
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [priority, setPriority] = React.useState<DenProductTask["priority"]>("none");
@@ -1101,27 +1328,92 @@ function TaskCreateDialog(props: { pending: boolean; members: DenOrganizationMem
   const uploads = React.useContext(TaskUploadContext);
   const upload = React.useMemo(() => uploads?.(), [uploads]);
   const [picking, setPicking] = React.useState(false);
-  const canCreate = Boolean(title.trim()) && !props.pending && !picking;
+  const [files, setFiles] = React.useState<AttachmentRef[]>([]);
+  const [fileBusy, setFileBusy] = React.useState(false);
+  const [children, setChildren] = React.useState<StagedSubtask[]>([]);
+  const [createdParent, setCreatedParent] = React.useState<DenProductTask>();
+  const [saving, setSaving] = React.useState(false);
+  const [childError, setChildError] = React.useState(false);
+  const submitting = React.useRef(false);
+  const attempts = React.useRef(new Map<string, { payload: string; key: string }>());
+  const busy = saving || props.pending;
+  const canCreate = Boolean(title.trim()) && !busy && !picking && !fileBusy;
+  const close = () => { if (createdParent) props.onFinish(createdParent.id); else props.onClose(); };
   const [groupId, setGroupId] = React.useState("custom-default");
   const [groupSearch, setGroupSearch] = React.useState("");
   const selectedList = listId ? props.lists.find((list) => list.id === listId) ?? null : null;
   const hasOtherMembers = [...assigneeIds, ...followerIds].some((id) => id !== props.currentMemberId);
   const visibility = newTaskVisibility(selectedList, hasOtherMembers);
   const quickDue = (offset: number) => { const now = new Date(); setDueAt(new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset).toISOString()); };
-  const groupName = groupId === "custom-default" ? props.defaultGroupName || t("tasks.group_default") : props.groups.find((group) => group.id === groupId)?.name ?? t("tasks.group_default");
+  const grouping = listId ? props.groupSettings(listId) : null;
+  const defaultGroup = { id: "custom-default", name: grouping?.customGroupName || t("tasks.group_default") };
+  const groups = [defaultGroup, ...(grouping?.customGroups ?? [])];
+  const groupName = groups.find((group) => group.id === groupId)?.name ?? defaultGroup.name;
+  const groupQuery = groupSearch.trim().slice(0, 80);
+  const selectList = (id: string) => {
+    setListId(id);
+    setGroupId(defaultGroup.id);
+    setGroupSearch("");
+  };
   const draftTask: DenProductTask = { id: "create-dialog-draft", displayNumber: null, creatorMemberId: props.currentMemberId ?? "", listId: listId || null, title, description, priority, visibility, completionPolicy: "any_assignee", status: "todo", version: 1, startAt, dueAt, completedAt: null, completedByMemberId: null, canceledAt: null, canceledByMemberId: null, deletedAt: null, restoreUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-  return <Dialog open onOpenChange={(open) => { if (!open && !props.pending && !picking) props.onClose(); }}><DialogContent data-testid="task-create-dialog" className="h-[min(460px,calc(100vh-2rem))] w-[min(680px,calc(100%-3rem))] max-w-none gap-0 overflow-visible rounded-xl bg-dls-surface p-0 sm:max-w-[680px]" aria-label={t("tasks.create")} showCloseButton={!props.pending && !picking}><DialogHeader className="sr-only"><DialogTitle>{t("tasks.create")}</DialogTitle><DialogDescription>{t("tasks.create_description")}</DialogDescription></DialogHeader><form className="flex h-full min-h-0 flex-col px-8 pb-3 pt-7" onSubmit={(event) => { event.preventDefault(); if (!canCreate) return; void props.onCreate({ title: title.trim(), description, visibility, priority, startAt, dueAt, listId: listId || undefined, members: [...assigneeIds.map((memberId) => ({ memberId, role: "assignee" as const })), ...followerIds.map((memberId) => ({ memberId, role: "follower" as const }))] }, groupId); }}>
+  const attemptKey = (slot: string, input: object) => {
+    const payload = JSON.stringify(input);
+    const previous = attempts.current.get(slot);
+    if (previous?.payload === payload) return previous.key;
+    const key = mutationKey(slot === "parent" ? "desktop-create-task" : "desktop-create-subtask");
+    attempts.current.set(slot, { payload, key });
+    return key;
+  };
+  const submit = async () => {
+    if (!canCreate || submitting.current) return;
+    submitting.current = true;
+    setSaving(true);
+    setChildError(false);
+    try {
+      const input = { title: title.trim(), description: joinTaskAttachments(description, files), visibility, priority, startAt, dueAt, listId: listId || undefined,
+        members: [...assigneeIds.map(memberId => ({ memberId, role: "assignee" as const })), ...followerIds.map(memberId => ({ memberId, role: "follower" as const }))] };
+      const parent = createdParent ?? await props.onCreate({ ...input, idempotencyKey: attemptKey("parent", input) }, groupId);
+      if (!parent) return;
+      setCreatedParent(parent);
+      for (const child of children.filter(item => item.title.trim())) {
+        const draft = { title: child.title.trim(), dueAt: child.dueAt, assigneeIds: [...child.assigneeIds].sort() };
+        if (parent.subtaskCount === undefined || !await props.onCreateChild(parent.id, { ...draft, idempotencyKey: attemptKey(child.id, draft) })) {
+          setChildError(true);
+          return;
+        }
+        setChildren(current => current.filter(item => item.id !== child.id));
+      }
+      props.onFinish(parent.id);
+    } finally { submitting.current = false; setSaving(false); }
+  };
+  return <Dialog open onOpenChange={(open) => { if (!open && !busy && !picking) close(); }}><DialogContent data-testid="task-create-dialog" className="h-[min(460px,calc(100vh-2rem))] w-[min(680px,calc(100%-3rem))] max-w-none gap-0 overflow-visible rounded-xl bg-dls-surface p-0 sm:max-w-[680px]" aria-label={t("tasks.create")} showCloseButton={!busy && !picking}><DialogHeader className="sr-only"><DialogTitle>{t("tasks.create")}</DialogTitle><DialogDescription>{t("tasks.create_description")}</DialogDescription></DialogHeader>
+    <form className="flex h-full min-h-0 flex-col pb-3 pt-7" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+    <div className="min-h-0 flex-1 overflow-y-auto px-8">
+    <fieldset disabled={busy || !!createdParent} inert={busy || !!createdParent} className="min-w-0">
     <input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder={t("tasks.title_placeholder")} className="h-12 w-full bg-transparent text-[20px] font-medium text-dls-text outline-none placeholder:text-dls-secondary/70" />
-    <div className="mt-3 flex items-center gap-3"><TaskFieldIcon label={t("tasks.assignees")}><UserRound className="size-5 text-dls-secondary" /></TaskFieldIcon><CreatePeoplePicker testId="task-create-assignees" label={t("tasks.add_assignee")} members={props.members} selected={assigneeIds} onChange={setAssigneeIds} /><span className="h-6 w-px bg-dls-border" /><Popover><PopoverTrigger render={<button type="button" data-testid="task-create-group-trigger" className="flex h-9 items-center gap-2 rounded-lg px-2 text-sm text-dls-text hover:bg-dls-hover" />}><span>{groupName}</span><ChevronDown className="size-3.5 text-dls-secondary" /></PopoverTrigger><PopoverContent align="start" className="w-72 gap-0 rounded-xl p-2"><Input autoFocus value={groupSearch} onChange={(event) => setGroupSearch(event.target.value)} placeholder={t("tasks.search_or_create_group")} className="mb-2 h-10" /><p className="px-2 py-1 text-xs font-medium text-dls-secondary">{t("tasks.assigned_to_me")}</p>{[{ id: "custom-default", name: props.defaultGroupName || t("tasks.group_default") }, ...props.groups].filter((group) => group.name.toLocaleLowerCase().includes(groupSearch.trim().toLocaleLowerCase())).map((group) => <button type="button" key={group.id} onClick={() => setGroupId(group.id)} className={`flex h-10 w-full items-center rounded-lg px-2 text-left text-sm ${groupId === group.id ? "bg-dls-hover text-blue-10" : "hover:bg-dls-hover"}`}><span className="flex-1 truncate">{group.name}</span>{groupId === group.id ? <Check className="size-4" /> : null}</button>)}{groupSearch.trim() && ![{ id: "custom-default", name: props.defaultGroupName || t("tasks.group_default") }, ...props.groups].some((group) => group.name.toLocaleLowerCase() === groupSearch.trim().toLocaleLowerCase()) ? <button type="button" data-testid="task-create-group-create" onClick={() => { const name = groupSearch.trim(); const id = `custom-${crypto.randomUUID()}`; props.onGroupsChange([...props.groups, { id, name }]); setGroupId(id); setGroupSearch(""); }} className="mt-1 flex h-11 w-full items-center gap-2 rounded-lg bg-dls-hover px-2 text-sm text-dls-secondary"><Plus className="size-4" />{t("tasks.create_group")} <strong className="text-dls-text">{groupSearch.trim()}</strong></button> : null}</PopoverContent></Popover></div>
+    <div className="mt-3 flex items-center gap-3"><TaskFieldIcon label={t("tasks.assignees")}><UserRound className="size-5 text-dls-secondary" /></TaskFieldIcon><CreatePeoplePicker testId="task-create-assignees" label={t("tasks.add_assignee")} members={props.members} selected={assigneeIds} onChange={setAssigneeIds} />{grouping ? <><span className="h-6 w-px bg-dls-border" /><Popover>
+      <PopoverTrigger render={<button type="button" data-testid="task-create-group-trigger" className="flex h-9 items-center gap-2 rounded-lg px-2 text-sm text-dls-text hover:bg-dls-hover" />}><span>{groupName}</span><ChevronDown className="size-3.5 text-dls-secondary" /></PopoverTrigger>
+      <PopoverContent align="start" className="w-72 gap-0 rounded-xl p-2">
+        <Input autoFocus maxLength={80} value={groupSearch} onChange={(event) => setGroupSearch(event.target.value)} placeholder={t("tasks.search_or_create_group")} className="mb-2 h-10" />
+        {groups.filter((group) => group.name.toLocaleLowerCase().includes(groupQuery.toLocaleLowerCase())).map((group) => <button type="button" key={group.id} onClick={() => setGroupId(group.id)} className={`flex h-10 w-full items-center rounded-lg px-2 text-left text-sm ${groupId === group.id ? "bg-dls-hover text-blue-10" : "hover:bg-dls-hover"}`}><span className="flex-1 truncate">{group.name}</span>{groupId === group.id ? <Check className="size-4" /> : null}</button>)}
+        {groupQuery && !groups.some((group) => group.name.toLocaleLowerCase() === groupQuery.toLocaleLowerCase()) ? <button type="button" data-testid="task-create-group-create" onClick={() => { const id = `custom-${crypto.randomUUID()}`; props.onGroupsChange(listId, [...grouping.customGroups, { id, name: groupQuery }]); setGroupId(id); setGroupSearch(""); }} className="mt-1 flex h-11 w-full items-center gap-2 rounded-lg bg-dls-hover px-2 text-sm text-dls-secondary"><Plus className="size-4" />{t("tasks.create_group")} <strong className="truncate text-dls-text">{groupQuery}</strong></button> : null}
+      </PopoverContent>
+    </Popover></> : null}</div>
     <div className="mt-4 flex items-center gap-3"><TaskFieldIcon label={t("tasks.field_due")}><CalendarDays className="size-5 text-dls-secondary" /></TaskFieldIcon><Button type="button" variant="secondary" size="sm" className="h-8" onClick={() => quickDue(0)}>{t("tasks.today")}</Button><Button type="button" variant="secondary" size="sm" className="h-8" onClick={() => quickDue(1)}>{t("tasks.tomorrow")}</Button><TaskDateTimeCell task={draftTask} field="dueAt" triggerContent={<><CalendarDays className="size-4" />{t("tasks.other_time")}</>} triggerClassName="flex h-8 items-center gap-1.5 rounded-lg bg-dls-hover px-2 text-sm text-dls-text hover:bg-dls-active" onChange={async (_task, field, value) => {
       if (field === "startAt") setStartAt(value);
       else setDueAt(value);
       return true;
     }} /></div>
-    <div className="mt-3 flex items-center gap-3"><TaskFieldIcon label={t("tasks.field_list")}><ListTodo className="size-5 text-dls-secondary" /></TaskFieldIcon><TaskListCell task={draftTask} lists={new Map(props.lists.map((list) => [list.id, list]))} onChange={async (_task, nextListId) => { setListId(nextListId === listId ? "" : nextListId); return true; }} onCreate={async (_task, name) => { const id = await props.onCreateList(name); if (id) setListId(id); return id; }} /><span className="h-6 w-px bg-dls-border" /><TaskPrioritySelect testId="task-create-priority" value={priority} disabled={props.pending} onChange={setPriority} /></div>
-    <div className="mt-2 flex h-[168px] shrink-0 items-start gap-3"><TaskFieldIcon label={t("tasks.description_field")}><AlignLeft className="mt-2 size-5 text-dls-secondary" /></TaskFieldIcon><TaskDescriptionEditor upload={props.pending ? undefined : upload} onPickerChange={setPicking} members={props.members} value={description} onChange={setDescription} /></div>
+    <div className="mt-3 flex items-center gap-3"><TaskFieldIcon label={t("tasks.field_list")}><ListTodo className="size-5 text-dls-secondary" /></TaskFieldIcon><TaskListCell task={draftTask} lists={new Map(props.lists.map((list) => [list.id, list]))} onChange={async (_task, nextListId) => { selectList(nextListId === listId ? "" : nextListId); return true; }} onCreate={async (_task, name) => { const id = await props.onCreateList(name); if (id) selectList(id); return id; }} /><span className="h-6 w-px bg-dls-border" /><TaskPrioritySelect testId="task-create-priority" value={priority} disabled={props.pending} onChange={setPriority} /></div>
+    <div className="mt-2 flex items-start gap-3"><TaskFieldIcon label={t("tasks.description_field")}><AlignLeft className="mt-2 size-5 text-dls-secondary" /></TaskFieldIcon><TaskDescriptionEditor compact separateAttachments upload={upload} onPickerChange={setPicking} members={props.members} value={description} onChange={setDescription} /></div>
+    </fieldset>
+    <fieldset disabled={busy} inert={busy} className="mt-2 min-w-0"><TaskCreateSubtasks items={children} members={props.members} onChange={setChildren} /></fieldset>
+    <fieldset disabled={busy || !!createdParent} inert={busy || !!createdParent} className="mt-2 min-w-0"><TaskAttachmentSection files={files} upload={upload} onBusyChange={setFileBusy}
+      onAdd={file => setFiles(current => [...current, file])} onRemove={async (_file, index) => { setFiles(current => current.filter((_, i) => i !== index)); return true; }} /></fieldset>
+    {childError ? <p role="alert" className="mt-2 text-sm text-red-9">{t("tasks.create_subtasks_partial")} {createdParent?.subtaskCount === undefined ? t("tasks.subtasks_server_unsupported") : null}</p> : null}
     {props.memberDirectoryError ? <div className="mt-3 flex items-center gap-2 text-sm text-red-9" role="alert"><span>{t("tasks.member_directory_error")}</span><Button type="button" size="sm" variant="ghost" onClick={props.onRetryMemberDirectory}>{t("tasks.retry")}</Button></div> : props.memberDirectoryLoading ? <p className="mt-3 text-sm text-dls-secondary">{t("tasks.loading")}</p> : null}
-    <DialogFooter data-testid="task-create-footer" className="mx-0 mb-0 mt-3 w-full flex-row items-center justify-between rounded-none border-0 bg-transparent p-0 sm:justify-between"><CreatePeoplePicker testId="task-create-followers" label={t("tasks.add_follower")} members={props.members} selected={followerIds} onChange={setFollowerIds} triggerClassName="flex h-9 min-w-0 items-center gap-2 rounded-lg px-1.5 text-sm text-dls-text hover:bg-dls-hover" triggerContent={<><BookmarkPlus className="size-5 shrink-0 text-dls-secondary" aria-hidden="true" />{followerIds.length ? <><span className="flex -space-x-1.5">{followerIds.slice(0, 2).map((id) => { const member = props.members.find((item) => item.id === id); return <Avatar key={id} size="sm"><AvatarImage src={member?.user.avatar ?? undefined} /><AvatarFallback>{member ? memberLabel(member).slice(0, 1).toUpperCase() : "?"}</AvatarFallback></Avatar>; })}</span><span>{t("tasks.people_selected", { count: followerIds.length })}</span></> : <span>{t("tasks.add_follower")}</span>}</>} /><div className="flex gap-2"><Button type="button" variant="outline" disabled={props.pending} onClick={props.onClose}>{t("tasks.cancel")}</Button><Button type="submit" disabled={!canCreate}>{t("tasks.create_action")}</Button></div></DialogFooter>
+    </div>
+    <DialogFooter data-testid="task-create-footer" className="mx-0 mb-0 mt-3 w-full shrink-0 flex-row items-center justify-between rounded-none border-0 bg-transparent px-8 py-0 sm:justify-between"><fieldset disabled={busy || !!createdParent} inert={busy || !!createdParent}><CreatePeoplePicker testId="task-create-followers" label={t("tasks.add_follower")} members={props.members} selected={followerIds} onChange={setFollowerIds} triggerClassName="flex h-9 min-w-0 items-center gap-2 rounded-lg px-1.5 text-sm text-dls-text hover:bg-dls-hover" triggerContent={<><BookmarkPlus className="size-5 shrink-0 text-dls-secondary" aria-hidden="true" />{followerIds.length ? <><span className="flex -space-x-1.5">{followerIds.slice(0, 2).map((id) => { const member = props.members.find((item) => item.id === id); return <Avatar key={id} size="sm"><AvatarImage src={member?.user.avatar ?? undefined} /><AvatarFallback>{member ? memberLabel(member).slice(0, 1).toUpperCase() : "?"}</AvatarFallback></Avatar>; })}</span><span>{t("tasks.people_selected", { count: followerIds.length })}</span></> : <span>{t("tasks.add_follower")}</span>}</>} /></fieldset><div className="flex gap-2"><Button type="button" variant="outline" disabled={busy} onClick={close}>{t(createdParent ? "common.close" : "tasks.cancel")}</Button><Button type="submit" disabled={!canCreate}>{t(createdParent ? "tasks.retry" : "tasks.create_action")}</Button></div></DialogFooter>
   </form></DialogContent></Dialog>;
 }
 

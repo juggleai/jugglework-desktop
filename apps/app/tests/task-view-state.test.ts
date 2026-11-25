@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from "bun:test";
 
-import { defaultTaskWorkbenchSettings, readTaskWorkbenchSettings, reorderTaskWorkbenchFields, taskSectionDefaultSettings, taskWorkbenchFields, taskWorkbenchStorageKey, writeTaskWorkbenchSettings } from "../src/react-app/domains/tasks/task-view-state";
+import { defaultTaskWorkbenchSettings, mergeTaskManualOrder, moveTaskWithinGroup, readTaskWorkbenchSettings, reorderTaskWorkbenchFields, taskSectionDefaultSettings, taskWorkbenchFields, taskWorkbenchStorageKey, writeTaskWorkbenchSettings } from "../src/react-app/domains/tasks/task-view-state";
 
 const storage = new Map<string, string>();
 Object.defineProperty(globalThis, "localStorage", {
@@ -32,6 +32,25 @@ test("workbench persistence is also isolated by task section", () => {
   expect(taskWorkbenchStorageKey(scopeA, "following")).not.toBe(taskWorkbenchStorageKey(scopeA, "assigned"));
 });
 
+test("manual ordering is isolated by scope and list and ignores invalid preferences", () => {
+  storage.set(taskWorkbenchStorageKey(scopeA, "all", "list_a"), JSON.stringify({ sort: "manual", manualOrder: ["b", "a", "b", 3, ""], manualFetchOrder: { sort: "start_at", direction: "asc" } }));
+  storage.set(taskWorkbenchStorageKey(scopeA, "completed"), JSON.stringify({ sort: "manual", manualOrder: ["b", "a"] }));
+  expect(readTaskWorkbenchSettings(scopeA, "all", "list_a")).toMatchObject({ sort: "manual", manualOrder: ["b", "a"] });
+  expect(readTaskWorkbenchSettings(scopeA, "all", "list_a").manualFetchOrder).toBeUndefined();
+  expect(readTaskWorkbenchSettings(scopeA, "all", "list_b").manualOrder).toEqual([]);
+  expect(readTaskWorkbenchSettings(scopeB, "all", "list_a").manualOrder).toEqual([]);
+  expect(readTaskWorkbenchSettings(scopeA, "completed")).toMatchObject({ sort: "completed_at", manualOrder: [] });
+});
+
+test("moves preserve other groups and the saved ranks of filtered tasks", () => {
+  const visible = ["a", "other-group", "b"];
+  expect(moveTaskWithinGroup(visible, ["a", "b"], "a", "other-group", "after")).toBe(visible);
+  expect(moveTaskWithinGroup(visible, ["a", "b"], "a", "b", "before")).toBe(visible);
+  const reordered = moveTaskWithinGroup(visible, ["a", "b"], "a", "b", "after");
+  expect(reordered).toEqual(["b", "other-group", "a"]);
+  expect(mergeTaskManualOrder(["a", "hidden-1", "other-group", "hidden-2"], reordered)).toEqual(["b", "hidden-1", "other-group", "hidden-2", "a"]);
+});
+
 test("each task-list workbench has an isolated custom-group default", () => {
   expect(readTaskWorkbenchSettings(scopeA, "all", "list_one").group).toBe("custom");
   writeTaskWorkbenchSettings(scopeA, { ...defaultTaskWorkbenchSettings, group: "priority" }, "all", "list_one");
@@ -56,11 +75,35 @@ test("all and completed populate their initial statuses while later status setti
   expect(readTaskWorkbenchSettings(scopeA, "completed")).toMatchObject({ status: "all", overdue: true });
 });
 
-test("assigned workbench persists custom grouping", () => {
-  writeTaskWorkbenchSettings(scopeA, { ...defaultTaskWorkbenchSettings, group: "custom", customGroupName: "Planning", customGroups: [{ id: "custom-backlog", name: "Backlog" }], customGroupAssignments: { task_one: "custom-backlog" } });
-  expect(readTaskWorkbenchSettings(scopeA)).toMatchObject({ group: "custom", customGroupName: "Planning", customGroups: [{ id: "custom-backlog", name: "Backlog" }], customGroupAssignments: { task_one: "custom-backlog" } });
+test.each([["all", "due_at"], ["created", "due_at"], ["delegated", "due_at"], ["completed", "completed_at"]] as const)("%s uses its time sort unless a valid preference is saved", (section, sort) => {
+  const key = taskWorkbenchStorageKey(scopeA, section);
+  expect(readTaskWorkbenchSettings(scopeA, section)).toMatchObject({ sort, direction: "desc" });
+  storage.set(key, JSON.stringify({ fields: ["due"], sort: "unsupported" }));
+  expect(readTaskWorkbenchSettings(scopeA, section)).toMatchObject({ sort, direction: "desc", fields: ["due"] });
+  storage.set(key, JSON.stringify({ sort: "updated_at", direction: "asc" }));
+  expect(readTaskWorkbenchSettings(scopeA, section)).toMatchObject({ sort: "updated_at", direction: "asc" });
+  expect(readTaskWorkbenchSettings(scopeA, "all", "list_one")).toMatchObject({ sort: "updated_at", direction: "desc" });
+});
+
+test("task-list workbench persists custom grouping", () => {
+  writeTaskWorkbenchSettings(scopeA, { ...defaultTaskWorkbenchSettings, group: "custom", customGroupName: "Planning", customGroups: [{ id: "custom-backlog", name: "Backlog" }], customGroupAssignments: { task_one: "custom-backlog" } }, "all", "list_one");
+  expect(readTaskWorkbenchSettings(scopeA, "all", "list_one")).toMatchObject({ group: "custom", customGroupName: "Planning", customGroups: [{ id: "custom-backlog", name: "Backlog" }], customGroupAssignments: { task_one: "custom-backlog" } });
   storage.set(taskWorkbenchStorageKey(scopeA), JSON.stringify({ group: "unsupported" }));
   expect(readTaskWorkbenchSettings(scopeA)).toMatchObject({ group: "none", customGroupName: "", customGroups: [], customGroupAssignments: {} });
+});
+
+test("system collections normalize legacy custom grouping and persist outer subtask visibility per section", () => {
+  for (const section of ["assigned", "following"] as const) {
+    storage.set(taskWorkbenchStorageKey(scopeA, section), JSON.stringify({ group: "custom", subtaskVisibility: "hide" }));
+    expect(readTaskWorkbenchSettings(scopeA, section)).toMatchObject({ group: "custom", subtaskVisibility: "show" });
+  }
+  storage.set(taskWorkbenchStorageKey(scopeA, "all"), JSON.stringify({ group: "custom" }));
+  storage.set(taskWorkbenchStorageKey(scopeA, "completed"), JSON.stringify({ view: "board", group: "custom" }));
+  expect(readTaskWorkbenchSettings(scopeA, "all")).toMatchObject({ group: "none", subtaskVisibility: "show" });
+  expect(readTaskWorkbenchSettings(scopeA, "completed")).toMatchObject({ view: "board", group: "priority", subtaskVisibility: "show" });
+  writeTaskWorkbenchSettings(scopeA, { ...defaultTaskWorkbenchSettings, subtaskVisibility: "hide" }, "completed");
+  expect(readTaskWorkbenchSettings(scopeA, "completed").subtaskVisibility).toBe("hide");
+  expect(readTaskWorkbenchSettings(scopeA, "following").subtaskVisibility).toBe("show");
 });
 
 test("assigned workbench trims and bounds a persisted custom group name", () => {

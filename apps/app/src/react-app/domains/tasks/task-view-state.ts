@@ -5,9 +5,29 @@ export type TaskWorkbenchSection = "assigned" | "following" | "all" | "created" 
 
 export type TaskWorkbenchView = "list" | "board";
 export type TaskWorkbenchStatus = "incomplete" | "completed" | "all";
-export type TaskWorkbenchSort = "updated_at" | "created_at" | "start_at" | "due_at" | "completed_at";
+export const taskTimeSorts = ["start_at", "due_at", "created_at", "updated_at", "completed_at"] as const;
+export type TaskWorkbenchTimeSort = (typeof taskTimeSorts)[number];
+export type TaskWorkbenchSort = "manual" | TaskWorkbenchTimeSort;
+type TaskManualFetchOrder = { sort: Exclude<TaskWorkbenchTimeSort, "start_at">; direction: "asc" | "desc" };
+
+function isTaskTimeSort(value: unknown): value is TaskWorkbenchTimeSort {
+  return taskTimeSorts.some((sort) => sort === value);
+}
 const taskWorkbenchGroups = ["none", "custom", "list", "creator", "start", "due", "priority"] as const;
 export type TaskWorkbenchGroup = (typeof taskWorkbenchGroups)[number];
+
+export type TaskWorkbenchCapabilities = { allowCustomGrouping: boolean; allowSubtaskVisibility: boolean; allowManualSort: boolean };
+
+export function taskWorkbenchCapabilities(section: TaskWorkbenchSection | null | undefined, isTaskList: boolean): TaskWorkbenchCapabilities {
+  const allowCustomGrouping = isTaskList || section === "assigned" || section === "following";
+  return { allowCustomGrouping, allowSubtaskVisibility: !allowCustomGrouping, allowManualSort: allowCustomGrouping };
+}
+
+export function taskWorkbenchGroupForView(group: TaskWorkbenchGroup, view: TaskWorkbenchView, allowCustomGrouping: boolean): TaskWorkbenchGroup {
+  const availableGroup = !allowCustomGrouping && group === "custom" ? "none" : group;
+  if (view === "board" && availableGroup === "none") return allowCustomGrouping ? "custom" : "priority";
+  return availableGroup;
+}
 
 function isTaskWorkbenchGroup(value: unknown): value is TaskWorkbenchGroup {
   return taskWorkbenchGroups.some((group) => group === value);
@@ -31,7 +51,10 @@ export type TaskWorkbenchSettings = {
   overdue: boolean;
   sort: TaskWorkbenchSort;
   direction: "asc" | "desc";
+  manualOrder: string[];
+  manualFetchOrder?: TaskManualFetchOrder;
   group: TaskWorkbenchGroup;
+  subtaskVisibility: "show" | "hide";
   customGroupName: string;
   customGroups: TaskCustomGroup[];
   customGroupAssignments: Record<string, string>;
@@ -53,6 +76,29 @@ export function reorderTaskWorkbenchFields(order: TaskWorkbenchField[], source: 
   next.splice(targetIndex, 0, source);
   return next;
 }
+
+export type TaskOrderPlacement = "before" | "after";
+
+export function moveTaskWithinGroup(visible: string[], siblings: string[], source: string, anchor: string, placement: TaskOrderPlacement) {
+  const from = siblings.indexOf(source);
+  const to = siblings.indexOf(anchor);
+  if (from < 0 || to < 0 || from === to || (placement === "before" ? from === to - 1 : from === to + 1)) return visible;
+  const reordered = siblings.filter((id) => id !== source);
+  reordered.splice(reordered.indexOf(anchor) + (placement === "after" ? 1 : 0), 0, source);
+  const siblingIds = new Set(siblings);
+  let index = 0;
+  // Keep the other groups in place, even when their tasks are interleaved in the root sequence.
+  return visible.map((id) => siblingIds.has(id) ? reordered[index++]! : id);
+}
+
+export function mergeTaskManualOrder(saved: string[], visible: string[]) {
+  const visibleIds = new Set(visible);
+  let index = 0;
+  // Replace only the visible slots; filtered or unloaded tasks keep their relative order.
+  const next = saved.map((id) => visibleIds.has(id) ? visible[index++]! : id);
+  return next.concat(visible.slice(index));
+}
+
 export const defaultTaskWorkbenchSettings: TaskWorkbenchSettings = {
   view: "list",
   status: "incomplete",
@@ -69,7 +115,9 @@ export const defaultTaskWorkbenchSettings: TaskWorkbenchSettings = {
   overdue: false,
   sort: "updated_at",
   direction: "desc",
+  manualOrder: [],
   group: "none",
+  subtaskVisibility: "show",
   customGroupName: "",
   customGroups: [],
   customGroupAssignments: {},
@@ -84,8 +132,9 @@ export function isTaskWorkbenchSection(section: string): section is TaskWorkbenc
 }
 
 export function defaultTaskWorkbenchSettingsForSection(section: TaskWorkbenchSection): TaskWorkbenchSettings {
-  if (section === "completed") return { ...defaultTaskWorkbenchSettings, status: "completed" };
-  if (section === "all") return { ...defaultTaskWorkbenchSettings, status: "all" };
+  if (section === "completed") return { ...defaultTaskWorkbenchSettings, status: "completed", sort: "completed_at" };
+  if (section === "all") return { ...defaultTaskWorkbenchSettings, status: "all", sort: "due_at" };
+  if (section === "created" || section === "delegated") return { ...defaultTaskWorkbenchSettings, sort: "due_at" };
   return defaultTaskWorkbenchSettings;
 }
 
@@ -189,8 +238,13 @@ export function readTaskWorkbenchSettings(scope: ProductTaskScope | null, sectio
     const fields = normalizeTaskWorkbenchFields(value.fields, fieldOrder, !Array.isArray(value.fieldOrder), !Array.isArray(value.fieldOrder) || !value.fieldOrder.includes("priority"));
     const status = value.status === "completed" || value.status === "all" ? value.status : "incomplete";
     const customGroups = normalizeTaskCustomGroups(value.customGroups);
+    const view = value.view === "board" ? "board" : "list";
+    const group = isTaskWorkbenchGroup(value.group) ? value.group : defaults.group;
+    const { allowCustomGrouping, allowSubtaskVisibility, allowManualSort } = taskWorkbenchCapabilities(section, Boolean(listId));
+    const fetchOrder: { sort?: unknown; direction?: unknown } | undefined = value.manualFetchOrder;
+    const manualFetchOrder: TaskManualFetchOrder | undefined = allowManualSort && isTaskTimeSort(fetchOrder?.sort) && fetchOrder.sort !== "start_at" && (fetchOrder.direction === "asc" || fetchOrder.direction === "desc") ? { sort: fetchOrder.sort, direction: fetchOrder.direction } : undefined;
     return {
-      view: value.view === "board" ? "board" : "list",
+      view,
       status,
       priorities,
       listIds,
@@ -203,9 +257,12 @@ export function readTaskWorkbenchSettings(scope: ProductTaskScope | null, sectio
       followerMemberIds: memberIds(value.followerMemberIds),
       followerMemberOperator: memberOperator(value.followerMemberOperator),
       overdue: status !== "completed" && value.overdue === true,
-      sort: ["updated_at", "created_at", "start_at", "due_at", "completed_at"].includes(String(value.sort)) ? value.sort as TaskWorkbenchSort : "updated_at",
-      direction: value.direction === "asc" ? "asc" : "desc",
-      group: isTaskWorkbenchGroup(value.group) ? value.group : "none",
+      sort: (allowManualSort && value.sort === "manual") || isTaskTimeSort(value.sort) ? value.sort : defaults.sort,
+      direction: value.direction === "asc" || value.direction === "desc" ? value.direction : defaults.direction,
+      manualOrder: allowManualSort ? memberIds(value.manualOrder) : [],
+      ...(manualFetchOrder ? { manualFetchOrder } : {}),
+      group: taskWorkbenchGroupForView(group, view, allowCustomGrouping),
+      subtaskVisibility: allowSubtaskVisibility && value.subtaskVisibility === "hide" ? "hide" : "show",
       customGroupName: typeof value.customGroupName === "string" ? value.customGroupName.trim().slice(0, 80) : "",
       customGroups,
       customGroupAssignments: normalizeTaskCustomGroupAssignments(value.customGroupAssignments, customGroups),

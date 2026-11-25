@@ -85,6 +85,12 @@ export type DenProductTask = {
   listId: string | null;
   /** Visible memberships. An empty projection supersedes the legacy listId. */
   listIds?: string[];
+  listFilingMoveSupported?: boolean;
+  parentTask?: { id: string; title: string };
+  subtaskCount?: number;
+  completedSubtaskCount?: number;
+  subtaskOrderSupported?: boolean;
+  commentCount?: number;
   title: string;
   description: string;
   priority: DenProductTaskPriority;
@@ -107,7 +113,7 @@ export type DenProductTaskPermissions = {
   canView: boolean; canEditContent: boolean; canEditTime: boolean; canManageMembers: boolean;
   /** Absent on older servers, where assignment uses canManageMembers. */
   canAssign?: boolean;
-  canManageVisibility: boolean; canComplete: boolean; canReopen: boolean; canCancel: boolean;
+  canManageVisibility: boolean; canComplete: boolean; canCompleteWhole?: boolean; canReopen: boolean; canCancel: boolean;
   canComment: boolean; canDelete: boolean; canRestore: boolean;
 };
 export function productTaskListIds(task: Pick<DenProductTask, "listId" | "listIds">): string[] {
@@ -122,6 +128,8 @@ export type DenProductTaskPage = {
   nextCursor: string;
 };
 export type DenProductTaskListOptions = {
+  parentTaskId?: string;
+  excludeSubtasks?: boolean;
   view?: DenProductTaskView; search?: string; status?: DenProductTaskStatus[]; priority?: DenProductTaskPriority[];
   listId?: string[]; creatorMemberId?: string[]; creatorMemberOperator?: DenProductTaskPersonFilterOperator; assigneeMemberId?: string[]; assigneeMemberOperator?: DenProductTaskPersonFilterOperator;
   assignerMemberId?: string[]; assignerMemberOperator?: DenProductTaskPersonFilterOperator; followerMemberId?: string[]; followerMemberOperator?: DenProductTaskPersonFilterOperator;
@@ -131,18 +139,25 @@ export type DenProductTaskListOptions = {
 };
 export type DenProductTaskPersonFilterOperator = "contains" | "not_contains" | "empty" | "not_empty";
 export type DenProductTaskCreateInput = {
+  parentTaskId?: string;
   idempotencyKey: string; title: string; description?: string; priority?: DenProductTaskPriority;
   visibility?: DenProductTaskVisibility; listId?: string; startAt?: string | null; dueAt?: string | null;
   completionPolicy?: DenProductTaskCompletionPolicy;
   members?: Array<{ memberId: string; role: DenProductTaskMemberRole }>;
 };
-export type DenProductTaskUpdateInput = Partial<Omit<DenProductTaskCreateInput, "idempotencyKey" | "listId">> & { expectedVersion: number; idempotencyKey: string };
+export type DenProductTaskSubtaskOrder = { anchorTaskId: string; placement: "before" | "after" };
+type DenProductTaskContentPatch = Partial<Omit<DenProductTaskCreateInput, "idempotencyKey" | "listId" | "parentTaskId">>;
+export type DenProductTaskUpdateInput = { expectedVersion: number; idempotencyKey: string } & (
+  | (DenProductTaskContentPatch & { subtaskOrder?: never })
+  | ({ subtaskOrder: DenProductTaskSubtaskOrder } & { [K in keyof DenProductTaskContentPatch]?: never })
+);
 export type DenProductTaskMoveInput = {
   expectedVersion: number;
   idempotencyKey: string;
   destinationListId: string;
   confirmedVisibility?: DenProductTaskVisibility;
 };
+export type DenProductTaskFilingMoveInput = { sourceListId: string | null; destinationListId: string | null; confirmedAccessVersion?: number };
 export type DenProductTaskMoveResult = {
   taskId: string;
   version: number;
@@ -958,12 +973,26 @@ function normalizeProductTask(value: unknown): DenProductTask | null {
   const nullableString = (input: unknown) => typeof input === "string" ? input : null;
   if ("listIds" in value && !(Array.isArray(value.listIds) && value.listIds.every((id) => typeof id === "string" && id.length > 0))) return null;
   const listIds = Array.isArray(value.listIds) ? [...new Set<string>(value.listIds)] : productTaskListIds({ listId: nullableString(value.listId) });
+  const parent = value.parentTask;
+  if (parent !== undefined && (!isRecord(parent) || typeof parent.id !== "string" || !parent.id || parent.id === value.id || typeof parent.title !== "string")) return null;
+  const counts: { subtaskCount?: number; completedSubtaskCount?: number; commentCount?: number } = {};
+  for (const key of ["subtaskCount", "completedSubtaskCount", "commentCount"] as const) {
+    const count = value[key];
+    if (count === undefined) continue;
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) return null;
+    counts[key] = count;
+  }
+  if (counts.completedSubtaskCount !== undefined && (counts.subtaskCount === undefined || counts.completedSubtaskCount > counts.subtaskCount)) return null;
   return {
     id: value.id,
     displayNumber: Number.isSafeInteger(value.displayNumber) && Number(value.displayNumber) > 0 ? Number(value.displayNumber) : null,
     creatorMemberId: value.creatorMemberId,
     listId: listIds[0] ?? null,
     listIds,
+    ...(isRecord(parent) ? { parentTask: { id: parent.id as string, title: parent.title as string } } : {}),
+    ...counts,
+    ...(typeof value.subtaskOrderSupported === "boolean" ? { subtaskOrderSupported: value.subtaskOrderSupported } : {}),
+    ...(typeof value.listFilingMoveSupported === "boolean" ? { listFilingMoveSupported: value.listFilingMoveSupported } : {}),
     title: value.title,
     description: value.description,
     priority: value.priority as DenProductTaskPriority,
@@ -997,7 +1026,7 @@ function normalizeProductTaskResult(value: unknown): DenProductTaskResult {
   if (members.length !== value.members.length) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
   const permissions = value.permissions;
   const permissionNames = ["canView", "canEditContent", "canEditTime", "canManageMembers", "canManageVisibility", "canComplete", "canReopen", "canCancel", "canComment", "canDelete", "canRestore"] as const;
-  if (permissionNames.some((name) => typeof permissions[name] !== "boolean") || ("canAssign" in permissions && typeof permissions.canAssign !== "boolean")) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
+  if (permissionNames.some((name) => typeof permissions[name] !== "boolean") || ["canAssign", "canCompleteWhole"].some(name => name in permissions && typeof permissions[name] !== "boolean")) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
   return { task, members, permissions: permissions as DenProductTaskPermissions, tombstone: value.tombstone === true, replayed: value.replayed === true };
 }
 
@@ -1556,6 +1585,8 @@ function calendarQuery(input: { calendarIds?: string[]; cursor?: string; limit?:
 
 function productTaskQuery(options: DenProductTaskListOptions): string {
   const params = new URLSearchParams();
+  if (options.parentTaskId) params.set("parentTaskId", options.parentTaskId);
+  if (options.excludeSubtasks) params.set("excludeSubtasks", "true");
   if (options.view) params.set("view", options.view);
   if (options.search?.trim()) params.set("search", options.search.trim());
   options.status?.forEach((value) => params.append("status", value));
@@ -4581,7 +4612,13 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return normalizeProductTaskMoveResult(payload);
     },
 
-    async transitionProductTask(orgId: string, taskId: string, operation: "complete" | "cancel" | "reopen" | "restore", input: { expectedVersion: number; idempotencyKey: string }): Promise<DenProductTaskResult> {
+    async moveProductTaskFiling(orgId: string, taskId: string, input: DenProductTaskFilingMoveInput) {
+      const result = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/lists/move`, { method: "POST", token, organizationId: orgId, body: input });
+      if (!isRecord(result) || result.taskId !== taskId || result.sourceListId !== input.sourceListId || result.destinationListId !== input.destinationListId) throw new DenApiError(500, "invalid_task_filing_move", "Task filing move response was invalid.");
+      return { taskId, sourceListId: input.sourceListId, destinationListId: input.destinationListId };
+    },
+
+    async transitionProductTask(orgId: string, taskId: string, operation: "complete" | "complete-whole" | "cancel" | "reopen" | "restore", input: { expectedVersion: number; idempotencyKey: string }): Promise<DenProductTaskResult> {
       const payload = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/${operation}`, { method: "POST", token, organizationId: orgId, body: input });
       return normalizeProductTaskResult(payload);
     },

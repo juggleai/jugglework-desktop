@@ -29,10 +29,13 @@ export function useCreateProductTask(client: DenClient, scope: ProductTaskScope 
     retry: false,
     onMutate: () => captureScope(scope),
     mutationFn: (input: DenProductTaskCreateInput) => client.createProductTask(scope!.organizationId, input),
-    onSuccess: async (result, _input, captured) => {
+    onSuccess: async (result, input, captured) => {
       if (!captured) return;
       queryClient.setQueryData(productTaskKeys.detail(captured.scope, result.task.id), result);
-      await refreshTaskListsAndActivity(queryClient, captured.scope);
+      await Promise.all([
+        refreshTaskListsAndActivity(queryClient, captured.scope),
+        input.parentTaskId && queryClient.invalidateQueries({ queryKey: productTaskKeys.detail(captured.scope, input.parentTaskId), exact: true }),
+      ]);
     },
   });
 }
@@ -67,14 +70,19 @@ export function useTransitionProductTask(client: DenClient, scope: ProductTaskSc
   return useMutation({
     retry: false,
     onMutate: () => captureScope(scope),
-    mutationFn: (input: { taskId: string; operation: "complete" | "cancel" | "reopen" | "restore"; expectedVersion: number; idempotencyKey: string }) => client.transitionProductTask(scope!.organizationId, input.taskId, input.operation, {
+    mutationFn: (input: { taskId: string; operation: "complete" | "complete-whole" | "cancel" | "reopen" | "restore"; expectedVersion: number; idempotencyKey: string }) => client.transitionProductTask(scope!.organizationId, input.taskId, input.operation, {
       expectedVersion: input.expectedVersion,
       idempotencyKey: input.idempotencyKey,
     }),
     onSuccess: async (result, _input, captured) => {
       if (!captured) return;
+      const previous = queryClient.getQueryData<DenProductTaskResult>(productTaskKeys.detail(captured.scope, result.task.id));
       queryClient.setQueryData(productTaskKeys.detail(captured.scope, result.task.id), result);
-      await refreshTaskListsAndActivity(queryClient, captured.scope);
+      const parentId = result.task.parentTask?.id ?? previous?.task.parentTask?.id;
+      await Promise.all([
+        refreshTaskListsAndActivity(queryClient, captured.scope),
+        parentId && queryClient.invalidateQueries({ queryKey: productTaskKeys.detail(captured.scope, parentId), exact: true }),
+      ]);
     },
   });
 }
@@ -84,7 +92,11 @@ export function useAddProductTaskComment(client: DenClient, scope: ProductTaskSc
   return useMutation({ retry: false, onMutate: (input: { taskId: string; body: string; idempotencyKey: string }) => captureScope(scope, input.taskId), mutationFn: (input) => client.addProductTaskComment(scope!.organizationId, input.taskId, { body: input.body, idempotencyKey: input.idempotencyKey }), onSuccess: async (_result, _input, captured) => {
     if (captured?.taskId) {
       void queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeeds(captured.scope) });
-      await queryClient.invalidateQueries({ queryKey: productTaskKeys.activity(captured.scope, captured.taskId) });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: productTaskKeys.activity(captured.scope, captured.taskId) }),
+        queryClient.invalidateQueries({ queryKey: productTaskKeys.detail(captured.scope, captured.taskId), exact: true }),
+        queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(captured.scope) }),
+      ]);
     }
   } });
 }

@@ -10,6 +10,15 @@ export function productTaskScopeKey(scope: ProductTaskScope | null): string {
   return JSON.stringify([scope.baseUrl.replace(/\/+$/, ""), scope.userId, scope.organizationId]);
 }
 
+export function directSubtaskOptions(parentTaskId: string | undefined): DenProductTaskListOptions {
+  // New servers return canonical sibling order; older servers honor creation order.
+  return { view: "all", parentTaskId, sort: "created_at", direction: "asc" };
+}
+
+export function isInvalidTaskCursor(error: unknown) {
+  return error instanceof DenApiError && error.status === 400 && error.code === "invalid_task_cursor";
+}
+
 export const productTaskKeys = {
   all: (scope: ProductTaskScope) => ["product-tasks", scope.baseUrl.replace(/\/+$/, ""), scope.userId, scope.organizationId] as const,
   lists: (scope: ProductTaskScope) => [...productTaskKeys.all(scope), "lists"] as const,
@@ -50,7 +59,7 @@ export function applyTaskListMembership(client: QueryClient, scope: ProductTaskS
     client.setQueryData<InfiniteData<DenProductTaskPage>>(key, (data) => data && ({ ...data, pages: data.pages.map((page) => ({ ...page, items: page.items.flatMap((task) => {
       if (task.id !== result.taskId) return [task];
       const next = update(task);
-      return !filter?.length || next.listIds.some((id) => filter.includes(id)) ? [next] : [];
+        return !filter?.length || next.listIds.some((id) => filter.includes(id)) ? [next] : [];
     }) })) }));
   }
 }
@@ -165,14 +174,31 @@ export function useOrganizationMembers(input: { client: DenClient; scope: Produc
   });
 }
 
+type TaskPageParam = string | { updatedOrderCursor: string } | undefined;
+type TaskQueryPage = DenProductTaskPage & { localCompletedSort?: true };
+
 export function useProductTasks(input: { client: DenClient; scope: ProductTaskScope | null; options: DenProductTaskListOptions; active?: boolean }) {
   return useInfiniteQuery({
     queryKey: input.scope ? productTaskKeys.list(input.scope, input.options) : ["product-tasks", "unavailable"],
     enabled: (input.active ?? true) && Boolean(input.scope),
-    initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam, signal }) => input.client.listProductTasks(input.scope!.organizationId, { ...input.options, cursor: pageParam, limit: input.options.limit ?? 30 }, { signal }),
-    getNextPageParam: (page) => page.nextCursor || undefined,
-    placeholderData: (previous, query) => input.scope && productTaskKeys.lists(input.scope).every((part, i) => query?.queryKey[i] === part) ? previous : undefined,
+    initialPageParam: undefined as TaskPageParam,
+    queryFn: async ({ pageParam, signal }): Promise<TaskQueryPage> => {
+      const request = (options: DenProductTaskListOptions) => input.client.listProductTasks(input.scope!.organizationId, { ...options, limit: input.options.limit ?? 30 }, { signal });
+      const readUpdatedOrder = async (cursor?: string): Promise<TaskQueryPage> => ({ ...await request({ ...input.options, sort: "updated_at", direction: "desc", cursor }), localCompletedSort: true });
+      if (typeof pageParam === "object") return readUpdatedOrder(pageParam.updatedOrderCursor);
+      try {
+        return await request({ ...input.options, cursor: pageParam });
+      } catch (error) {
+        // Never reuse a cursor with a different sort, or mask an unrelated HTTP failure.
+        if (pageParam !== undefined || input.options.parentTaskId || input.options.sort !== "completed_at" || signal.aborted || !(error instanceof DenApiError) || error.status !== 400 || error.code !== "invalid_task_request") throw error;
+        return readUpdatedOrder();
+      }
+    },
+    getNextPageParam: (page, _pages, _param, seen) => {
+      if (!page.nextCursor || (input.options.parentTaskId && seen.includes(page.nextCursor))) return undefined;
+      return page.localCompletedSort ? { updatedOrderCursor: page.nextCursor } : page.nextCursor;
+    },
+    placeholderData: (previous, query) => !input.options.parentTaskId && !(query?.queryKey.at(-1) as DenProductTaskListOptions | undefined)?.parentTaskId && input.scope && productTaskKeys.lists(input.scope).every((part, i) => query?.queryKey[i] === part) ? previous : undefined,
     staleTime: 30_000,
     retry: (count, error) => !(typeof error === "object" && error && "status" in error && Number((error as { status: number }).status) < 500) && count < 2,
   });

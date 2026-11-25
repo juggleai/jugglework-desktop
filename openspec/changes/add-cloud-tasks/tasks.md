@@ -39,6 +39,14 @@
 - [x] 3.9 Add the dedicated route, loading/empty/error shell, section persistence, and no-Agent smoke tests
 - [x] 3.11 Display organization-scoped `t100001`-style task numbers while retaining exact internal IDs for routing and copy actions
 - [x] 3.12 Implement the dedicated Today action view with mutually exclusive overdue, due-today, and starts-today groups, loaded summary counts, task context, completion, detail navigation, and pagination
+- [x] 3.13 Align detail assignee avatars and nickname tooltips with List, show assigned or completed totals, and verify permission-aware display and editing
+- [x] 3.14 Enforce per-assignee completion for all multi-assignee tasks, including legacy policies, and verify the Desktop never submits unsafe completion to older servers
+- [x] 3.15 Render individual task-detail filing rows with list-scoped groups, independent removal, and a searchable add-list action
+- [x] 3.16 Show assignee avatar completion only for the member's recorded completion, independently of whole-task status
+- [x] 3.17 Default All tasks, Created by me, and Assigned by me to due time descending and Completed to completion time descending, preserving saved sorting and cursor order.
+- [x] 3.18 Add locally persisted custom drag order and hover/focus handles for outer rows in Assigned to me, Following, and specific task lists.
+- [x] 3.19 Require explicit Custom drag order for within-group reordering and allow independent custom-group moves without changing the active sort or saved ranks.
+- [x] 3.20 Update priority, time, or list filing on cross-group drops in List and Board; forbid Creator cross-group moves and preserve sorting preferences.
 - [ ] 3.10 Add connected Desktop tests for edit, member management, lifecycle actions, Activity, and permission changes; full-create fields/defaults/validation, mutation errors, and scope fencing are covered
   - Aggregate Activity client, grouping, unread mutation, deep-link, sidebar badge, and unavailable-endpoint behavior have focused Desktop coverage; live managed-server integration remains open.
 
@@ -58,7 +66,7 @@ IM message creation, Task source references, chat cards, access requests, and Ta
 ## 6. MVP-B Content and List Enhancements
 
 - [ ] 6.1 Add attachment upload/link, dual task/file authorization, removal, and inaccessible states
-- [ ] 6.2 Add one-level subtasks, independent assignees/due dates, completion confirmation, and cascade recovery
+- [x] 6.2 Superseded by `add-nested-product-subtasks`: nested independent tasks with separate assignees, due dates, completion, and recovery; no cascading lifecycle
 - [ ] 6.3 Complete task-list member management, archived-list UI, list customization, and additional sorting/field configuration
 - [ ] 6.4 Add MVP-B content and list tests
 
