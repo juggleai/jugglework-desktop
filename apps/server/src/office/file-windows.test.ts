@@ -418,7 +418,7 @@ async function fixture(
   const contexts: unknown[] = [];
   const preparation = {
     error: null as string | null,
-    closeError: null as string | null,
+    closeError: null as string | Error | null,
     targetError: null as string | null,
     calls: [] as unknown[],
     targets: [] as unknown[],
@@ -481,6 +481,7 @@ async function fixture(
       }
       if (path.endsWith("/close")) {
         if (preparation.closeError) {
+          if (preparation.closeError instanceof Error) throw preparation.closeError;
           if (preparation.closeError === "office_run_active")
             throw Object.assign(new Error("The managed runtime request failed."), {
               status: 409, serverCode: "office_run_active",
@@ -657,6 +658,33 @@ test("未传 onCreated 的 confirmFileTarget 消费者仍收到布尔成功，�
     expect(f.model.state).toBe("ready");
     expect(f.cleanupAttempts).toEqual([]);
   } finally { answers.close = 2; f.files.dispose(); f.panel.destroy(); }
+});
+
+test("只读原件打开及带选区预检均提示权限，不创建标签或清空原草稿", async () => {
+  for (const preflight of [false, true]) {
+    const f = await preparedTargetFixture();
+    const source = await f.startSource();
+    const post = f.client.postJson.bind(f.client);
+    f.client.postJson = async (url, body: any) => {
+      if (url.endsWith("/open")) {
+        const error = new ManagedRuntimeClientError("http_error", { serverCode: "office_file_not_writable" });
+        error.status = 409;
+        throw error;
+      }
+      return post(url, body);
+    };
+    if (!preflight) {
+      // 无选区时走 addFile 的正常 open，不借工作簿只读 fallback 建立预览标签。
+      f.panel.confirmFileTarget = async () => true;
+    }
+    await expect(f.openTarget(source)).rejects.toThrow("原文件为只读或没有写入权限");
+    expect((await f.state(source)).tabs.map((tab: any) => tab.path)).toEqual(["source.md"]);
+    expect(f.cleanupAttempts).toEqual([]);
+    expect(f.disposed()).toBe(0);
+    expect(f.model.state).toBe("ready");
+    f.files.dispose();
+    f.panel.destroy();
+  }
 });
 
 /** 使用真实 OfficePanel 预检、文件窗口 open IPC 和来源撤销，服务端 stub 严格执行 clean cleanup 契约。 */
@@ -3252,6 +3280,51 @@ test("运行任务时关闭 Word 不销毁模型、原生视图或标签，任�
   expect(f.document.state).toBe("closed");
   expect(view.webContents.destroyed).toBe(true);
   expect((await f.state(host)).tabs).toHaveLength(0);
+});
+
+test("PPT 只读保存关闭失败显示明确原因，保留原模型和标签，恢复后可重试", async () => {
+  const f = await fixture("汇报.pptx");
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: f.document.name });
+  const host = f.files.windows()[0];
+  await f.show(host);
+  const view = [...host.children][0];
+  f.document.dirty = true;
+  answers.close = 0;
+  const error = new ManagedRuntimeClientError("http_error", { serverCode: "office_file_not_writable" });
+  error.status = 409;
+  f.preparation.closeError = error;
+  await expect(f.action(host, "close", f.document.name)).rejects.toThrow("原文件为只读或没有写入权限");
+  expect(f.document.state).toBe("ready");
+  expect(f.document.dirty).toBe(true);
+  expect(view.webContents.destroyed).toBe(false);
+  expect((await f.state(host)).tabs).toHaveLength(1);
+  expect(f.closes).toEqual([]);
+  f.preparation.closeError = null;
+  await f.action(host, "close", f.document.name);
+  expect(f.closes).toEqual([{ decision: "save" }]);
+  expect(view.webContents.destroyed).toBe(true);
+  expect((await f.state(host)).tabs).toHaveLength(0);
+});
+
+test("关闭运行时结果未知不泄露错误正文，不销毁 PPT 或自动改为放弃", async () => {
+  for (const code of ["timeout", "unavailable", "http_error"] as const) {
+    const f = await fixture("汇报.pptx");
+    await f.files.open({ workspaceId: "ws", sessionId: "ses", path: f.document.name });
+    const host = f.files.windows()[0];
+    await f.show(host);
+    const error = new ManagedRuntimeClientError(code, { serverCode: "untrusted-server-content" });
+    error.message = "secret response body";
+    f.preparation.closeError = error;
+    const result = await f.action(host, "close", f.document.name).catch((failure: Error) => failure);
+    expect(result).toBeInstanceOf(Error);
+    expect(result.message).not.toContain("secret");
+    expect(result.message).not.toContain("untrusted-server-content");
+    expect(result.message).toContain("当前窗口");
+    expect(f.document.state).toBe("ready");
+    expect((await f.state(host)).tabs).toHaveLength(1);
+    expect([...host.children][0].webContents.destroyed).toBe(false);
+    expect(f.closes).toEqual([]);
+  }
 });
 
 test("运行时重启先处理双宿主文档，取消或保存失败保留页面，确认后释放窗口和旧模型标签", async () => {

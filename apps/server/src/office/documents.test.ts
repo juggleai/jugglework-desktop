@@ -1,6 +1,7 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import {
   access,
+  chmod,
   link,
   mkdir,
   mkdtemp,
@@ -15,6 +16,7 @@ import { createHash } from "node:crypto";
 import type { FileArtifact } from "@jugglework/types/file-artifacts";
 import type { OfficeDocumentSession } from "@jugglework/types/office";
 import { OfficeDocuments } from "./documents.js";
+import { assertOfficeFileEditable } from "./file-compatibility.js";
 import { ApiError } from "../errors.js";
 import { registerOfficeRoutes } from "../routes/office.js";
 import { matchRoute, type RequestContext, type Route } from "../routes/registry.js";
@@ -1056,6 +1058,32 @@ test("只读文件在创建模型前被拒绝且清空旧 AI 目标，保存和�
   );
   expect(f.state.closes).toEqual([]);
   expect(previews).toBe(0);
+});
+
+test.skipIf(process.platform === "win32")("只读 PPT 拒绝新建及预检，不改变原 AI 目标；保存关闭失败保留模型和修改", async () => {
+  const f = await fixture();
+  const original = await f.openReady();
+  f.state.checkFile = assertOfficeFileEditable;
+  const path = join(f.root, "汇报.pptx");
+  await chmod(path, 0o444);
+  for (const activate of [false, true]) {
+    await expect(f.documents.open("ws", "ses_A", "汇报.pptx", false, activate)).rejects.toMatchObject({ code: "office_file_not_writable" });
+    expect((await f.documents.current("ws", "ses_A"))?.documentId).toBe(original.documentId);
+    expect(f.editors.has(path)).toBe(false);
+  }
+  await chmod(path, 0o644);
+  const doc = await f.openReady("汇报.pptx", "model_PPT");
+  f.editors.get(path)!.is_dirty = true;
+  await chmod(path, 0o444);
+  await expect(f.documents.close("ws", doc.documentId, "save")).rejects.toMatchObject({ code: "office_file_not_writable" });
+  expect(await f.documents.get("ws", doc.documentId)).toMatchObject({ state: "ready", dirty: true, engineFileId: "model_PPT" });
+  expect(f.state.saveCalls).toEqual([]);
+  expect(f.state.closes).toEqual([]);
+  expect(await readFile(path, "utf8")).toBe("saved");
+  await chmod(path, 0o644);
+  expect((await f.documents.close("ws", doc.documentId, "save")).state).toBe("closed");
+  expect(f.state.saveCalls).toEqual(["model_PPT"]);
+  expect(f.state.closes).toEqual([{ id: "model_PPT", discard: false }]);
 });
 
 test("页面地址返回后仍须真实内容查询成功才能 ready，重复打开复用文档身份", async () => {

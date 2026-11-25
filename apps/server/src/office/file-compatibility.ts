@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, readFile, stat } from "node:fs/promises";
 import { DOMParser } from "@xmldom/xmldom";
 import JSZip from "jszip";
 import { ApiError } from "../errors.js";
@@ -12,10 +13,24 @@ const PIVOT_TYPES = new Set([
 ]);
 
 /**
- * 在导入或覆盖原文件前检查已确认会丢失内容的工作簿结构。
+ * 在导入或覆盖原文件前检查写权限及已确认会丢失内容的工作簿结构。
  * @param path 原始 Office 文件的绝对路径；此检查只读取文件
  */
 export async function assertOfficeFileEditable(path: string): Promise<void> {
+  const readonly = () => new ApiError(
+    409,
+    "office_file_not_writable",
+    "原文件为只读或没有写入权限，不能编辑或保存修改。请先在系统中确认文件写入权限后重试。",
+  );
+  const info = await stat(path);
+  // TIPS: 不改原件权限、不试写；POSIX 无写位时，即使高权限进程可写也尊重文件的只读意图。
+  if (process.platform !== "win32" && (info.mode & 0o222) === 0) throw readonly();
+  try {
+    await access(path, constants.W_OK);
+  } catch (error) {
+    if (["EACCES", "EPERM", "EROFS"].includes((error as NodeJS.ErrnoException).code ?? "")) throw readonly();
+    throw error;
+  }
   if (!/\.xlsx$/i.test(path)) return;
   const archive = await JSZip.loadAsync(await readFile(path));
   const part = archive.file("[Content_Types].xml");

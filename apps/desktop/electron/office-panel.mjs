@@ -582,7 +582,10 @@ export function createOfficePanel({
     };
     try {
     if (target.office && !input.readOnly) {
-      const result = await client.postJson(`/workspace/${encodeURIComponent(input.workspaceId)}/office/open`, { sessionId: input.sessionId, path: target.path, activate: false });
+      const result = await client.postJson(`/workspace/${encodeURIComponent(input.workspaceId)}/office/open`, { sessionId: input.sessionId, path: target.path, activate: false }).catch(error => {
+        if (error?.serverCode === "office_file_not_writable") throw new Error("原文件为只读或没有写入权限，不能打开编辑。请先在系统中确认文件写入权限后重试。", { cause: error });
+        throw error;
+      });
       const document = result.document;
       if (result.created === true && document.workspaceId === input.workspaceId && document.ownerSessionId === input.sessionId) prepared = document;
       verify();
@@ -645,7 +648,7 @@ export function createOfficePanel({
       throw new Error("文档编辑页面已失效，不能确认保存");
     if (entry.commit.error) throw entry.commit.error;
   };
-  const close = async (workspaceId, documentId, verify = () => {}, reopenTarget = null) => {
+  const closeDocument = async (workspaceId, documentId, verify = () => {}, reopenTarget = null) => {
     verify();
     if (reopening.has(documentId) && !reopenTarget)
       throw new Error("文档正在保存并重新打开，请稍候");
@@ -725,6 +728,27 @@ export function createOfficePanel({
     // TIPS: 退出或重启中途取消时，已经关闭的模型也必须同步移除标签。
     onDocumentClosed?.(documentId);
     return true;
+  };
+  /** 关闭失败保留模型与宿主，只转换可信错误码，不透传服务端正文或文件路径。 */
+  const close = async (workspaceId, documentId, verify = () => {}, reopenTarget = null) => {
+    try {
+      return await closeDocument(workspaceId, documentId, verify, reopenTarget);
+    } catch (error) {
+      if (!(error instanceof ManagedRuntimeClientError)) throw error;
+      const messages = {
+        office_file_not_writable: "原文件为只读或没有写入权限，未能保存关闭。文档保持打开，请先在系统中确认文件写入权限后再保存。",
+        office_readonly_required: "原文件为只读或没有写入权限，未能保存关闭。文档保持打开，请先在系统中确认文件写入权限后再保存。",
+        office_not_ready: "文档尚未就绪，未能关闭。请等待加载或保存完成后重试。",
+        office_selection_save_blocked: "文档选区操作仍在运行或尚未核对，未能保存关闭。请核对修改后重试。",
+        office_model_invalidated: "文档模型已失效，未能确认保存关闭。请保留当前窗口并核对文件状态。",
+        office_run_active: "请等待文档相关任务结束及交付完成后重试",
+      };
+      const message = error.serverCode && Object.hasOwn(messages, error.serverCode) ? messages[error.serverCode]
+        : error.code === "timeout" ? "关闭请求超时，尚未确认保存或关闭结果。请保留当前窗口，待服务恢复后核对文件状态再重试。"
+        : error.code === "unavailable" ? "本地文档服务暂不可用，未能确认保存关闭。请保留当前窗口，待服务恢复后重试。"
+        : "未能确认文档保存关闭，请保留当前窗口并检查文件写入权限及本地文档服务后重试。";
+      throw new Error(message, { cause: error });
+    }
   };
   /** 显式保存关闭重开，不冒充存活页面迁移；只有文件窗口入口可选择此降级流程。 */
   const openInWindow = async (document, window, restore, isCurrent = () => true, onCreated = (_document) => {}) => {

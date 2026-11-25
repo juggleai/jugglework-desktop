@@ -358,6 +358,7 @@ export function createFileWindows({
                 throw new Error(document.error ?? "文档打开失败");
               openingDocument = document;
             } catch (error) {
+              if (error?.serverCode === "office_file_not_writable") throw new Error("原文件为只读或没有写入权限，不能打开编辑。请先在系统中确认文件写入权限后重试。", { cause: error });
               if (error?.serverCode !== "office_readonly_required") throw error;
               tab.readOnly = true;
             }
