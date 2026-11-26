@@ -1,0 +1,129 @@
+{
+  "schema": "com.juggleai.jugglework.desktop-release-result",
+  "schemaVersion": 1,
+  "version": "1.2.42",
+  "channel": "stable",
+  "platform": "mac",
+  "architecture": "arm64",
+  "sourceCommit": "9f4bb37c62c9db250e6d6e7728916f29cf290036",
+  "evidence": {
+    "root": "release-evidence/jugglework-desktop/1.2.42",
+    "promotion": {
+      "path": "native-build.IfalCB/qiniu-release-evidence.json",
+      "sha256": "512a953501ed67d878b597a99280cb29e2bde883853fd8f3eb11a0676a51ffdf"
+    },
+    "denOverseas": {
+      "path": "den-1.2.42-overseas-result-20261126T103223594619Z.json",
+      "sha256": "f4db986041c7c06a6464e66713ba617416ea77c6aa9a23090bd433c679bdfac1"
+    }
+  },
+  "promotion": {
+    "source": "actual local CLI",
+    "status": "verified",
+    "promotedAt": "2026-11-26T10:27:14.539Z",
+    "bucket": "jugglework",
+    "origin": "https://downloads.jugglework.cn",
+    "previousVersion": "1.2.41",
+    "expectedPreviousManifestSha256": "2d2564a07ae2d98d213f32d1c6a30dbc38c14b5135763698fc228a0a54855768",
+    "lockKey": "jugglework/releases/locks/stable-mac.lock",
+    "lockAcquiredAt": "2026-11-26T10:27:04.924Z",
+    "lockReleased": true,
+    "cdnRefresh": "succeeded",
+    "verifiedImmutableObjects": 5,
+    "immutableVerification": "Qiniu size/ETag and public HTTPS MIME, length, Range/Content-Range, full GET SHA-256/SHA-512 and long-lived caching verified before and after promotion.",
+    "immutableManifestUrl": "https://downloads.jugglework.cn/jugglework/releases/v1.2.42/mac/latest-mac.yml",
+    "stableManifestUrl": "https://downloads.jugglework.cn/jugglework/releases/stable/mac/latest-mac.yml",
+    "manifestBytes": 706,
+    "manifestSha256": "78f4a98a00fc762d6af91ac2f66f641f235339082b95f127c55157a8f53e28ce",
+    "manifestETag": "FkLYrQM0FHbZP2NkvnyRuGQgTSkd",
+    "stableReadBackAt": "2026-11-26T10:27:13.624Z",
+    "stableReadBackAttempts": 6,
+    "stableAndImmutableBytesEqual": true,
+    "manifestFullGetStatus": 200,
+    "manifestRangeStatus": 206,
+    "manifestContentRange": "bytes 0-0/706",
+    "observedMutableCacheControl": "public, max-age=31536000",
+    "olderVersionCacheRisk": true
+  },
+  "trust": {
+    "bundleIdentifier": "com.juggleai.jugglework",
+    "teamIdentifier": "H7PDHSK3C7",
+    "deepStrictCodesign": "accepted",
+    "hardenedRuntime": "enabled",
+    "appSubmissionId": "48eb8869-7f60-4fbc-b6b7-8c572dd9f925",
+    "dmgSubmissionId": "ec5f485f-5fea-400f-975d-c81195d6258c",
+    "appAndDmgNotarization": "accepted",
+    "appAndDmgStaples": "validated",
+    "appAndDmgGatekeeper": "accepted",
+    "notarizationException": null,
+    "independentPackagedMediaChecksPassed": 26,
+    "packagedMediaOrphans": false,
+    "packagedMediaNullDocumentDiagnostics": 7,
+    "productMainAcceptance": "not_performed",
+    "installedStateVerification": "not_performed"
+  },
+  "releasePolicy": {
+    "scope": "stable-mac-arm64-standing-policy",
+    "policyVersion": 1,
+    "minVersion": "1.2.35",
+    "currentCoordinates": {
+      "version": "1.2.42",
+      "channel": "stable",
+      "platform": "mac",
+      "architecture": "arm64",
+      "commit": "9f4bb37c62c9db250e6d6e7728916f29cf290036",
+      "immutableManifestDigest": "78f4a98a00fc762d6af91ac2f66f641f235339082b95f127c55157a8f53e28ce",
+      "mutableManifestKey": "jugglework/releases/stable/mac/latest-mac.yml"
+    },
+    "reasons": {
+      "canary": "User standing authorization: skip only the absent lower-version real-client upgrade canary.",
+      "mutableCacheControl": "User standing authorization: skip only mutable Qiniu Cache-Control mutation and required-value validation."
+    }
+  },
+  "workflow": {
+    "authorization": "standing_policy",
+    "explicit": true,
+    "canary": "skipped_by_standing_policy",
+    "mutableCacheControlMutation": "skipped_by_standing_policy",
+    "mutableCacheControlValidation": "skipped_by_standing_policy"
+  },
+  "den": {
+    "overseas": {
+      "status": "verified",
+      "configOnly": true,
+      "finishedAtUTC": "2026-11-26T10:35:54.134704+00:00",
+      "previousLatest": "1.2.41",
+      "latest": "1.2.42",
+      "minimum": "0.1.0",
+      "publishedCount": 29,
+      "allowedCount": 29,
+      "priorPublishedAndAllowedCount": 28,
+      "atomicConfigReplacements": 1,
+      "supervisorRestarts": 1,
+      "binaryAndNonVersionConfigBytesUnchanged": true,
+      "observationSeconds": 120.3,
+      "localAndPublicHealthReadinessRuntimeConfigConsoleAppVersion": 200,
+      "loopback8021": true,
+      "logHttp5xxException": {
+        "scope": "Applied to this overseas Den Desktop version rollout under explicit user authorization covering current and subsequent overseas Desktop version releases: count and classify logged HTTP 5xx without blocking on those counts alone. No exemption for China, other systems, health, config, panic, fatal, unknown-column, migration or restart gates.",
+        "riskResolved": false,
+        "preApplyStrictSample": { "total": 0, "knownWorkerToken503": 0, "newOrUnclassified5xx": 0 },
+        "restartThroughObservation": { "total": 0, "knownWorkerToken503": 0, "newOrUnclassified5xx": 0 },
+        "rollingBefore": {
+          "throughUTC": "2026-11-26T10:32:28.595029+00:00",
+          "24h": { "total": 9, "knownWorkerToken503": 7, "other5xxLogLines": 2, "other5xxByStatus": { "500": 1, "502": 1 } },
+          "2h": { "total": 1, "knownWorkerToken503": 1, "other5xxLogLines": 0, "other5xxByStatus": {} }
+        },
+        "rollingAfter": {
+          "throughUTC": "2026-11-26T10:35:15.725708+00:00",
+          "24h": { "total": 9, "knownWorkerToken503": 7, "other5xxLogLines": 2, "other5xxByStatus": { "500": 1, "502": 1 } },
+          "2h": { "total": 1, "knownWorkerToken503": 1, "other5xxLogLines": 0, "other5xxByStatus": {} }
+        },
+        "criticalConfigFailureAndUnexpectedRestartCounts": 0
+      }
+    },
+    "china": { "latest": "1.2.37", "publicContractUnchanged": true, "readOnly": true }
+  },
+  "outOfScope": ["legacy origin writes", "website changes", "other platforms and channels", "new Den binary"],
+  "gitCompletion": "Final commit and remote ref verification are reported separately."
+}

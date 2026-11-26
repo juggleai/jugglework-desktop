@@ -797,9 +797,14 @@ At operator direction, the later Git closeout used a new detached worktree at th
 
 Git closeout is documentation-only. Final push and fast-forward SHAs are reported separately from the commit itself.
 
-## 48. Stable macOS ARM64 1.2.42 — candidate preparation
+## 48. Stable macOS ARM64 1.2.42 — release evidence
 
 - [x] 48.1 Synchronize App, Desktop and embedded Server to `1.2.42`; record isolated source validation in [the preparation record](./source-freeze-1.2.42.md).
-- [ ] 48.2 Confirm production predecessor/bucket/lock preflight, review the candidate and freeze the exact release commit.
-- [ ] 48.3 Build and verify the final signed and notarized native package, including packaged updater and media acceptance.
-- [ ] 48.4 Verify immutable publication and serialized Stable promotion against the approved `1.2.41` predecessor, then record authorized downstream rollout separately.
+- [x] 48.2 Record the frozen source `9f4bb37c62c9db250e6d6e7728916f29cf290036`, the `jugglework` bucket and the `1.2.41` predecessor digest bound to the Stable promotion lock in the [result record](../../../apps/desktop/release-records/1.2.42-result.json).
+- [x] 48.3 Record native package verification. The `.app` and outer DMG passed separate notarization, staple validation and Gatekeeper checks. Packaged App/ZIP/DMG updater configuration uses the new Qiniu origin. The independent packaged-media host passed 26/26 checks with no orphan processes and seven null-document diagnostics; it does not establish product-main, installed-client or updater acceptance.
+- [x] 48.4 Record actual local-CLI publication and serialized Stable promotion from `1.2.41` on `downloads.jugglework.cn`. Five immutable objects passed Qiniu metadata and public full-digest/range verification. CDN refresh succeeded and the exact 706-byte Stable manifest read back on attempt six (SHA-256 `78f4a98a00fc762d6af91ac2f66f641f235339082b95f127c55157a8f53e28ce`), matching the immutable manifest; the promotion lock was released. No CI promotion run is asserted.
+- [x] 48.5 Record the authorized overseas-only Den config rollout: latest `1.2.41` → `1.2.42`, published/allowed 28 → 29, minimum `0.1.0` unchanged. One config replacement and one Supervisor restart left binary and non-version config bytes unchanged. Local/public checks returned HTTP 200 and 8021 remained loopback-only. China remained read-only at `1.2.37` with an unchanged public contract.
+- [x] 48.6 Record the user-approved treatment of logged overseas Den HTTP 5xx for this Desktop deployment: count and classify without blocking on those counts alone. The strict pre-apply sample and the restart-through-observation window (120.3 s) each had zero 5xx. Before and after the rollout, each rolling 24-hour window contained seven known Worker-token 503 lines and two other 5xx lines (one 500, one 502); each rolling two-hour window contained one known Worker-token 503 and no other 5xx. These overlapping windows are not additive. The risk remains unresolved; China, other systems, and health, config, panic/fatal, unknown-column, migration and restart gates are not exempt.
+- [x] 48.7 Record the standing-policy skips for both immutable-target and Stable-feed real lower-version upgrade canaries and for mutable Cache-Control mutation and required-value validation. Public verification still ran. The observed `public, max-age=31536000` can leave older responses in client/CDN caches despite refresh and exact read-back. No installation, relaunch, retained state, legacy-feed continuity or fleet cache convergence was demonstrated.
+
+Git closeout is documentation-only. Final push and fast-forward SHAs are reported separately from the commit itself.
