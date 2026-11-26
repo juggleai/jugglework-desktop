@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount, AvatarImage } fr
 import { Button } from "@/components/ui/button";
 import { AssigneeCompletionBadge } from "./task-list-table";
 import { t } from "@/i18n";
+import { taskMarkerShape } from "./task-marker";
 
 export type TodayTaskGroupKey = "overdue" | "due_today" | "starts_today";
 export type TodayTaskGroup = { key: TodayTaskGroupKey; tasks: DenProductTask[] };
@@ -106,7 +107,7 @@ function TodayTaskRow(props: {
   const listNames = productTaskListIds(props.task).map((id) => props.listById.get(id)?.name).filter(Boolean).join(", ");
   const time = taskTimeLabel(props.task, props.group, props.now);
   return <div data-testid={`today-task-row-${props.task.id}`} data-state={props.selected ? "selected" : undefined} className="group flex min-h-[72px] items-center gap-3 border-b border-dls-border px-4 py-3 last:border-b-0 hover:bg-dls-hover/70 data-[state=selected]:bg-dls-active">
-    <button type="button" disabled={currentAssigneeCompleted} aria-label={currentAssigneeCompleted ? t("tasks.assignee_completed") : t("tasks.complete")} title={currentAssigneeCompleted ? t("tasks.waiting_for_assignees") : undefined} onClick={(event) => { if (!currentAssigneeCompleted) props.onComplete(props.task, event?.currentTarget); }} className={`flex size-[18px] shrink-0 items-center justify-center rounded-full border transition-colors disabled:cursor-default ${currentAssigneeCompleted ? "border-blue-8 bg-blue-8 text-white" : "border-dls-secondary hover:border-blue-8 hover:bg-blue-2"}`}>{currentAssigneeCompleted ? <Check className="size-3" /> : null}</button>
+    <button type="button" disabled={currentAssigneeCompleted} aria-label={currentAssigneeCompleted ? t("tasks.assignee_completed") : t("tasks.complete")} aria-description={props.task.isMilestone ? t("tasks.milestone") : undefined} title={currentAssigneeCompleted ? t("tasks.waiting_for_assignees") : undefined} onClick={(event) => { if (!currentAssigneeCompleted) props.onComplete(props.task, event?.currentTarget); }} className={`flex size-[18px] shrink-0 items-center justify-center ${taskMarkerShape(props.task.isMilestone)} border transition-colors disabled:cursor-default ${currentAssigneeCompleted ? "border-blue-8 bg-blue-8 text-white" : "border-dls-secondary hover:border-blue-8 hover:bg-blue-2"}`}>{currentAssigneeCompleted ? <Check className="size-3" /> : null}</button>
     <button type="button" data-testid={`today-task-title-${props.task.id}`} onClick={() => props.onSelect(props.task.id)} className="min-w-0 flex-1 text-left">
       <span className="flex min-w-0 items-center gap-2"><span className="truncate text-sm font-medium text-dls-text group-hover:text-blue-10">{props.task.title}</span>{props.task.priority !== "none" ? <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium ${props.task.priority === "high" ? "bg-red-3 text-red-10" : props.task.priority === "medium" ? "bg-amber-3 text-amber-10" : "bg-blue-3 text-blue-10"}`}>{t(`tasks.priority_${props.task.priority}`)}</span> : null}</span>
       <span className="mt-1.5 flex min-w-0 items-center gap-2 text-xs text-dls-secondary">{listNames ? <><span className="max-w-52 truncate">{listNames}</span><span aria-hidden="true">·</span></> : null}<span>{relationLabel(props.task, props.taskMembers, props.currentMemberId)}</span></span>

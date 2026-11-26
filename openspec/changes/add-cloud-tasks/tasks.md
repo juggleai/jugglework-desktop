@@ -9,11 +9,12 @@
 ## 2. Server Task Services and APIs
 
 - [x] 2.1 Implement task authorization for private, members, organization, assignee, follower, Viewer, and list roles
-- [x] 2.2 Implement task CRUD, multi-assignee completion, cancellation, reopen, soft delete, and 30-day restore services
+- [x] 2.2 Implement the original task CRUD, multi-assignee completion, cancellation, reopen, and legacy soft-delete/30-day restore services
 - [x] 2.3 Implement system-view, search, filter, sort, and cursor-pagination queries
 - [x] 2.4 Implement task-list creation, membership, role, move, archive, and restore services
 - [x] 2.5 Add authenticated HTTP APIs and validation for task and list operations
 - [x] 2.6 Add service and API tests covering authorization denials, idempotency, concurrency, lifecycle, and orphan-task transfer
+- [ ] 2.7 Verify permanent deletion and receipt replay for new deletes, and unchanged restoration of pre-existing tombstones
 
 ## 3. Desktop Task Center Foundation
 
@@ -24,10 +25,11 @@
   - Sidebar and workbench-menu task-list creation now share an auto-focused inline name field with Enter/blur submit, Escape cancel, private defaults, retained failure draft, immediate navigation to the created list, and automatic sidebar expansion from the workbench menu.
 - [x] 3.5 Implement paginated task rows, full create, priority filter, basic sorting, and title/due/priority display without quick-create or task search
 - [x] 3.6 Add member, status, start/due time, visibility, list, and field-display controls plus permission-aware inline actions
-- [ ] 3.7 Complete collaborative edit, member management, list-scoped move, and all lifecycle actions including delete/restore; full create and contextual list defaults are complete
+- [ ] 3.7 Complete collaborative edit, member management, list-scoped move, permanent deletion and legacy-only restore; full create and contextual list defaults are complete
   - Selected task-list headers now show authorized member avatars and a Share dialog. The streamlined append-only flow waits for an explicit Enter/search action before showing people or groups, converts selected results into removable chips, and expands selected groups into explicit collaborator snapshots only when the administrator confirms; existing collaborator/admin roles, the current-owner invariant, private-to-members promotion, organization visibility, permission read-only mode, and scoped mutations are preserved.
   - The header shows five collaborator avatars plus numeric overflow. Clicking the avatars opens management where `member`/`administrator` map to Can read/Can edit, non-owner explicit collaborators can be changed or removed in a single Done update, and Add collaborator opens the existing search-and-chip flow. The current owner can use Set as owner for an existing explicit collaborator through a dedicated optimistic/idempotent API; the new and previous owners both retain administrator roles, while only `creatorMemberId` identifies the sole owner.
-  - The selected-list overflow menu now provides permission-aware rename and owner-only permanent deletion. Deletion defaults to retaining and moving every task out of the list; an explicit option asks the server transaction to soft-delete currently unassigned tasks with the existing 30-day recovery window while preserving assigned tasks. The dedicated optimistic/idempotent delete contract supports replay after the list record is gone, and Desktop clears list/detail/task caches and returns to All tasks.
+  - The selected-list overflow menu provides permission-aware rename and owner-only deletion. The versioned, idempotent command defaults to keeping all tasks; Desktop clears list/detail/task caches and returns to All tasks.
+  - [ ] Verify that opting in permanently deletes only eligible tasks under the list-deletion spec, with no recovery promise in the confirmation.
   - Selected-list quick creation includes the current list ID and defaults to its visibility. Full creation in a private list uses members visibility when another member is assigned or follows the task. Non-list workbenches retain their group-derived list defaults.
   - [x] Support independent list filings for any task viewer with destination write permission. Preserve existing filings on upgrade, project only visible list IDs, and allow independent multi-selection in the workbench and detail views without sharing the task.
   - Ownership-transfer verification on 2026-11-17: Server `go test ./...` and `go vet ./...` passed; the five affected Desktop suites passed 152/152; app typecheck passed; strict Chinese i18n reported zero missing keys at 99.1%. The finalized contract rejects self-transfer, rechecks current target membership in the write transaction, strictly validates Desktop permissions/owner invariants, and requires both owner identity and capability before showing Set as owner. Strict OpenSpec validation reports only the five pre-existing long-requirement warnings outside task-list collaboration.

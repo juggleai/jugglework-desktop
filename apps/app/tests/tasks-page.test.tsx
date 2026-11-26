@@ -169,6 +169,7 @@ function connectedClient(overrides: Partial<DenClient> = {}): DenClient {
     listCollaborationGroups: async () => ({ groups: [], total: 0 }),
     listCollaborationGroupMembers: async () => ({ members: [], total: 0, limit: 100, offset: 0 }),
     getProductTask: async () => result(task(1)),
+    getProductTaskRelations: async () => { throw new DenApiError(404, "not_found", "Older server"); },
     getProductTaskActivity: async () => ({ comments: [], events: [] }),
     listProductTaskActivity: async () => ({ items: [], nextCursor: "", hasMore: false, unreadCount: 0, latestSequence: 0 }),
     markProductTaskActivityRead: async () => undefined,
@@ -222,6 +223,278 @@ async function openDetailDescription(root: TestRenderer.ReactTestInstance) {
 function leaveDescription(editor: TestRenderer.ReactTestInstance) {
   editor.findByProps({ "data-testid": "task-detail-description-editor" }).props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null });
 }
+
+const visibleRelations = { predecessors: [{ id: "up", title: "Upstream", status: "todo" as const }], successors: [{ id: "down", title: "Downstream", status: "completed" as const }], parentTaskId: "parent", isMilestone: false };
+
+async function renderActions(overrides: Partial<DenClient>, queryClient = createQueryClient()) {
+  let renderer!: TestRenderer.ReactTestRenderer;
+  setCloudSession(connectedClient(overrides));
+  await act(async () => { renderer = TestRenderer.create(taskPage(queryClient, "task_one")); });
+  await settle(); await settle();
+  const detail = () => renderer.root.findByProps({ "data-testid": "task-detail-panel" });
+  const buttons = (label: string, root = detail()) => root.findAllByType("button").filter(node => node.props["aria-label"] === label || React.Children.toArray(node.props.children).includes(label) || node.findAllByType("span").some(span => span.props.children === label));
+  const click = async (label: string, root = detail()) => {
+    const button = buttons(label, root)[0]!;
+    expect(button.props.disabled).toBeFalsy();
+    await act(async () => { button.props.onClick({ currentTarget: button }); });
+    await settle();
+  };
+  return { renderer, detail, buttons, click, history: () => detail().findByProps({ "data-testid": "task-history-page" }), dialog: () => detail().findByProps({ role: "dialog" }), unmount: () => act(async () => renderer.unmount()) };
+}
+
+test("detail relations: a viewer can inspect and navigate, but cannot unlink or delete", async () => {
+  const getProductTask = mock(async (_org: string, id: string) => {
+    const row = result(task(1, id, "", id));
+    return { ...row, permissions: { ...row.permissions, canEditContent: false, canDelete: false } };
+  });
+  const ui = await renderActions({ getProductTask, getProductTaskRelations: async () => visibleRelations });
+  try {
+    for (const label of ["Set parent task", "Mark as milestone", "Add predecessor", "Add successor", "Delete"]) expect(ui.buttons(label)[0]?.props.disabled).toBe(true);
+    expect(ui.buttons("Make independent")).toHaveLength(0);
+    await ui.click("Tasks blocked: 1");
+    expect(ui.buttons("Unlink Downstream")).toHaveLength(0);
+    expect(ui.dialog().findAllByProps({ children: "Completed" }).length).toBeGreaterThan(0);
+    await ui.click("Downstream", ui.dialog());
+    expect(getProductTask.mock.calls.at(-1)?.slice(0, 2)).toEqual(["org_one", "down"]);
+    expect(ui.detail().findAllByProps({ role: "dialog" })).toHaveLength(0);
+  } finally { await ui.unmount(); }
+});
+
+test("detail relations: 404 still permits real history and separately confirmed delete", async () => {
+  const deleteProductTask = mock(async () => undefined);
+  const ui = await renderActions({ deleteProductTask, listProductTaskHistory: async () => ({ nextCursor: "", items: [{ id: "event", eventType: "task.created", createdAt: "2026-11-01T12:00:00Z", actorMemberId: "member_self" }] }) });
+  try {
+    expect(ui.buttons("Add predecessor")[0]?.props.disabled).toBe(true);
+    expect(ui.buttons("Predecessors: 0")).toHaveLength(0);
+    await ui.click("View history");
+    expect(ui.detail().findAllByProps({ role: "dialog" })).toHaveLength(0);
+    expect(ui.detail().findAllByProps({ hidden: true }).length).toBeGreaterThan(0);
+    expect(ui.history().findByType("h2").props.children).toBe("History");
+    expect(ui.history().findByType("time").props.dateTime).toBe("2026-11-01T12:00:00Z");
+    await ui.click("Back", ui.history());
+    expect(ui.detail().findAllByProps({ "data-testid": "task-history-page" })).toHaveLength(0);
+    await ui.click("Delete");
+    expect(ui.dialog().findAllByProps({ children: "Delete the task “Server title”?" }).length).toBeGreaterThan(0);
+    await ui.click("Cancel", ui.dialog());
+    expect(deleteProductTask).not.toHaveBeenCalled();
+    await ui.click("Delete");
+    await ui.click("Delete", ui.dialog());
+    expect(deleteProductTask).toHaveBeenCalledWith("org_one", "task_one", { expectedVersion: 1, idempotencyKey: expect.any(String) });
+    expect(ui.renderer.root.findAllByProps({ "data-testid": "task-detail-panel" })).toHaveLength(0);
+  } finally { await ui.unmount(); }
+});
+
+test("late delete evicts only the deleted task and refreshes hierarchy and dependencies without losing the new editor", async () => {
+  const cache = createQueryClient();
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  const receipt = deferred<void>();
+  let deleted = false;
+  const first = task(1), second = task(1, "Parent", "", "parent");
+  const parent = () => ({ ...second, version: deleted ? 2 : 1, subtaskCount: deleted ? 0 : 1 });
+  const deps = () => ({ ...visibleRelations, predecessors: deleted ? [] : [{ id: first.id, title: first.title, status: first.status }] });
+  const deleteProductTask = mock(async () => { await receipt.promise; deleted = true; });
+  sessionValues.set(taskSectionStorageKey(scope), "all");
+  const ui = await renderActions({ deleteProductTask,
+    getProductTask: async (_org, id) => result(id === second.id ? parent() : first),
+    getProductTaskRelations: async () => deps(),
+    listProductTasks: async (_org, opts) => ({ items: opts?.parentTaskId ? deleted ? [] : [first] : deleted ? [parent()] : [first, parent()], nextCursor: "" }),
+  }, cache);
+  try {
+    const search = productTaskKeys.list(scope, { search: "cached" });
+    const page = { items: [first, second], membersByTaskId: { [first.id]: [], [second.id]: [] }, memberProjectionKnownByTaskId: { [first.id]: true, [second.id]: true }, nextCursor: "" };
+    cache.setQueryData(search, { pages: [page], pageParams: [undefined] });
+    cache.setQueryData(productTaskKeys.history(scope, first.id), { pages: [], pageParams: [] });
+    const otherOrg = productTaskKeys.detail({ ...scope, organizationId: "other" }, first.id);
+    cache.setQueryData(otherOrg, result(first));
+    await ui.click("Delete");
+    const confirm = ui.buttons("Delete", ui.dialog())[0]!;
+    await act(async () => { confirm.props.onClick(); confirm.props.onClick(); }); await settle();
+    expect(deleteProductTask).toHaveBeenCalledTimes(1);
+    expect(ui.buttons("Delete", ui.dialog())[0]?.props.disabled).toBe(true);
+
+    await act(async () => { clickTaskRow(ui.renderer.root.findByProps({ "data-task-id": second.id })); }); await settle();
+    await act(async () => ui.detail().findByProps({ value: second.title }).props.onChange({ target: { value: "Unsaved parent title" } }));
+    await act(async () => receipt.resolve()); await settle();
+    expect(ui.detail().findByProps({ value: "Unsaved parent title" })).toBeDefined();
+    expect(cache.getQueriesData({ queryKey: productTaskKeys.detail(scope, first.id) })).toEqual([]);
+    expect(cache.getQueryData(otherOrg)).toEqual(result(first));
+    expect(cache.getQueryData(search)).toMatchObject({ pages: [{ items: [second], membersByTaskId: { [second.id]: [] } }] });
+    const cachedPage = cache.getQueryData<{ pages: typeof page[] }>(search)!.pages[0]!;
+    expect(cachedPage.membersByTaskId[first.id]).toBeUndefined();
+    expect(cachedPage.memberProjectionKnownByTaskId[first.id]).toBeUndefined();
+    expect(cache.getQueryData(productTaskKeys.detail(scope, second.id))).toEqual(result(parent()));
+    expect(cache.getQueryData(productTaskKeys.relations(scope, second.id))).toEqual(deps());
+  } finally { await ui.unmount(); }
+});
+
+test("rejected delete leaves detail and confirmation available for an explicit retry", async () => {
+  const deleteProductTask = mock(async () => { throw new DenApiError(409, "task_version_conflict", "Changed"); });
+  const ui = await renderActions({ deleteProductTask });
+  try {
+    await ui.click("Delete");
+    await ui.click("Delete", ui.dialog());
+    expect(ui.dialog().findByProps({ role: "alert" }).props.children).toContain("task changed");
+    expect(ui.buttons("Delete", ui.dialog())[0]?.props.disabled).toBe(false);
+    expect(deleteProductTask).toHaveBeenCalledTimes(1);
+    expect(ui.detail().findByProps({ value: "Server title" })).toBeDefined();
+  } finally { await ui.unmount(); }
+});
+
+test("detail history appends older changes, labels ordinary events, and hides loaded pages after revocation", async () => {
+  const items = (...types: string[]) => types.map(type => ({ id: type, eventType: type, createdAt: "2026-11-01T12:00:00Z", actorMemberId: null }));
+  const listProductTaskHistory = mock<DenClient["listProductTaskHistory"]>(async (_org, _id, options) => {
+    if (!options?.cursor) return { items: items("title_changed"), nextCursor: "older" };
+    if (options.cursor === "older") return { items: [...items("viewer_removed", "assignee_completed"), { ...items("future.change")[0]!, createdAt: "2026-10-30T12:00:00Z" }], nextCursor: "last" };
+    throw new DenApiError(404, "not_found", "Unavailable");
+  });
+  const ui = await renderActions({ listProductTaskHistory });
+  try {
+    expect(listProductTaskHistory).not.toHaveBeenCalled();
+    await ui.click("View history");
+    await ui.click("Load older changes", ui.history());
+    expect(listProductTaskHistory).toHaveBeenNthCalledWith(2, "org_one", "task_one", expect.objectContaining({ cursor: "older" }));
+    const groups = ui.history().findAllByProps({ "data-testid": "task-history-day" });
+    expect(groups.map(group => group.findAllByType("li").length)).toEqual([3, 1]);
+    const titles = ui.history().findAllByProps({ "data-testid": "task-history-event-text" }).map(row => row.props.children);
+    expect(titles).toEqual(["A member changed the title", "A member removed a viewer", "A member completed their part", "A member · future.change"]);
+    await ui.click("Load older changes", ui.history());
+    expect(ui.history().findAllByType("li")).toHaveLength(0);
+    expect(ui.history().findByProps({ role: "alert" }).props.children).toContain("This task is no longer available");
+    await ui.click("Back", ui.history());
+    expect(ui.detail().findAllByProps({ "data-testid": "task-history-page" })).toHaveLength(0);
+  } finally { await ui.unmount(); }
+});
+
+test("detail relations: searches never offer stale pages, paginates and unlinks using the refreshed version", async () => {
+  const stale = deferred<Awaited<ReturnType<DenClient["listProductTasks"]>>>();
+  const page = (ids: string[], nextCursor = "") => ({ items: ids.map(id => task(1, id, "", id)), membersByTaskId: {}, nextCursor });
+  let current = visibleRelations, version = 4;
+  const changeProductTaskRelation = mock<DenClient["changeProductTaskRelation"]>(async (_org, _id, input) => {
+    version++;
+    current = { ...current, predecessors: input.action === "add-predecessor" ? [...current.predecessors, { id: "target", title: "target", status: "todo" }] : visibleRelations.predecessors };
+    return current;
+  });
+  const ui = await renderActions({ getProductTask: async () => result(task(version)), getProductTaskRelations: async () => current, changeProductTaskRelation,
+    listProductTasks: async (_org, options) => options?.view !== "all" ? page([]) : options.search === "old" ? stale.promise : options.search === "new" ? options.cursor === "second" ? page(["target"]) : page(["task_one", "up", "down"], "second") : page(["initial"]) });
+  try {
+    await ui.click("Add predecessor");
+    const search = async (value: string) => { await act(async () => ui.dialog().findByProps({ "aria-label": "Search tasks" }).props.onChange({ target: { value } })); await settle(); };
+    await search("old");
+    expect(ui.buttons("initial", ui.dialog())).toHaveLength(0);
+    await search("new");
+    stale.resolve(page(["obsolete"])); await settle();
+    for (const excluded of ["obsolete", "task_one", "up", "down"]) expect(ui.buttons(excluded, ui.dialog())).toHaveLength(0);
+    await ui.click("Load more", ui.dialog());
+    await ui.click("target", ui.dialog());
+    expect(changeProductTaskRelation).toHaveBeenNthCalledWith(1, "org_one", "task_one", { action: "add-predecessor", relatedTaskId: "target", expectedVersion: 4, idempotencyKey: expect.any(String) });
+    await ui.click("Predecessors: 2");
+    await ui.click("Unlink target", ui.dialog());
+    expect(changeProductTaskRelation).toHaveBeenNthCalledWith(2, "org_one", "task_one", { action: "remove-predecessor", relatedTaskId: "target", expectedVersion: 5, idempotencyKey: expect.any(String) });
+    expect(ui.buttons("Unlink target", ui.dialog())).toHaveLength(0);
+  } finally { await ui.unmount(); }
+});
+
+test("parent picker stages only dedicated search results; cancel and Escape discard, outside click saves", async () => {
+  const page = (id: string, nextCursor = "") => ({ items: [{ id, title: id, status: "todo" as const }], nextCursor });
+  const stale = deferred<ReturnType<typeof page>>();
+  const listProductTaskParentCandidates = mock<DenClient["listProductTaskParentCandidates"]>(async (_org, _id, opts) => {
+    if (opts.search === "old") return stale.promise;
+    if (opts.search === "unavailable") throw new DenApiError(404, "not_found", "Unavailable");
+    return opts.search === "new" ? opts.cursor ? page("second match") : page("first match", "next") : page("initial match");
+  });
+  const listProductTasks = mock<DenClient["listProductTasks"]>(async () => ({ items: [task(1, "general row", "", "general")], membersByTaskId: {}, nextCursor: "" }));
+  const changeProductTaskRelation = mock(async () => visibleRelations);
+  const ui = await renderActions({ getProductTaskRelations: async () => visibleRelations, listProductTasks, listProductTaskParentCandidates, changeProductTaskRelation });
+  const dismiss = async (reason: string) => {
+    const root = ui.detail().findAllByType("div").find(el => el.props.open && el.props.onOpenChange)!;
+    await act(async () => root.props.onOpenChange(false, { reason })); await settle();
+  };
+  const search = async (value: string) => { await act(async () => ui.dialog().findByProps({ "aria-label": "Search tasks" }).props.onChange({ target: { value } })); await settle(); };
+  try {
+    const generalReads = listProductTasks.mock.calls.length;
+    for (const reason of ["cancel", "escape-key"]) {
+      await ui.click("Set parent task");
+      expect(ui.buttons("Save", ui.dialog())[0]?.props.disabled).toBe(true);
+      await ui.click("initial match", ui.dialog());
+      expect(ui.buttons("initial match", ui.dialog())[0]?.props["aria-pressed"]).toBe(true);
+      if (reason === "cancel") await ui.click("Cancel", ui.dialog()); else await dismiss(reason);
+      expect(ui.detail().findAllByProps({ role: "dialog" })).toHaveLength(0);
+      expect(changeProductTaskRelation).not.toHaveBeenCalled();
+    }
+    await ui.click("Set parent task");
+    await ui.click("initial match", ui.dialog());
+    await search("old");
+    expect(ui.buttons("initial match", ui.dialog())).toHaveLength(0);
+    await search("unavailable"); stale.resolve(page("obsolete")); await settle();
+    expect(ui.dialog().findByProps({ role: "alert" })).toBeDefined();
+    for (const title of ["general row", "initial match", "obsolete"]) expect(ui.buttons(title, ui.dialog())).toHaveLength(0);
+    expect(ui.buttons("Save", ui.dialog())[0]?.props.disabled).toBe(true);
+    await search("new"); await ui.click("Load more", ui.dialog());
+    expect(listProductTaskParentCandidates.mock.calls.at(-1)?.slice(0, 3)).toEqual(["org_one", "task_one", { search: "new", limit: 30, cursor: "next" }]);
+    await ui.click("second match", ui.dialog());
+    expect(changeProductTaskRelation).not.toHaveBeenCalled();
+    expect(listProductTasks.mock.calls.length).toBe(generalReads);
+    await dismiss("outside-press");
+    expect(changeProductTaskRelation).toHaveBeenCalledTimes(1);
+    expect(changeProductTaskRelation).toHaveBeenCalledWith("org_one", "task_one", { action: "set-parent", relatedTaskId: "second match", expectedVersion: 1, idempotencyKey: expect.any(String) });
+  } finally { await ui.unmount(); }
+});
+
+test("detail relations: parent and milestone changes use CAS, conflict refreshes without replay", async () => {
+  let version = 1, conflict = true, parentTaskId: string | null = null, isMilestone = false;
+  const projection = () => ({ ...visibleRelations, parentTaskId, isMilestone });
+  const changeProductTaskRelation = mock<DenClient["changeProductTaskRelation"]>(async (_org, _id, input) => {
+    expect(input.expectedVersion).toBe(version++);
+    if (conflict) { conflict = false; throw new DenApiError(409, "task_version_conflict", "Changed"); }
+    if (input.action === "set-parent") parentTaskId = input.relatedTaskId;
+    if (input.action === "detach-parent") parentTaskId = null;
+    if (input.action === "set-milestone" || input.action === "unset-milestone") isMilestone = input.action === "set-milestone";
+    return projection();
+  });
+  const ui = await renderActions({ getProductTask: async () => result(task(version)), getProductTaskRelations: async () => projection(), changeProductTaskRelation,
+    listProductTaskParentCandidates: async () => ({ items: [{ id: "new", title: "New parent", status: "todo" }], nextCursor: "" }) });
+  try {
+    expect(ui.buttons("Make independent")).toHaveLength(0);
+    await ui.click("Set parent task");
+    await ui.click("New parent", ui.dialog());
+    expect(changeProductTaskRelation).not.toHaveBeenCalled();
+    await ui.click("Save", ui.dialog());
+    expect(ui.dialog().findByProps({ role: "alert" }).props.children).toContain("task changed");
+    expect(changeProductTaskRelation).toHaveBeenCalledTimes(1);
+    await ui.click("New parent", ui.dialog());
+    await ui.click("Save", ui.dialog());
+    await ui.click("Make independent");
+    expect(ui.buttons("Make independent")).toHaveLength(0);
+    await ui.click("Mark as milestone");
+    await ui.click("Remove milestone");
+    const writes = changeProductTaskRelation.mock.calls.map(([, , input]) => input);
+    expect(writes.map(x => x.action)).toEqual(["set-parent", "set-parent", "detach-parent", "set-milestone", "unset-milestone"]);
+    expect(new Set(writes.map(x => x.idempotencyKey)).size).toBe(5);
+  } finally { await ui.unmount(); }
+});
+
+test("setting and removing a milestone refreshes the open detail and today's completion marker", async () => {
+  let version = 1, isMilestone = false;
+  const current = () => ({ ...task(version), dueAt: new Date().toISOString(), isMilestone });
+  const ui = await renderActions({
+    listProductTasks: async (_org, options) => ({ items: options?.parentTaskId ? [] : [current()], membersByTaskId: {}, nextCursor: "" }),
+    getProductTask: async () => result(current()),
+    getProductTaskRelations: async () => ({ ...visibleRelations, isMilestone }),
+    changeProductTaskRelation: async (_org, _id, input) => {
+      expect(input.expectedVersion).toBe(version++);
+      isMilestone = input.action === "set-milestone";
+      return { ...visibleRelations, isMilestone };
+    },
+  });
+  try {
+    for (const [action, shape] of [["Mark as milestone", "rotate-45"], ["Remove milestone", "rounded-full"]] as const) {
+      await ui.click(action);
+      const row = ui.renderer.root.findByProps({ "data-testid": "today-task-row-task_one" });
+      expect(row.findByProps({ "aria-label": "Complete task" }).props.className).toContain(shape);
+      expect(ui.detail().findByType("header").findAll(node => node.type === "span" && node.children.includes("Milestone"))).toHaveLength(shape === "rotate-45" ? 1 : 0);
+    }
+  } finally { await ui.unmount(); }
+});
 
 test("renders an Agent-independent empty task center shell", async () => {
   let renderer: TestRenderer.ReactTestRenderer;
@@ -2005,7 +2278,7 @@ test("existing subtask rows edit their own title, due date and assignees, and op
   const parent = { ...task(1, "Parent", "", "parent"), subtaskCount: 2 };
   const startAt = new Date(2026, 10, 26, 9).toISOString();
   let child = { ...task(3, "Editable child", "", "child"), startAt, dueAt: new Date(2026, 10, 27, 18).toISOString() };
-  const readonly = { ...task(1, "Read-only child", "", "readonly"), dueAt: child.dueAt };
+  const readonly = { ...task(1, "Read-only child", "", "readonly"), dueAt: child.dueAt, isMilestone: true };
   const people = ["A", "B", "C", "D"].map((name) => ({ id: `member_${name}`, userId: name, role: "member" as const, user: { id: name, name, account: null, email: null, avatar: null } }));
   const assignment = (name: string) => ({ memberId: `member_${name}`, role: "assignee" as const });
   let assignments = [assignment("A"), assignment("B")];
@@ -2034,6 +2307,8 @@ test("existing subtask rows edit their own title, due date and assignees, and op
     const matches = (id: string) => renderer.root.findAll((node) => typeof node.type === "string" && node.props["data-testid"] === id);
     const find = (id: string) => renderer.root.find((node) => typeof node.type === "string" && node.props["data-testid"] === id);
     for (let attempt = 0; attempt < 10 && !matches("task-subtask-row-child").length; attempt++) await settle();
+    expect(find("task-subtask-transition-readonly").props.className).toContain("rotate-45");
+    expect(find("task-subtask-transition-child").props.className).toContain("rounded-full");
     expect(read.mock.calls.some(([, id]) => id === "child")).toBe(false);
     expect(find("task-subtask-open-child").props.className).toContain("group-hover/subtask:opacity-100");
     await act(async () => { find("task-subtask-row-readonly").props.onPointerEnter(); });
@@ -3675,6 +3950,63 @@ test("a pending comment from another task cannot clear the current task input", 
     expect(comments).toEqual([{ taskId: "task_one", body: "Task A comment" }]);
   } finally {
     await act(async () => { renderer!.unmount(); });
+  }
+});
+
+function selfFollowerDetail(): DenProductTaskResult {
+  const detail = result(task(9));
+  return { ...detail, members: [{ memberId: "member_self", role: "follower" }], permissions: { ...detail.permissions, canManageMembers: false, canUnfollowSelf: true } };
+}
+
+test("a non-manager unfollows only themselves and keeps detail if they can still see it", async () => {
+  let latest = selfFollowerDetail();
+  const receipt = deferred<void>();
+  const unfollowProductTask = mock(async () => { await receipt.promise; latest = { ...latest, task: { ...latest.task, version: 10 }, members: [], permissions: { ...latest.permissions, canUnfollowSelf: false } }; });
+  const updateProductTask = mock(async () => latest);
+  const listProductTasks = mock(async () => ({ items: [], membersByTaskId: {}, nextCursor: "" }));
+  const listProductTaskActivity = mock(async () => ({ items: [], nextCursor: "", hasMore: false, unreadCount: 0, latestSequence: 0 }));
+  const ui = await renderActions({ getProductTask: async () => latest, unfollowProductTask, updateProductTask, listProductTasks, listProductTaskActivity });
+  try {
+    expect(ui.detail().findAllByProps({ "data-testid": "task-detail-followers-trigger" })).toHaveLength(0);
+    const beforeLists = listProductTasks.mock.calls.length, beforeFeed = listProductTaskActivity.mock.calls.length;
+    await ui.click("Unfollow task");
+    expect(ui.buttons("Unfollow task")[0]?.props.disabled).toBe(true);
+    expect(unfollowProductTask).toHaveBeenCalledWith("org_one", "task_one", { expectedVersion: 9, idempotencyKey: expect.any(String) });
+    await act(async () => receipt.resolve()); await settle();
+    expect(ui.buttons("Follow")[0]?.props.disabled).toBe(true);
+    expect(listProductTasks.mock.calls.length).toBeGreaterThan(beforeLists);
+    expect(listProductTaskActivity.mock.calls.length).toBeGreaterThan(beforeFeed);
+    expect(updateProductTask).not.toHaveBeenCalled();
+  } finally { await ui.unmount(); }
+});
+
+test("self-unfollow drops inaccessible detail and its cached relations after 204", async () => {
+  for (const status of [403, 404]) {
+    const queryClient = createQueryClient();
+    const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+    let lostAccess = false;
+    setCloudSession(connectedClient({ getProductTask: async () => { if (lostAccess) throw new DenApiError(status, "unavailable", "Unavailable"); return selfFollowerDetail(); }, getProductTaskRelations: async () => visibleRelations, unfollowProductTask: async () => { lostAccess = true; } }));
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(taskPage(queryClient, "task_one")); }); await settle(); await settle();
+    try {
+      expect(queryClient.getQueryData(productTaskKeys.relations(scope, "task_one"))).toEqual(visibleRelations);
+      await act(async () => renderer.root.findByProps({ "data-testid": "task-detail-follow" }).props.onClick()); await settle();
+      expect(renderer.root.findAllByProps({ "data-testid": "task-detail-panel" })).toHaveLength(0);
+      expect(queryClient.getQueryData(productTaskKeys.detail(scope, "task_one"))).toBeUndefined();
+      expect(queryClient.getQueryData(productTaskKeys.relations(scope, "task_one"))).toBeUndefined();
+    } finally { await act(async () => renderer.unmount()); }
+  }
+});
+
+test("self-unfollow respects a missing or denied capability even for a member manager", async () => {
+  for (const canUnfollowSelf of [false, undefined]) {
+    const detail = selfFollowerDetail();
+    detail.permissions = { ...detail.permissions, canUnfollowSelf, canManageMembers: true };
+    const ui = await renderActions({ getProductTask: async () => detail });
+    try {
+      expect(ui.buttons("Unfollow task")[0]?.props.disabled).toBe(true);
+      expect(ui.detail().findByProps({ "data-testid": "task-detail-followers-trigger" })).toBeDefined();
+    } finally { await ui.unmount(); }
   }
 });
 

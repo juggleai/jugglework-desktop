@@ -112,6 +112,25 @@ function hierarchyRows(renderer: TestRenderer.ReactTestRenderer) {
   return renderer.root.findAll((node) => node.type === "tr" && node.props["data-task-id"]);
 }
 
+for (const view of ["list", "board"] as const) {
+  test(`${view} renders a milestone diamond with the same reopen action and leaves ordinary tasks round`, async () => {
+    const onTransition = mock(() => undefined);
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(hierarchyWorkbench({
+      tasks: [tasks[0]!, { ...tasks[1]!, isMilestone: true }],
+      settings: { ...defaultTaskWorkbenchSettings, view, status: "all" }, onTransition,
+    })); });
+    try {
+      const reopen = renderer.root.findByProps({ "aria-label": "Reopen task" });
+      expect(reopen.props.className).toContain("rotate-45");
+      expect(reopen.findAllByType("svg")).toHaveLength(1);
+      expect(renderer.root.findByProps({ "aria-label": "Complete task" }).props.className).toContain("rounded-full");
+      await act(async () => reopen.props.onClick({ currentTarget: reopen }));
+      expect(onTransition).toHaveBeenCalledWith(expect.objectContaining({ id: tasks[1]!.id }), "reopen", reopen);
+    } finally { await act(async () => renderer.unmount()); }
+  });
+}
+
 test("list expands reachable subtasks by default and keeps independently matching root rows", async () => {
   const select = mock((_id: string) => undefined);
   const load = mock(async (id: string): Promise<DenProductTaskPage> => id === hierarchyParent.id

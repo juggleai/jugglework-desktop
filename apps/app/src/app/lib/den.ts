@@ -60,6 +60,28 @@ const ORG_PROXY_HEADER = "x-jugglework-legacy-org-id";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
 
 export type DenProductTaskStatus = "todo" | "completed" | "canceled";
+export type DenRelatedTask = { id: string; title: string; status: DenProductTaskStatus };
+export type DenTaskRelations = { predecessors: DenRelatedTask[]; successors: DenRelatedTask[]; isMilestone: boolean; parentTaskId: string | null };
+export type DenTaskRelationCommand =
+  | { action: "set-parent" | "add-predecessor" | "add-successor" | "remove-predecessor" | "remove-successor"; relatedTaskId: string }
+  | { action: "detach-parent" | "set-milestone" | "unset-milestone"; relatedTaskId?: never };
+export type DenTaskRelationChange = DenTaskRelationCommand & { expectedVersion: number; idempotencyKey: string };
+
+function relatedTaskSummaries(items: unknown, taskId: string, invalid: () => Error): DenRelatedTask[] {
+  if (!Array.isArray(items)) throw invalid();
+  const seen = new Set<string>();
+  return items.map((item) => {
+    if (!isRecord(item) || typeof item.id !== "string" || !item.id.trim() || item.id === taskId || seen.has(item.id) || typeof item.title !== "string" || (item.status !== "todo" && item.status !== "completed" && item.status !== "canceled")) throw invalid();
+    seen.add(item.id);
+    return { id: item.id, title: item.title, status: item.status };
+  });
+}
+
+function normalizeTaskRelations(value: unknown, taskId: string): DenTaskRelations {
+  const invalid = () => new DenApiError(500, "invalid_task_relations", "Task relations response was invalid.");
+  if (!isRecord(value) || typeof value.isMilestone !== "boolean" || !(value.parentTaskId === null || (typeof value.parentTaskId === "string" && value.parentTaskId.trim() && value.parentTaskId !== taskId))) throw invalid();
+  return { predecessors: relatedTaskSummaries(value.predecessors, taskId, invalid), successors: relatedTaskSummaries(value.successors, taskId, invalid), isMilestone: value.isMilestone, parentTaskId: value.parentTaskId };
+}
 export type DenProductTaskPriority = "none" | "low" | "medium" | "high";
 export type DenProductTaskVisibility = "private" | "members" | "organization";
 export type DenProductTaskCompletionPolicy = "any_assignee" | "all_assignees";
@@ -79,6 +101,7 @@ export type DenCollaborationGroupMember = { id: string; groupId: string; userId:
 export type DenCollaborationGroupMemberPage = { members: DenCollaborationGroupMember[]; total: number; limit: number; offset: number };
 export type DenProductTask = {
   id: string;
+  isMilestone?: boolean;
   /** Organization-scoped human-readable number. Null when reading an older server. */
   displayNumber: number | null;
   creatorMemberId: string;
@@ -115,6 +138,7 @@ export type DenProductTaskPermissions = {
   canView: boolean; canEditContent: boolean; canEditTime: boolean; canManageMembers: boolean;
   /** Absent on older servers, where assignment uses canManageMembers. */
   canAssign?: boolean;
+  canUnfollowSelf?: boolean;
   canManageVisibility: boolean; canComplete: boolean; canCompleteWhole?: boolean; canReopen: boolean; canCancel: boolean;
   canComment: boolean; canDelete: boolean; canRestore: boolean;
 };
@@ -176,6 +200,10 @@ export type DenProductTaskListDeleteResult = { listId: string; replayed: boolean
 export type DenProductTaskActivity = {
   comments: Array<{ id: string; authorMemberId: string; body: string; createdAt: string; updatedAt: string }>;
   events: Array<{ id: string; eventType: string; actorMemberId: string; affectedMemberId: string | null; taskVersion: number; createdAt: string }>;
+};
+export type DenProductTaskHistoryPage = {
+  items: { id: string; eventType: string; actorMemberId: string | null; createdAt: string }[];
+  nextCursor: string;
 };
 export type DenProductTaskActivityAttentionLevel = "ambient" | "attention" | "urgent";
 export type DenProductTaskActivityEvent = {
@@ -993,6 +1021,7 @@ function normalizeProductTask(value: unknown): DenProductTask | null {
     listIds,
     ...(isRecord(parent) ? { parentTask: { id: parent.id as string, title: parent.title as string } } : {}),
     ...counts,
+    isMilestone: value.isMilestone === true,
     ...(typeof value.subtaskOrderSupported === "boolean" ? { subtaskOrderSupported: value.subtaskOrderSupported } : {}),
     ...(typeof value.assigneeCompletionActionsSupported === "boolean" ? { assigneeCompletionActionsSupported: value.assigneeCompletionActionsSupported } : {}),
     ...(typeof value.multiAssigneePolicySupported === "boolean" ? { multiAssigneePolicySupported: value.multiAssigneePolicySupported } : {}),
@@ -1030,7 +1059,7 @@ function normalizeProductTaskResult(value: unknown): DenProductTaskResult {
   if (members.length !== value.members.length) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
   const permissions = value.permissions;
   const permissionNames = ["canView", "canEditContent", "canEditTime", "canManageMembers", "canManageVisibility", "canComplete", "canReopen", "canCancel", "canComment", "canDelete", "canRestore"] as const;
-  if (permissionNames.some((name) => typeof permissions[name] !== "boolean") || ["canAssign", "canCompleteWhole"].some(name => name in permissions && typeof permissions[name] !== "boolean")) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
+  if (permissionNames.some((name) => typeof permissions[name] !== "boolean") || ["canAssign", "canCompleteWhole", "canUnfollowSelf"].some(name => name in permissions && typeof permissions[name] !== "boolean")) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
   return { task, members, permissions: permissions as DenProductTaskPermissions, tombstone: value.tombstone === true, replayed: value.replayed === true };
 }
 
@@ -4545,6 +4574,44 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return normalizeProductTaskResult(payload);
     },
 
+    async unfollowProductTask(orgId: string, taskId: string, input: { expectedVersion: number; idempotencyKey: string }): Promise<void> {
+      await requestJson<void>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/unfollow`, { method: "POST", token, organizationId: orgId, body: input });
+    },
+
+    async getProductTaskRelations(orgId: string, taskId: string, options: { signal?: AbortSignal } = {}) {
+      return normalizeTaskRelations(await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/relations`, { method: "GET", token, organizationId: orgId, signal: options.signal }), taskId);
+    },
+
+    async listProductTaskParentCandidates(orgId: string, taskId: string, options: { search: string; cursor?: string; limit: number }, requestOptions: { signal?: AbortSignal } = {}) {
+      const params = new URLSearchParams({ limit: String(options.limit) });
+      if (options.search) params.set("search", options.search);
+      if (options.cursor) params.set("cursor", options.cursor);
+      const value = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/parent-candidates?${params}`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal });
+      const invalid = () => new DenApiError(500, "invalid_parent_candidates", "Parent candidate response was invalid.");
+      if (!isRecord(value) || typeof value.nextCursor !== "string" || "membersByTaskId" in value) throw invalid();
+      const items = relatedTaskSummaries(value.items, taskId, invalid);
+      if (items.length > options.limit || (value.nextCursor && (!items.length || value.nextCursor === options.cursor))) throw invalid();
+      return { items, nextCursor: value.nextCursor };
+    },
+
+    async changeProductTaskRelation(orgId: string, taskId: string, input: DenTaskRelationChange) {
+      return normalizeTaskRelations(await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/relations`, { method: "POST", token, organizationId: orgId, body: input }), taskId);
+    },
+
+    async listProductTaskHistory(orgId: string, taskId: string, options: { cursor?: string; limit?: number; signal?: AbortSignal } = {}): Promise<DenProductTaskHistoryPage> {
+      const params = new URLSearchParams();
+      if (options.limit !== undefined) params.set("limit", String(options.limit));
+      if (options.cursor) params.set("cursor", options.cursor);
+      const payload = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/history${params.size ? `?${params}` : ""}`, { method: "GET", token, organizationId: orgId, signal: options.signal });
+      const invalid = () => new DenApiError(500, "invalid_task_history", "Task history response was invalid.");
+      if (!isRecord(payload) || !Array.isArray(payload.items) || typeof payload.nextCursor !== "string") throw invalid();
+      const items = payload.items.map((item: unknown) => {
+        if (!isRecord(item) || typeof item.id !== "string" || typeof item.eventType !== "string" || typeof item.createdAt !== "string" || (item.actorMemberId !== null && typeof item.actorMemberId !== "string")) throw invalid();
+        return { id: item.id, eventType: item.eventType, createdAt: item.createdAt, actorMemberId: item.actorMemberId };
+      });
+      return { items, nextCursor: payload.nextCursor };
+    },
+
     async getProductTaskActivity(orgId: string, taskId: string, requestOptions: { signal?: AbortSignal } = {}): Promise<DenProductTaskActivity> {
       const payload = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/activity`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal });
       if (!isRecord(payload) || !Array.isArray(payload.comments) || !Array.isArray(payload.events)) throw new DenApiError(500, "invalid_task_activity", "Task activity response was invalid.");
@@ -4627,9 +4694,9 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return normalizeProductTaskResult(payload);
     },
 
-    async deleteProductTask(orgId: string, taskId: string, input: { expectedVersion: number; idempotencyKey: string }): Promise<DenProductTaskResult> {
-      const payload = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE", token, organizationId: orgId, body: input });
-      return normalizeProductTaskResult(payload);
+    async deleteProductTask(orgId: string, taskId: string, input: { expectedVersion: number; idempotencyKey: string }): Promise<void> {
+      // New servers return 204. A legacy 200 body is only an acknowledgement.
+      await requestJson<void>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE", token, organizationId: orgId, body: input });
     },
 
     async listCalendars(orgId: string, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendar[]> {

@@ -25,7 +25,9 @@ export const productTaskKeys = {
   list: (scope: ProductTaskScope, options: DenProductTaskListOptions) => [...productTaskKeys.lists(scope), options] as const,
   details: (scope: ProductTaskScope) => [...productTaskKeys.all(scope), "details"] as const,
   detail: (scope: ProductTaskScope, taskId: string) => [...productTaskKeys.details(scope), taskId] as const,
+  relations: (scope: ProductTaskScope, taskId: string) => [...productTaskKeys.detail(scope, taskId), "relations"] as const,
   activity: (scope: ProductTaskScope, taskId: string) => [...productTaskKeys.detail(scope, taskId), "activity"] as const,
+  history: (scope: ProductTaskScope, taskId: string) => [...productTaskKeys.detail(scope, taskId), "history"] as const,
   reminders: (scope: ProductTaskScope, taskId: string) => [...productTaskKeys.detail(scope, taskId), "reminders"] as const,
   taskLists: (scope: ProductTaskScope, archived: boolean) => [...productTaskKeys.all(scope), "task-lists", archived] as const,
   taskListDetails: (scope: ProductTaskScope) => [...productTaskKeys.all(scope), "task-list-details"] as const,
@@ -43,6 +45,29 @@ export function flattenProductTaskPages(data: { pages: DenProductTaskPage[] } | 
     seen.add(task.id);
     return true;
   });
+}
+
+export async function removeDeletedTaskFromCache(client: QueryClient, scope: ProductTaskScope, taskId: string) {
+  const lists = { queryKey: productTaskKeys.lists(scope) };
+  const detail = productTaskKeys.detail(scope, taskId);
+  client.removeQueries({ queryKey: detail }); // Includes history, activity, reminders and relations.
+  client.removeQueries({ ...lists, predicate: q => (q.queryKey.at(-1) as DenProductTaskListOptions).parentTaskId === taskId });
+  // A pre-delete read (including an inactive search) must not repopulate a row.
+  const details = { queryKey: productTaskKeys.details(scope) };
+  await Promise.all([client.cancelQueries(lists), client.cancelQueries(details)]);
+  client.setQueriesData<InfiniteData<DenProductTaskPage>>(lists, data => data && ({ ...data, pages: data.pages.map(page => {
+    const items = page.items.filter(task => task.id !== taskId);
+    if (items.length === page.items.length && !page.membersByTaskId?.[taskId] && page.memberProjectionKnownByTaskId?.[taskId] === undefined) return page;
+    const { [taskId]: _members, ...membersByTaskId } = page.membersByTaskId ?? {};
+    const { [taskId]: _known, ...memberProjectionKnownByTaskId } = page.memberProjectionKnownByTaskId ?? {};
+    return { ...page, items, membersByTaskId, memberProjectionKnownByTaskId };
+  }) }));
+  // Children and incoming dependencies need not have been visible on the deleted detail.
+  await Promise.all([
+    client.invalidateQueries(lists),
+    client.invalidateQueries({ queryKey: productTaskKeys.details(scope), predicate: q => q.queryKey[detail.length - 1] !== taskId }),
+    client.invalidateQueries({ queryKey: productTaskKeys.activityFeeds(scope) }),
+  ]);
 }
 
 export function applyTaskListMembership(client: QueryClient, scope: ProductTaskScope, result: { taskId: string; listId: string; added: boolean }) {
@@ -195,7 +220,7 @@ export function useProductTasks(input: { client: DenClient; scope: ProductTaskSc
       }
     },
     getNextPageParam: (page, _pages, _param, seen) => {
-      if (!page.nextCursor || (input.options.parentTaskId && seen.includes(page.nextCursor))) return undefined;
+      if (!page.nextCursor || seen.includes(page.nextCursor)) return undefined;
       return page.localCompletedSort ? { updatedOrderCursor: page.nextCursor } : page.nextCursor;
     },
     placeholderData: (previous, query) => !input.options.parentTaskId && !(query?.queryKey.at(-1) as DenProductTaskListOptions | undefined)?.parentTaskId && input.scope && productTaskKeys.lists(input.scope).every((part, i) => query?.queryKey[i] === part) ? previous : undefined,
@@ -223,6 +248,15 @@ export function useProductTaskActivityFeed(input: { client: DenClient; scope: Pr
     getNextPageParam: (page) => page.hasMore && page.nextCursor ? page.nextCursor : undefined,
     staleTime: 15_000,
     retry: false,
+  });
+}
+
+export function useProductTaskHistory({ client, scope, taskId }: { client: DenClient; scope: ProductTaskScope; taskId: string }) {
+  return useInfiniteQuery({
+    queryKey: productTaskKeys.history(scope, taskId), initialPageParam: "",
+    queryFn: ({ pageParam, signal }) => client.listProductTaskHistory(scope.organizationId, taskId, { cursor: pageParam, signal }),
+    getNextPageParam: page => page.nextCursor || undefined,
+    gcTime: 0, retry: false,
   });
 }
 

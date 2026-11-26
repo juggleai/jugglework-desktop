@@ -135,7 +135,7 @@ The system SHALL allow only the current task-list owner to permanently delete th
 - **THEN** the system returns the original successful result without requiring the deleted list record
 
 ### Requirement: Atomically handle tasks during list deletion
-Deleting a task list SHALL by default retain every task and clear its list relationship in the same transaction that permanently deletes the list. When the owner explicitly selects `deleteUnassignedTasks`, the server SHALL determine current assignee relationships in that transaction, soft-delete active tasks with no assignee using the existing 30-day recovery metadata and reminder cancellation semantics, and retain assigned tasks while clearing their list relationship. The list itself SHALL NOT be recoverable.
+Deleting a task list SHALL by default retain every task and clear its relationship to that list in the same transaction that permanently deletes the list. The list itself SHALL NOT be recoverable. Only explicit `deleteUnassignedTasks` selection enables permanent deletion of eligible active tasks; the confirmation SHALL warn that those tasks cannot be recovered. The server SHALL evaluate eligibility in that same transaction. List archive and restore do not apply this rule.
 
 #### Scenario: Delete list and retain tasks by default
 - **WHEN** the owner confirms deletion without selecting the unassigned-task option
@@ -143,6 +143,6 @@ Deleting a task list SHALL by default retain every task and clear its list relat
 
 #### Scenario: Delete currently unassigned tasks
 - **WHEN** the owner confirms deletion with `deleteUnassignedTasks` selected
-- **THEN** only eligible tasks owned by the deleting member with no assignee and no other filing may be soft-deleted with a 30-day restore window
-- **AND** assigned tasks are retained and moved out of the list
+- **THEN** eligible active tasks created by the deleting member with no current assignee and the deleted list as their sole filing are physically deleted under the direct task deletion rules, without a tombstone, Trash entry or restore; their scheduled reminders cannot fire
+- **AND** other tasks are retained with any remaining filings; a legacy primary-list pointer alone is not a filing
 - **AND** the assignee decision does not rely on a Desktop snapshot

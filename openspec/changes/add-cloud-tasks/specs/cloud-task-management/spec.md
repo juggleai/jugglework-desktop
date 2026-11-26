@@ -8,7 +8,11 @@ The system SHALL store tasks in JuggleWork Server as the sole write authority an
 - **THEN** the server creates the task and returns its stable internal ID, organization-scoped display number, and version
 
 ### Requirement: Task fields and lifecycle
-The system SHALL support a required title, optional description, priority, start time, due time, assignees, followers, visibility, list membership, reminders, and `todo`, `completed`, and `canceled` states. Tasks with multiple assignees SHALL default to `all_assignees` until a member manager explicitly selects a completion rule. Under `any_assignee`, the first completion by a current assignee SHALL complete the task. The API SHALL report the effective rule and retain existing rules for zero or one assignee.
+The system SHALL support a required title, optional description, priority, start time, due time, assignees, followers, visibility, list membership, reminders, and `todo`, `completed`, and `canceled` states. Tasks with multiple assignees SHALL default to `all_assignees` until a member manager explicitly selects a completion rule. The API SHALL report the effective rule and retain existing rules for zero or one assignee.
+
+#### Scenario: Any assignee can finish the task
+- **WHEN** the first current assignee completes their part under `any_assignee`
+- **THEN** the task is completed
 
 #### Scenario: Create an unassigned task
 - **WHEN** a member creates a task without assignees
@@ -67,15 +71,19 @@ The system SHALL schedule reminders in the cloud, allow at most one active remin
 - **WHEN** an unassigned task reminder becomes due
 - **THEN** the system delivers it to the creator exactly once as a business event
 
-### Requirement: Soft deletion and recovery
-The system SHALL soft-delete tasks for 30 days and SHALL allow only the original creator or an administrator with a retained legacy primary-list grant to read the tombstone and restore it. An enabled filing does not grant access to tombstones.
+### Requirement: Permanent deletion and legacy recovery
+New deletes SHALL physically remove the task, without creating a tombstone, entering Trash or supporting restore. The existing `canDelete`, `expectedVersion` and `idempotencyKey` checks SHALL apply. Previously soft-deleted tasks SHALL retain their original 30-day window without a bulk purge. Only the original creator or an administrator with a retained legacy primary-list grant may read and restore those tombstones; an enabled filing alone grants no such access.
 
-#### Scenario: Restore task
-- **WHEN** an authorized restorer restores a task within 30 days
+#### Scenario: Delete an active task
+- **WHEN** an authorized member deletes the current version or replays that same successful request
+- **THEN** the server returns an empty `204 No Content`; reads and restore cannot retrieve the task. Children and external attachment files survive the deletion
+
+#### Scenario: Restore a legacy soft-deleted task
+- **WHEN** an authorized restorer restores a legacy tombstone within its original 30-day window
 - **THEN** the task retains its original ID, members, comments, list relationship, and activity history
 
 ### Requirement: Task activity
-The system SHALL append immutable task events for creation, assignment, visibility, time, state, list, comment, reminder, deletion, and restoration changes.
+The system SHALL append immutable task events for creation, assignment, visibility, time, state, list, comment, reminder and legacy restoration changes. Permanent deletion SHALL NOT leave a readable task history or require a deletion event as a substitute for the scoped receipt.
 
 #### Scenario: Record assignment
 - **WHEN** a task administrator adds an assignee

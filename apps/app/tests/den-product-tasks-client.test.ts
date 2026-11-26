@@ -25,6 +25,7 @@ test("product task client sends scoped pagination and strict mutations", async (
   expect(page.nextCursor).toBe("cursor_two");
   expect(page.items[0]?.displayNumber).toBe(100134);
   expect(page.items[0]?.completionPolicy).toBe("all_assignees");
+  expect(page.items[0]?.isMilestone).toBe(false); // Older server omits the flag.
   expect(page.membersByTaskId["task/one"]?.[0]).toEqual({ memberId: "member_two", role: "assignee", createdByMemberId: undefined, createdAt: undefined, completedAt: null });
   expect(requests[0]!.url).toContain("view=today");
   expect(requests[0]!.url).toContain("cursor=cursor+one");
@@ -36,9 +37,26 @@ test("product task client sends scoped pagination and strict mutations", async (
   expect(JSON.parse(String(requests[2]!.init?.body))).toEqual({ idempotencyKey: "create-one", title: "Follow up", visibility: "private" });
 });
 
+test("task DELETE accepts empty 204 and discards even a restorable legacy 200; HTTP errors reject", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const cas = { expectedVersion: 4, idempotencyKey: "delete-one" };
+  for (const response of [new Response(null, { status: 204 }), Response.json({ ...result, tombstone: true, permissions: { ...result.permissions, canRestore: true } })]) {
+    globalThis.fetch = async (url, init) => {
+      expect(String(url)).toEndWith("/v1/tasks/task%2Fone");
+      expect(init?.method).toBe("DELETE");
+      expect(new Headers(init?.headers).get("x-jugglework-legacy-org-id")).toBe("org_one");
+      expect(JSON.parse(String(init?.body))).toEqual(cas);
+      return response;
+    };
+    await expect(client.deleteProductTask("org_one", task.id, cas)).resolves.toBeUndefined();
+  }
+  globalThis.fetch = async () => Response.json({ error: "task_version_conflict" }, { status: 409 });
+  await expect(client.deleteProductTask("org_one", task.id, cas)).rejects.toMatchObject({ status: 409, code: "task_version_conflict" });
+});
+
 test("product task client sends an explicit parent and normalizes authorized hierarchy metadata", async () => {
   const parentTask = { id: "parent/one", title: "Parent" };
-  const hierarchy = { parentTask, subtaskCount: 2, completedSubtaskCount: 1, commentCount: 3 };
+  const hierarchy = { parentTask, subtaskCount: 2, completedSubtaskCount: 1, commentCount: 3, isMilestone: true };
   const child = { ...task, ...hierarchy };
   const input = { title: "Follow up", parentTaskId: parentTask.id, idempotencyKey: "child-one" };
   const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
@@ -81,6 +99,71 @@ test("product task client sends order-only changes and reads the optional capabi
   expect((await client.updateProductTask("org_one", task.id, patch)).task).toMatchObject({ version: 2, subtaskOrderSupported: true });
   globalThis.fetch = async () => Response.json(result);
   expect((await client.getProductTask("org_one", task.id)).task.subtaskOrderSupported).toBeUndefined();
+});
+
+test("history uses the scoped task endpoint and only retains public event fields", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const item = { id: "evt", eventType: "future.change", actorMemberId: null, createdAt: "2026-11-01T12:00:00Z" };
+  globalThis.fetch = async (url, init) => {
+    expect(String(url)).toEndWith("/v1/tasks/task%2Fone/history?limit=30&cursor=page+two");
+    expect(new Headers(init?.headers).get("x-jugglework-legacy-org-id")).toBe("org_one");
+    return Response.json({ items: [{ ...item, payload: "private", affectedMemberId: "private" }], nextCursor: "" });
+  };
+  expect(await client.listProductTaskHistory("org_one", task.id, { limit: 30, cursor: "page two" })).toEqual({ items: [item], nextCursor: "" });
+});
+
+test("task relations use the scoped encoded endpoint, CAS body and strict visible projection", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const relations = { predecessors: [{ id: "related", title: "Upstream", status: "todo" }], successors: [], parentTaskId: null, isMilestone: false };
+  const change = { action: "add-predecessor" as const, relatedTaskId: "related", expectedVersion: 3, idempotencyKey: "link-1" };
+  const methods: string[] = [];
+  globalThis.fetch = async (url, init) => {
+    expect(new URL(String(url)).pathname).toEndWith("/v1/tasks/task%2Fone/relations");
+    expect(new Headers(init?.headers).get("x-jugglework-legacy-org-id")).toBe("org_one");
+    methods.push(init!.method!);
+    if (init!.method === "POST") expect(JSON.parse(String(init!.body))).toEqual(change);
+    return Response.json(relations);
+  };
+  expect(await client.getProductTaskRelations("org_one", task.id)).toEqual(relations);
+  expect(await client.changeProductTaskRelation("org_one", task.id, change)).toEqual(relations);
+  expect(methods).toEqual(["GET", "POST"]);
+  for (const invalid of [{ parentTaskId: undefined }, { isMilestone: 0 }, { successors: [{}] }, { predecessors: [{ id: task.id, title: "Self", status: "todo" }] }]) {
+    globalThis.fetch = async () => Response.json({ ...relations, ...invalid });
+    await expect(client.getProductTaskRelations("org_one", task.id)).rejects.toMatchObject({ code: "invalid_task_relations" });
+  }
+});
+
+test("self-unfollow uses the scoped versioned endpoint and accepts an empty 204", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const input = { expectedVersion: 9, idempotencyKey: "unfollow-one" };
+  globalThis.fetch = async (url, init) => {
+    expect(String(url)).toEndWith("/v1/tasks/task%2Fone/unfollow");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual(input);
+    expect(new Headers(init?.headers).get("x-jugglework-legacy-org-id")).toBe("org_one");
+    return new Response(null, { status: 204 });
+  };
+  await expect(client.unfollowProductTask("org_one", task.id, input)).resolves.toBeUndefined();
+  globalThis.fetch = async () => Response.json({ ...result, permissions: { ...result.permissions, canUnfollowSelf: "true" } });
+  await expect(client.getProductTask("org_one", task.id)).rejects.toMatchObject({ code: "invalid_task_payload" });
+});
+
+test("parent candidates use a scoped endpoint and reject invalid or generic list responses", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const options = { limit: 30, search: "A & B", cursor: "next page" };
+  const page = { items: [{ id: "new", title: "A & B", status: "todo" }], nextCursor: "" };
+  globalThis.fetch = async (url, init) => {
+    const u = new URL(String(url));
+    expect(u.pathname).toEndWith("/v1/tasks/task%2Fone/parent-candidates");
+    expect(Object.fromEntries(u.searchParams)).toEqual({ limit: "30", search: options.search, cursor: options.cursor });
+    expect(new Headers(init?.headers).get("x-jugglework-legacy-org-id")).toBe("org_one");
+    return Response.json(page);
+  };
+  expect(await client.listProductTaskParentCandidates("org_one", task.id, options)).toEqual(page);
+  for (const bad of [{ ...page, membersByTaskId: {} }, { ...page, nextCursor: null }, { ...page, items: [{ ...page.items[0], id: task.id }] }]) {
+    globalThis.fetch = async () => Response.json(bad);
+    await expect(client.listProductTaskParentCandidates("org_one", task.id, options)).rejects.toMatchObject({ code: "invalid_parent_candidates" });
+  }
 });
 
 test("product task client sends the delegated view token", async () => {

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Independent nested tasks
-The server SHALL support an immutable same-organization parent relation at task creation and SHALL require current permission to edit the active parent. Nesting SHALL NOT inherit access, filings, assignees, or completion policy. Lifecycle and filing operations SHALL affect only the addressed task.
+The server SHALL support an active, editable same-organization parent at creation. A task editor may later set, replace or detach the parent through a versioned relations command with edit access to affected parents. Nesting SHALL NOT inherit access, filings, assignees, or completion policy. Lifecycle and filing operations SHALL affect only the addressed task.
 
 #### Scenario: Complete and file tasks independently
 - **WHEN** a user completes or files a parent or any descendant
@@ -15,7 +15,7 @@ The server SHALL support an immutable same-organization parent relation at task 
 The server SHALL paginate visible, nondeleted direct children for an accessible active parent, and only return visible active parent summaries. List and detail SHALL project the visible direct child total and completed count and each task's reply count without exposing inaccessible relationships.
 
 #### Scenario: Parent access changes
-- **WHEN** the parent becomes inaccessible or is soft-deleted while the subtask remains visible
+- **WHEN** the parent becomes inaccessible, was historically soft-deleted, or is permanently deleted while the subtask remains visible
 - **THEN** the visible subtask remains accessible without the parent's identity or title
 
 ### Requirement: Desktop hierarchical task list

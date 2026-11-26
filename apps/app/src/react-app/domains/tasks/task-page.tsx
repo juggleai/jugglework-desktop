@@ -16,6 +16,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { toast } from "@/components/ui/sonner";
 import { Textarea } from "@/components/ui/textarea";
 import { t } from "@/i18n";
+import { taskMarkerShape } from "./task-marker";
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import { AppInsetSurface } from "@/react-app/shell/app-inset-surface";
 import { AppNavigationRail } from "@/react-app/shell/app-navigation-rail";
@@ -42,6 +43,7 @@ import { TaskCommentEditor, TaskDescriptionEditor } from "./task-description-edi
 import { renderDescription, splitTaskAttachments, joinTaskAttachments, withoutTaskAttachment, type AttachmentRef } from "./task-description-markdown";
 import { TaskAttachmentSection } from "./task-attachment-section";
 import { TaskAncestorBreadcrumbs } from "./task-ancestor-breadcrumbs";
+import { TaskDetailActions, TaskHistory, TaskMilestoneBadge } from "./task-detail-actions";
 import { TaskCreateSubtasks, TaskSubtasksSection, type StagedSubtask, type TaskSubtaskCreateInput } from "./task-subtasks-section";
 import { CommentAttachments } from "./task-comment-attachments";
 import { uploadBusinessFile } from "@/app/lib/business-file-upload";
@@ -638,6 +640,40 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     return await setTaskMembership(task, created.list.id, true) ? created.list.id : null;
   };
 
+  const unfollowSelf = async (task: DenProductTask) => {
+    if (!scope || !currentMemberId || detailQuery.isError || task.id !== liveSelectedTaskId.current) return;
+    const key = productTaskKeys.detail(scope, task.id);
+    const detail = queryClient.getQueryData<DenProductTaskResult>(key);
+    if (!detail?.permissions.canUnfollowSelf || detail.tombstone || !detail.permissions.canView) return;
+    const stillSelected = () => liveScopeKey.current === scopeKey && liveSelectedTaskId.current === task.id;
+    try {
+      await cloud.client.unfollowProductTask(scope.organizationId, task.id, { expectedVersion: task.version, idempotencyKey: mutationKey("desktop-unfollow-task") });
+    } catch (error) {
+      if (stillSelected()) mutationError(error);
+      // Even a failed write may mean access, membership or the version changed.
+    }
+    // The 204 intentionally carries no task: re-authorize the detail before
+    // showing a new membership state. Cancel any pre-write detail read first.
+    await queryClient.cancelQueries({ queryKey: key, exact: true });
+    let lostAccess = false;
+    try {
+      const latest = await queryClient.fetchQuery({ queryKey: key, staleTime: 0, retry: false, queryFn: ({ signal }) => cloud.client.getProductTask(scope.organizationId, task.id, { signal }) });
+      lostAccess = latest.tombstone || !latest.permissions.canView;
+    } catch (error) {
+      lostAccess = error instanceof DenApiError && (error.status === 403 || error.status === 404);
+    }
+    if (lostAccess) {
+      if (stillSelected()) closeTask();
+      queryClient.removeQueries({ queryKey: key });
+    }
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(scope) }),
+      queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeeds(scope) }),
+      // Subtasks, ancestor links and related-task projections respect visibility.
+      queryClient.invalidateQueries({ queryKey: productTaskKeys.details(scope), predicate: q => q.queryKey[key.length - 1] !== task.id || (!lostAccess && q.queryKey.length > key.length) }),
+    ]);
+  };
+
   const updateTaskFollowers = async (task: DenProductTask, followerMemberIds: string[]) => {
     if (!scope) return false;
     const capturedScope = scope;
@@ -991,6 +1027,8 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
       <TaskUploadContext.Provider value={uploads}>
       {selectedTaskId ? <TaskDetail onSaveAttachmentRemoval={saveAttachmentRemoval} key={`${scopeKey}:${selectedTaskId}`} result={detailQuery.data} activity={activityQuery.data} reminders={remindersQuery.data ?? []} members={availableMembers} lists={activeListsQuery.data?.items ?? []} loading={detailQuery.isLoading} error={detailQuery.isError} currentMemberId={currentMemberId} preservedDraft={editDrafts[selectedTaskId] ?? null} onDraftChange={updateBufferedDraft} onClose={closeTask} onSave={saveTask} onComment={addComment} onFollowersChange={updateTaskFollowers} onAssigneesChange={updateWorkbenchAssignees} onCompletionPolicyChange={updateWorkbenchCompletionPolicy} listFilings={{ onMembership: setTaskMembership, onCreate: createListAndAddTask, groupSettings: taskListGroupSettings, onGroupChange: setTaskGroup }} onTimeChange={updateWorkbenchTime} onPriorityChange={updateTaskPriority} onSetReminder={(scheduledAt) => void runMutation(() => reminderMutations.set.mutateAsync({ idempotencyKey: mutationKey("desktop-set-reminder"), mode: "absolute", scheduledAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }))} onCancelReminder={() => void runMutation(() => reminderMutations.cancel.mutateAsync(mutationKey("desktop-cancel-reminder")))} onTransition={(task, operation, anchor) => operation === "restore" ? void submitTransition(task, operation) : void transitionWorkbenchTask(task, operation, anchor)}
         groupPicker={!selectedListId && allowCustomGrouping && workbenchSettings.group === "custom" && detailTask && !detailQuery.data?.tombstone ? <DetailGroupPicker taskId={detailTask.id} settings={workbenchSettings} onChange={(groupId, name) => setTaskGroup(detailTask.id, null, groupId, name)} /> : undefined}
+        onUnfollowSelf={unfollowSelf}
+        actionContext={scope && !detailQuery.isError && detailTask?.id === selectedTaskId && detailQuery.data?.permissions.canView && !detailQuery.data.tombstone && !detailTask.deletedAt ? { client: cloud.client, scope, onSelect: selectTask, onDeleted: () => { if (liveScopeKey.current === scopeKey && liveSelectedTaskId.current === selectedTaskId) closeTask(); } } : undefined}
         ancestorNavigation={scope && detailTask && !detailQuery.data?.tombstone ? <TaskAncestorBreadcrumbs task={detailTask} client={cloud.client} scope={scope} onSelect={selectTask} /> : undefined}
         subtasks={detailQuery.data && !detailQuery.data.tombstone && (detailQuery.data.task.subtaskCount !== undefined || detailQuery.data.permissions.canEditContent) ? <TaskSubtasksSection task={detailQuery.data.task} members={availableMembers} currentMemberId={currentMemberId} canCreate={detailQuery.data.permissions.canEditContent} page={subtaskPage} loading={subtaskQuery.isLoading} loadingMore={subtaskQuery.isFetchingNextPage} error={hasVisibleSubtasks && subtaskQuery.isError} onRetry={() => void subtaskQuery.refetch()} onLoadMore={() => void subtaskQuery.fetchNextPage({ cancelRefetch: false })} onSelect={selectTask} onCreate={createSubtask} onTransition={transitionWorkbenchTask} onReorder={reorderSubtask} editing={subtaskEditing} /> : undefined} /> : null}
       {showFullCreate ? <TaskCreateDialog pending={createMutation.isPending} members={availableMembers} memberDirectoryLoading={membersQuery.isLoading && !fallbackMember} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} onRetryMemberDirectory={() => void membersQuery.refetch()} lists={activeListsQuery.data?.items ?? []} currentMemberId={currentMemberId} defaultListId={selectedListId} groupSettings={taskListGroupSettings} onGroupsChange={(listId, customGroups) => updateTaskListGrouping(listId, { ...taskListGroupSettings(listId), customGroups })} onCreateList={async (name) => { const result = await runMutation(() => listMutations.create.mutateAsync({ idempotencyKey: mutationKey("desktop-create-dialog-list"), name, description: "", marker: name.slice(0, 1).toUpperCase() || "#", visibility: "private" })); return result?.list.id ?? null; }} onClose={() => setShowFullCreate(false)} onCreate={async (input, groupId) => {
@@ -1192,7 +1230,7 @@ function TaskListShareDialog(props: { result: DenProductTaskListResult; members:
 function TaskList(props: { tasks: DenProductTask[]; selectedTaskId: string | null; onSelect: (id: string) => void; canLoadMore: boolean; loadingMore: boolean; onLoadMore: () => void }) {
   if (!props.tasks.length) return <TaskShellContent state={{ kind: "empty" }} />;
   return <div className="w-full self-start space-y-2" role="list">{props.tasks.map((task) => <div role="listitem" key={task.id} className={`flex items-center gap-3 rounded-lg border p-3 ${props.selectedTaskId === task.id ? "border-dls-accent bg-dls-active" : "border-dls-border"}`}>
-    <span aria-hidden="true" className="flex size-6 items-center justify-center rounded-full border border-dls-border">{task.status === "completed" ? <Check className="size-4" /> : null}</span>
+    <span role={task.isMilestone ? "img" : undefined} aria-label={task.isMilestone ? t("tasks.milestone") : undefined} aria-hidden={!task.isMilestone} className={`flex size-6 items-center justify-center ${taskMarkerShape(task.isMilestone)} border border-dls-border`}>{task.status === "completed" ? <Check className="size-4" /> : null}</span>
     <button type="button" className="min-w-0 flex-1 text-left" onClick={() => props.onSelect(task.id)}><div className={`truncate font-medium text-dls-text ${task.status === "completed" ? "line-through" : ""}`}>{task.title}</div><div className="mt-1 flex gap-3 text-xs text-dls-secondary"><span>{t(`tasks.priority_${task.priority}`)}</span>{task.dueAt ? <span>{new Date(task.dueAt).toLocaleString()}</span> : null}</div></button>
   </div>)}{props.canLoadMore ? <Button variant="outline" disabled={props.loadingMore} onClick={props.onLoadMore}>{props.loadingMore ? t("tasks.loading") : t("tasks.load_more")}</Button> : null}</div>;
 }
@@ -1272,11 +1310,22 @@ function TaskDetailListFilings({ task, lists, actions }: { task: DenProductTask;
 }
 
 function TaskDetail(props: { onSaveAttachmentRemoval: (task: DenProductTask, description: string) => Promise<boolean>; ancestorNavigation?: React.ReactNode; subtasks?: React.ReactNode; groupPicker?: React.ReactNode;
+  actionContext?: Pick<React.ComponentProps<typeof TaskDetailActions>, "client" | "scope" | "onSelect" | "onDeleted">;
+  onUnfollowSelf: (task: DenProductTask) => Promise<void>;
   result: ReturnType<typeof useProductTask>["data"]; activity: ReturnType<typeof useProductTaskActivity>["data"]; reminders: Array<{ scheduledAt: string; state: string }>; members: DenOrganizationMember[]; lists: DenProductTaskList[]; loading: boolean; error: boolean; currentMemberId: string | null; preservedDraft: ProductTaskEditDraft | null; onDraftChange: (draft: ProductTaskEditDraft) => void; onClose: () => void; onSave: (id: string, patch: { expectedVersion: number; idempotencyKey: string; title: string; description: string }) => Promise<void>; onComment: (taskId: string, body: string) => Promise<boolean>; onFollowersChange: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onAssigneesChange: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onCompletionPolicyChange: NonNullable<React.ComponentProps<typeof AssigneeCell>["onCompletionPolicyChange"]>; listFilings: DetailListFilings; onTimeChange: (task: DenProductTask, field: TaskTimeField, value: string | null) => Promise<boolean>; onPriorityChange: (task: DenProductTask, priority: EditableTaskPriority) => Promise<boolean>; onSetReminder: (scheduledAt: string) => void; onCancelReminder: () => void; onTransition: (task: DenProductTask, operation: "complete" | "cancel" | "reopen" | "restore", anchor?: HTMLElement) => void }) {
   const task = props.result?.task;
   const uploads = React.useContext(TaskUploadContext);
   const upload = React.useMemo(() => task && uploads?.(task.id), [task?.id, uploads]);
   const [picking, setPicking] = React.useState(false);
+  const [showHistory, setShowHistory] = React.useState(false);
+  const historyOpen = showHistory && !!props.actionContext && !!task;
+  const historyTrigger = React.useRef<HTMLButtonElement | null>(null);
+  React.useEffect(() => {
+    if (!showHistory) {
+      historyTrigger.current?.focus();
+      historyTrigger.current = null;
+    }
+  }, [showHistory]);
   const permissions = props.result?.permissions;
   const assignees = React.useMemo(() => props.result?.members.filter((member) => member.role === "assignee") ?? [], [props.result?.members]);
   const assigneeIds = React.useMemo(() => assignees.map((member) => member.memberId), [assignees]);
@@ -1297,7 +1346,9 @@ function TaskDetail(props: { onSaveAttachmentRemoval: (task: DenProductTask, des
   };
   const [comment, setComment] = React.useState("");
   const [commentPending, setCommentPending] = React.useState(false);
-  const [followerIds, setFollowerIds] = React.useState<string[]>([]);
+  const followerIds = (props.result?.members ?? []).filter(member => member.role === "follower").map(member => member.memberId);
+  const [followersPending, setFollowersPending] = React.useState(false);
+  const followersBusy = React.useRef(false);
   const commentAttempt = React.useRef(0);
   const currentAssignee = props.result?.members.find((member) => member.role === "assignee" && member.memberId === props.currentMemberId);
   const currentAssigneeCompleted = task?.status === "todo" && Boolean(currentAssignee?.completedAt);
@@ -1309,24 +1360,34 @@ function TaskDetail(props: { onSaveAttachmentRemoval: (task: DenProductTask, des
   const currentMemberId = props.currentMemberId;
   const isFollowing = Boolean(currentMemberId && followerIds.includes(currentMemberId));
   const memberById = new Map(props.members.map((member) => [member.id, member]));
+  const previousContent = React.useRef<ProductTaskEditDraft | null>(null);
   React.useEffect(() => {
     if (!task) return;
     const draft = reapplyProductTaskDraft(task, props.preservedDraft);
-    setTitle(draft.title);
-    setDescription(draft.description);
-    setFollowerIds(props.result?.members.filter((member) => member.role === "follower").map((member) => member.memberId) ?? []);
-  }, [props.preservedDraft?.description, props.preservedDraft?.taskId, props.preservedDraft?.title, props.result?.members, task?.description, task?.id, task?.title, task?.version]);
+    const previous = previousContent.current;
+    previousContent.current = draft;
+    // Refetching related tasks may update hierarchy/version while the user types.
+    // Apply server content only to clean fields; a buffered conflict draft takes priority.
+    setTitle(current => !previous || props.preservedDraft || current === previous.title ? draft.title : current);
+    setDescription(current => !previous || props.preservedDraft || current === previous.description ? draft.description : current);
+  }, [props.preservedDraft, task?.description, task?.id, task?.title, task?.version]);
   const saveContent = () => {
     if (picking || !task || !props.result?.permissions.canEditContent) return;
     const nextTitle = title.trim();
     if (!nextTitle || (nextTitle === task.title && description === task.description)) return;
     void props.onSave(task.id, { expectedVersion: task.version, idempotencyKey: mutationKey("desktop-auto-save-task"), title: nextTitle, description });
   };
-  const changeFollowers = async (next: string[]) => { if (!task) return; const previous = followerIds; setFollowerIds(next); if (!await props.onFollowersChange(task, next)) setFollowerIds(previous); };
+  const changeFollowers = async (next: string[] | "unfollow-self") => {
+    if (!task || followersBusy.current || (next === "unfollow-self" ? !permissions?.canUnfollowSelf : !permissions?.canManageMembers)) return;
+    followersBusy.current = true;
+    setFollowersPending(true);
+    try {
+      if (next === "unfollow-self") await props.onUnfollowSelf(task);
+      else await props.onFollowersChange(task, next);
+    } finally { followersBusy.current = false; setFollowersPending(false); }
+  };
   const sendComment = () => { if (!task) return; const body = comment.trim(); if (!body || commentPending) return; const attempt = ++commentAttempt.current; setCommentPending(true); void props.onComment(task.id, body).then((saved) => { if (commentAttempt.current !== attempt) return; setCommentPending(false); if (saved) setComment((current) => current.trim() === body ? "" : current); }); };
-  return <><button type="button" data-testid="task-detail-backdrop" aria-label={t("tasks.close_detail")} className="absolute inset-0 z-40 cursor-default bg-transparent" onClick={props.onClose} /><aside data-testid="task-detail-panel" className="absolute inset-y-0 right-0 z-50 isolate flex w-[min(560px,94%)] flex-col overflow-hidden border-l border-dls-border bg-background shadow-2xl" aria-label={t("tasks.detail")}>
-    <header className="flex h-16 shrink-0 items-center justify-between border-b border-dls-border px-6"><div>
-      {task?.status === "todo" && canComplete ? <Button
+  const completion = task?.status === "todo" && canComplete ? <Button
         type="button" variant="outline" size="sm"
         className={myPartDone ? "h-7 gap-1 rounded-md border-green-10 bg-green-4 px-2 text-xs text-green-11 hover:border-green-11 hover:bg-green-5 hover:text-green-11 disabled:opacity-100 dark:bg-green-4 dark:hover:bg-green-5" : "border-blue-9 text-blue-10"}
         disabled={!showCompletionMenu && currentAssigneeCompleted}
@@ -1337,8 +1398,15 @@ function TaskDetail(props: { onSaveAttachmentRemoval: (task: DenProductTask, des
         <Check aria-hidden="true" className={myPartDone ? "size-3.5" : "size-4"} />
         {t(myPartDone ? "tasks.my_part_done" : showCompletionMenu ? "tasks.complete" : currentAssigneeCompleted ? "tasks.assignee_completed" : requiresOwnCompletion ? "tasks.complete_my_part" : "tasks.complete")}
         {myPartDone && <ChevronDown aria-hidden="true" className="size-3.5" />}
-      </Button> : task?.status === "completed" && props.result?.permissions.canReopen ? <Button type="button" variant="outline" size="sm" className="border-green-8 text-green-10" onClick={(event) => props.onTransition(task, "reopen", event?.currentTarget)}><Check className="size-4" />{t("tasks.completed")}</Button> : null}
-    </div><div className="flex items-center gap-1">{task && currentMemberId ? <Button type="button" data-testid="task-detail-follow" variant="ghost" size="sm" className={isFollowing ? "text-blue-10" : "text-dls-secondary"} onClick={() => void changeFollowers(isFollowing ? followerIds.filter((id) => id !== currentMemberId) : [...followerIds, currentMemberId])}>{isFollowing ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}{isFollowing ? t("tasks.following_task") : t("tasks.follow_task")}</Button> : null}<Button type="button" variant="ghost" size="icon"><MoreHorizontal className="size-4" /></Button><Button type="button" variant="ghost" size="icon" onClick={props.onClose}><X className="size-4" /></Button></div></header>
+      </Button> : task?.status === "completed" && props.result?.permissions.canReopen ? <Button type="button" variant="outline" size="sm" className="border-green-8 text-green-10" onClick={(event) => props.onTransition(task, "reopen", event?.currentTarget)}><Check className="size-4" />{t("tasks.completed")}</Button> : null;
+  const following = task && currentMemberId && props.actionContext ? <Button type="button" data-testid="task-detail-follow" variant="ghost" size="sm" aria-label={t(isFollowing ? "tasks.unfollow_task" : "tasks.follow_task")} title={t(isFollowing ? "tasks.unfollow_task" : "tasks.follow_task")} disabled={followersPending || (isFollowing ? !permissions?.canUnfollowSelf : !permissions?.canManageMembers)} className={isFollowing ? "text-blue-10" : "text-dls-secondary"} onClick={() => void changeFollowers(isFollowing ? "unfollow-self" : [...followerIds, currentMemberId])}>{isFollowing ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}{isFollowing ? t("tasks.following_task") : t("tasks.follow_task")}</Button> : null;
+  return <><button type="button" data-testid="task-detail-backdrop" aria-label={t("tasks.close_detail")} className="absolute inset-0 z-40 cursor-default bg-transparent" onClick={props.onClose} /><aside data-testid="task-detail-panel" className="absolute inset-y-0 right-0 z-50 isolate flex w-[min(560px,94%)] flex-col overflow-hidden border-l border-dls-border bg-background shadow-2xl" aria-label={t("tasks.detail")}>
+    {showHistory && props.actionContext && task && <TaskHistory {...props.actionContext} taskId={task.id} onBack={() => setShowHistory(false)} getActor={id => { const member = memberById.get(id); return member ? { name: memberLabel(member), avatar: member.user.avatar ?? undefined } : undefined; }} />}
+    <div hidden={historyOpen} className={historyOpen ? undefined : "flex min-h-0 flex-1 flex-col"}>
+    <header className="flex min-h-16 shrink-0 items-center gap-1 border-b border-dls-border px-4 py-2">
+      {props.actionContext && props.result ? <TaskDetailActions {...props.actionContext} result={props.result} completion={completion} following={following} onViewHistory={trigger => { historyTrigger.current = trigger; setShowHistory(true); }} /> : <><div className="flex flex-1 flex-wrap items-center gap-3">{completion}{task?.isMilestone && <TaskMilestoneBadge />}</div>{following}</>}
+      <Button type="button" variant="ghost" size="icon" aria-label={t("tasks.close_detail")} onClick={props.onClose}><X className="size-4" /></Button>
+    </header>
     {props.loading ? <div className="flex flex-1 items-center justify-center"><TaskShellContent state={{ kind: "loading" }} /></div> : props.error || !task ? <div className="flex flex-1 items-center justify-center"><TaskShellContent state={{ kind: "error", onRetry: () => undefined }} /></div> : <>
       <div className="min-h-0 flex-1 overflow-y-auto"><section className="space-y-4 px-7 py-6">
         {props.ancestorNavigation}
@@ -1360,6 +1428,7 @@ function TaskDetail(props: { onSaveAttachmentRemoval: (task: DenProductTask, des
         {props.result?.permissions.canComment && <TaskCommentEditor upload={upload} value={comment} onChange={setComment} onSend={sendComment} pending={commentPending} members={props.members} />}
         <div className="mt-3 flex items-center gap-2"><span className="flex -space-x-1">{followerIds.slice(0, 4).map((id) => { const member = memberById.get(id); return <Avatar key={id} size="sm"><AvatarImage src={member?.user.avatar ?? undefined} /><AvatarFallback>{member ? memberLabel(member).slice(0, 1) : "?"}</AvatarFallback></Avatar>; })}</span><span className="text-sm text-dls-text">{t("tasks.followers_count", { count: followerIds.length })}</span>{props.result?.permissions.canManageMembers ? <CreatePeoplePicker testId="task-detail-followers" label={t("tasks.add_follower")} members={props.members} selected={followerIds} onChange={(ids) => void changeFollowers(ids)} triggerContent={<Plus className="size-4" />} triggerClassName="flex size-8 items-center justify-center rounded-md text-dls-secondary hover:bg-dls-hover" /> : null}</div></div>
     </>}
+    </div>
   </aside></>;
 }
 

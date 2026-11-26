@@ -4,6 +4,7 @@ import { Check, ChevronRight, GripVertical, ListTree, Plus, RotateCcw, X } from 
 import type { DenOrganizationMember, DenProductTask, DenProductTaskMember, DenProductTaskPage, DenProductTaskResult, DenProductTaskSubtaskOrder } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
+import { taskMarkerShape } from "./task-marker";
 import { useLocale } from "@/i18n/use-locale";
 import { TaskDateTimeCell } from "./task-date-time-cell";
 import { AssigneeCell, type SaveTaskTitle } from "./task-list-table";
@@ -218,7 +219,7 @@ function TaskSubtaskRow({ child, projectedMembers, members, currentMemberId, onS
         onDragEnd={sorting.end} onKeyDown={(event) => { if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); if (!sorting.disabled && !event.repeat) sorting.step(event.key === "ArrowUp" ? -1 : 1); } }}>
         <GripVertical aria-hidden="true" className="size-4" />
       </button> : null}
-      <button type="button" data-testid={`task-subtask-transition-${child.id}`} disabled={ownComplete} aria-label={operationLabel} aria-description={rowTask.title} title={ownComplete ? t("tasks.waiting_for_assignees") : operationLabel} onClick={(event) => onTransition(rowTask, operation, event?.currentTarget)} className={`grid size-[18px] shrink-0 place-items-center rounded-full border text-dls-secondary focus-visible:outline-2 focus-visible:outline-blue-8 ${completed ? "border-green-8 bg-green-8 text-white" : ownComplete ? "border-blue-8 bg-blue-8 text-white" : "border-dls-secondary hover:border-blue-8 hover:bg-dls-hover"}`}>
+      <button type="button" data-testid={`task-subtask-transition-${child.id}`} disabled={ownComplete} aria-label={operationLabel} aria-description={rowTask.isMilestone ? `${rowTask.title} · ${t("tasks.milestone")}` : rowTask.title} title={ownComplete ? t("tasks.waiting_for_assignees") : operationLabel} onClick={(event) => onTransition(rowTask, operation, event?.currentTarget)} className={`grid size-[18px] shrink-0 place-items-center ${taskMarkerShape(rowTask.isMilestone)} border text-dls-secondary focus-visible:outline-2 focus-visible:outline-blue-8 ${completed ? "border-green-8 bg-green-8 text-white" : ownComplete ? "border-blue-8 bg-blue-8 text-white" : "border-dls-secondary hover:border-blue-8 hover:bg-dls-hover"}`}>
         {completed || ownComplete ? <Check aria-hidden="true" className="size-3" /> : rowTask.status === "canceled" ? <RotateCcw aria-hidden="true" className="size-2.5" /> : null}
       </button>
       {title !== null ? <input autoFocus aria-label={t("tasks.field_title")} data-testid={`task-subtask-title-input-${child.id}`} value={title} readOnly={saving} className="h-8 min-w-0 flex-1 rounded bg-transparent text-sm text-dls-text outline-none focus-visible:ring-1 focus-visible:ring-blue-8"

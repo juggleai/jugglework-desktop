@@ -14,9 +14,14 @@ The Desktop SHALL provide Tasks in the More navigation menu, allow the user to p
 ### Requirement: Task information architecture
 The Desktop SHALL provide primary task secondary navigation for Today, Assigned to me, Following, and Activity. It SHALL provide an initially expanded, collapsible Quick access section for All tasks, Created by me, Assigned by me, and Completed, followed by task lists and their create/archive actions. Inbox, Trash, and Archived lists SHALL NOT be visible sidebar destinations.
 
-Sidebar task-list rows SHALL display a consistent task-list icon followed by the list name. The sidebar, Today task cards, and Activity list links SHALL NOT prepend the list marker as visible text. Today SHALL show only resolved list names, not raw list IDs.
+#### Scenario: Identify a task list in navigation
+- **WHEN** a list is shown in the sidebar, a Today card or an Activity list link
+- **THEN** its marker is not prepended as visible text; sidebar rows show a consistent task-list icon followed by the name, and Today shows only resolved names rather than raw IDs
 
-The task-list section add action and the workbench New task list menu SHALL open the same auto-focused inline name input above the existing task lists instead of opening a task-list dialog. If the sidebar is collapsed, the workbench menu action SHALL expand it first. The input SHALL prefill and select a localized `Task list N` name so typing replaces it while immediate submission accepts the default. Enter or focus loss SHALL create a private list with an empty description and a marker derived from the first name character, then open the created list. Escape SHALL cancel without a mutation. A failed create SHALL preserve the entered name for retry.
+#### Scenario: Open the shared inline task-list input
+- **WHEN** the user invokes the task-list section add action or workbench New task list
+- **THEN** expand the sidebar if necessary and auto-focus the same inline input above existing lists, with localized `Task list N` prefilled and selected for immediate submission or replacement
+- **AND** Enter or focus loss creates a private list with an empty description and a marker derived from the first name character, then opens it; a failed create preserves the name for retry
 
 #### Scenario: Resolve a newly shared task list without leaving Tasks
 - **WHEN** loaded task data references a list missing from the current member's active list directory
@@ -111,7 +116,18 @@ The Desktop SHALL provide a paginated task list, inline permitted actions, and a
 - **THEN** the Desktop opens the task detail and renders each field as editable or read-only according to server authorization
 
 ### Requirement: Task collection workbenches
-The Desktop SHALL render the same rich workbench for Assigned to me, Following, All tasks, Created by me, Assigned by me, and Completed, with exactly List and Board tabs persisted independently per ProductTask scope and section. List SHALL default to Task title, Assignee, Start time, Due time, Creator, Created time, Task ID, Priority, and Task list, with Priority immediately before Task list, title mandatory, and the remaining fields configurable. Board SHALL render horizontal lanes from the active workbench grouping and retain accessible complete and reopen actions without a task-card cancel action. Entering Board from No grouping SHALL select Custom in Assigned to me, Following, and specific task lists. The other system collections SHALL select Priority. Board grouping options SHALL include Task list, Creator, Start time, Due time, and Priority. Assigned to me, Following, and specific task lists SHALL offer Custom as the last option. Status, person, property, list, and time filters and sorting SHALL remain active in Board. Custom-group Board SHALL append a New group action that opens an inline name input and directly creates the group on Enter or blur; all other Board groupings SHALL hide this action.
+The Desktop SHALL render the same workbench for Assigned to me, Following, All tasks, Created by me, Assigned by me, and Completed, with exactly List and Board tabs persisted independently per ProductTask scope and section.
+
+#### Scenario: Configure List fields
+- **WHEN** List opens with default fields
+- **THEN** show Task title, Assignee, Start time, Due time, Creator, Created time, Task ID, Priority, and Task list in that order; title is mandatory and the remaining fields are configurable
+
+#### Scenario: Switch to Board
+- **WHEN** Board opens
+- **THEN** render horizontal lanes for the active grouping with accessible complete and reopen actions but no task-card cancel action; keep status, person, property, list and time filters and sorting active
+- **AND** from No grouping select Custom in Assigned to me, Following and specific task lists, or Priority in other system collections
+- **AND** offer Task list, Creator, Start time, Due time and Priority; offer Custom last in Assigned to me, Following and specific task lists
+- **AND** only Custom-group Board appends New group, opening an inline name input and creating the group on Enter or blur
 
 Every Board lane SHALL end with a New task action. Activating it SHALL open an inline card with a title input and the same Due time picker used by List cells; Enter SHALL create the task with the lane's representable defaults and persist a custom-group assignment when applicable.
 
@@ -190,7 +206,13 @@ The Assigned to me tool area SHALL expose exactly New task and New task list. Ne
 - **THEN** the Desktop offers exactly New task and New task list
 
 ### Requirement: Multi-assignee completion behavior
-The leading completion control in a List row, including expanded subtasks, SHALL reflect the task status. For multiple assignees under the any-assignee rule the control SHALL toggle the task status directly, with no avatar checkmarks. Under the all-assignees rule it SHALL offer personal completion or personal reopening according to the caller’s progress, and a whole-task action. Completing for everyone while assignees remain unfinished and reopening for everyone SHALL require confirmation. Canceling SHALL leave all progress intact. Personal progress appears on assignee avatars. The task detail’s Complete my part action SHALL use the signed-in assignee’s own completion record and the authoritative version.
+The leading completion control in a List row, including expanded subtasks, SHALL reflect the task status. For multiple assignees under the any-assignee rule it SHALL toggle status directly with no avatar checkmarks. Under the all-assignees rule it SHALL offer personal completion or reopening according to the caller's progress, and a whole-task action. Personal progress appears on assignee avatars.
+
+#### Scenario: Act on whole-task or personal progress
+- **WHEN** completing for everyone while assignees remain unfinished, or reopening for everyone
+- **THEN** confirmation is required and canceling leaves all progress intact
+- **WHEN** using Complete my part from detail
+- **THEN** use the signed-in assignee's own completion record and the authoritative version
 
 #### Scenario: Old server reports whole-task completion for a multi-assignee task
 - **WHEN** a personal completion action reads an authoritative task response reporting `any_assignee` for a task with multiple assignees without the `multiAssigneePolicySupported` capability
@@ -202,7 +224,24 @@ The leading completion control in a List row, including expanded subtasks, SHALL
 - **AND** the menu offers Reopen my part to the assignee who completed their part while others are still working
 
 ### Requirement: Task creation surfaces
-The Desktop SHALL support full creation in a compact dialog with a fixed, viewport-bounded height with a borderless title, assignees, a custom group for the selected task list, Today/Tomorrow/Other-time due-date actions, a searchable or creatable task list, description, and followers. The description editor SHALL be expanded by default at a fixed 168px height without changing the fixed 460px outer dialog height. Top and bottom dialog padding SHALL remain compact. Hovering or keyboard-focusing the leading assignee, due-time, task-list, or description icon in either the creation dialog or task detail panel SHALL show a tooltip identifying that field. Activating description SHALL expand an editor with a bottom toolbar for bold, strikethrough, italic, underline, numbered list, bulleted list, quote, link, emoji, mention, and image markup; applied markup SHALL be included in the submitted description. The follower affordance SHALL remain left-aligned at the bottom-left of the dialog across responsive breakpoints, with its leading icon adjacent to its label or selected-member summary and without a trailing dropdown arrow. The primary submit button SHALL be labeled Create. New tasks SHALL leave assignees and followers empty until the user explicitly selects them. Selecting any member other than the signed-in member SHALL automatically use members visibility; otherwise creation SHALL remain private. Creating a list in the dialog SHALL persist the list before submitting its returned ID with the task. Creating or choosing a non-default custom group SHALL persist that group in the selected task list settings and assign the created task through `customGroupAssignments`. Empty assignee cells SHALL present an add-person affordance, while empty start-time and due-time cells SHALL present muted calendar affordances instead of textual unavailable values.
+The Desktop SHALL support full creation in a compact dialog with a borderless title, assignees, a custom group for the selected task list, Today/Tomorrow/Other-time due-date actions, a searchable or creatable task list, description, and followers. The draft SHALL start without preselected assignees or additional followers. On creation the server SHALL persist the creator and all assignees as distinct followers alongside explicit selections, including for subtasks.
+
+#### Scenario: Open the full creation dialog
+- **WHEN** the user opens full creation
+- **THEN** the dialog has a fixed viewport-bounded 460px outer height, compact vertical padding and an expanded 168px description editor; the primary button is labeled Create
+- **AND** the follower affordance is left-aligned at the bottom-left across breakpoints, with its leading icon adjacent to the label or selected-member summary and no trailing arrow
+- **AND** empty assignee cells show an add-person affordance; empty start and due cells show muted calendars instead of textual unavailable values
+
+#### Scenario: Discover and format creation fields
+- **WHEN** the user hovers or keyboard-focuses the leading assignee, due-time, task-list or description icon in creation or detail
+- **THEN** a tooltip identifies the field
+- **WHEN** the user activates description
+- **THEN** the editor expands with a bottom toolbar for bold, strikethrough, italic, underline, numbered list, bulleted list, quote, link, emoji, mention and image markup; submitted descriptions include applied markup
+
+#### Scenario: Create in a list or group with selected participants
+- **WHEN** the user creates a task with a selected member other than themselves
+- **THEN** visibility is members; without such a selection it remains private
+- **AND** a newly created list is persisted before its ID is submitted with the task; choosing or creating a non-default custom group persists it in the selected list settings and assigns the created task through `customGroupAssignments`
 
 #### Scenario: Create a fully attributed task
 - **WHEN** the user chooses assignees, followers, a non-default custom group, a due time, and a task list in the full creation dialog
@@ -211,6 +250,10 @@ The Desktop SHALL support full creation in a compact dialog with a fixed, viewpo
 
 ### Requirement: Task detail work panel
 The detail title and description SHALL autosave when the title loses focus or focus leaves the complete description editor. Activating another field selector SHALL therefore save pending content first. The detail description SHALL reuse the creation dialog’s 168px rich-text editor and toolbar. Moving focus within that editor, including to a formatting action, SHALL NOT save prematurely. The panel SHALL NOT show a separate Save button.
+
+#### Scenario: Open the work panel over a List
+- **WHEN** the user opens a task from a List row
+- **THEN** show the task work panel with the surface, field and comment controls below
 
 The Desktop SHALL open a fixed right-side task detail panel. The panel SHALL render as an opaque isolated surface above workbench sticky headers and rows so underlying borders and content cannot overlap or show through it. Its top-left control SHALL complete a todo task or reopen a completed task, and its top-right Follow control SHALL add or remove the signed-in member as a follower. The detail body SHALL expose the title, assignees, due time, and visible list filings. The detail SHALL keep system collection grouping separate from the groups shown for individual filings. Subtasks and attachments are out of scope for this requirement.
 
@@ -238,9 +281,13 @@ The panel SHALL separate task fields from comments with a divider, render commen
 - **AND** both editors display formatting directly and support links, emoji selection, and searchable organization-member mentions without selecting the same member twice in one draft
 
 #### Scenario: Follow and manage task followers
-- **WHEN** the signed-in member activates Follow or changes the bottom follower selection
+- **WHEN** an authorized member adds a follower or changes the bottom follower selection
 - **THEN** the Desktop persists the complete follower relationship set while retaining non-follower task members
 - **AND** refreshes the visible follower avatars and count from the authoritative task result
+
+#### Scenario: Stop following without managing task members
+- **WHEN** the signed-in follower uses the permitted self-unfollow action
+- **THEN** only their follower role is removed; Desktop rechecks access before showing the refreshed task and does not restore the role on an ordinary edit
 
 #### Scenario: Comment from the task detail panel
 - **WHEN** the user enters a comment, optionally applies simple markup, and submits it

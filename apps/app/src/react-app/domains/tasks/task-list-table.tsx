@@ -14,6 +14,7 @@ import { TaskDateTimeCell, type TaskReminderDraft, type TaskTimeField } from "./
 import { splitTaskAttachments } from "./task-description-markdown";
 import { TaskPrioritySelect, type EditableTaskPriority } from "./task-priority-select";
 import { isInvalidTaskCursor } from "./task-queries";
+import { taskMarkerShape } from "./task-marker";
 import { moveTaskWithinGroup, type TaskCustomGroup, type TaskOrderPlacement, type TaskWorkbenchField, type TaskWorkbenchGroup } from "./task-view-state";
 
 export type TaskPresentation = {
@@ -349,9 +350,9 @@ export type TaskSubtaskLoading = {
   subtasksRevision?: string | number;
 };
 
-function completionIndicatorClass(status: DenProductTask["status"]) {
+function completionIndicatorClass({ status, isMilestone }: DenProductTask) {
   const color = status === "completed" ? "border-green-8 bg-green-8 text-white" : "border-dls-secondary";
-  return `flex size-4 shrink-0 items-center justify-center rounded-full border ${color}`;
+  return `flex size-4 shrink-0 items-center justify-center ${taskMarkerShape(isMilestone)} border ${color}`;
 }
 
 function completionMark(status: DenProductTask["status"]) {
@@ -408,7 +409,7 @@ function renderTaskTitleCell(props: { task: DenProductTask; title: ReactNode; de
       {props.reorderHandle}
       {depth > 0 ? <span aria-hidden="true" className="pointer-events-none absolute -start-9 bottom-1/2 h-6 w-3 rounded-es border-b border-s border-dls-border" /> : null}
       {props.onToggle ? <button type="button" data-testid={`task-subtasks-toggle-${task.id}`} aria-label={expandLabel} title={expandLabel} aria-expanded={props.expanded} onClick={props.onToggle} className="absolute -start-6 flex size-5 items-center justify-center rounded text-dls-secondary hover:bg-dls-active hover:text-dls-text focus-visible:outline-2 focus-visible:outline-blue-8">{props.expanded ? <ChevronDown aria-hidden="true" className="size-3" /> : <ChevronRight aria-hidden="true" className="size-3 rtl:rotate-180" />}</button> : null}
-      <button type="button" className={`${completionIndicatorClass(task.status)} transition-colors hover:border-dls-accent`} aria-label={t(task.status === "todo" ? "tasks.complete" : "tasks.reopen")} onClick={(event) => props.onTransition(task, task.status === "todo" ? "complete-whole" : "reopen", event?.currentTarget)}>{completionMark(task.status)}</button>
+      <button type="button" className={`${completionIndicatorClass(task)} transition-colors hover:border-dls-accent`} aria-description={task.isMilestone ? t("tasks.milestone") : undefined} aria-label={t(task.status === "todo" ? "tasks.complete" : "tasks.reopen")} onClick={(event) => props.onTransition(task, task.status === "todo" ? "complete-whole" : "reopen", event?.currentTarget)}>{completionMark(task.status)}</button>
       {props.title}
       {parent ? <button type="button" data-testid={`task-parent-link-${task.id}`} title={parent.title} aria-label={t("tasks.parent_task", { title: parent.title })} onClick={() => props.onSelect(parent.id)} className="flex min-w-0 max-w-28 items-center gap-1 rounded text-xs text-dls-secondary hover:text-blue-10 hover:underline focus-visible:outline-2 focus-visible:outline-blue-8"><CornerUpLeft aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{parent.title}</span></button> : null}
       {subtasks > 0 || attachments > 0 || comments > 0 ? <span className="flex shrink-0 items-center gap-2 text-xs tabular-nums text-dls-secondary">
@@ -692,7 +693,7 @@ export function TaskListTable(props: TaskPresentation & TaskSubtaskLoading & Tas
     {dragPreview ? <div key={dragPreview.placement} ref={previewElement} aria-hidden="true" className="pointer-events-none fixed start-0 top-0 z-50 select-none p-4">
       <div className="flex h-12 w-[min(30rem,calc(100vw-2rem))] items-center gap-3 rounded-md bg-dls-surface px-2 shadow-lg">
         <GripVertical className="size-4 shrink-0 text-dls-secondary" />
-        <span className={completionIndicatorClass(dragPreview.task.status)}>{completionMark(dragPreview.task.status)}</span>
+        <span className={completionIndicatorClass(dragPreview.task)}>{completionMark(dragPreview.task.status)}</span>
         <span className={`truncate text-sm text-dls-text ${dragPreview.task.status === "completed" ? "line-through opacity-60" : ""}`}>{dragPreview.task.title}</span>
       </div>
     </div> : null}
