@@ -18,6 +18,7 @@ import {
   isMessageAbortedError,
   sessionErrorMessageId,
   snapshotToUIMessages,
+  toStepStartUIPart,
 } from "./usechat-adapter";
 import {
   parseDynamicToolUIPart,
@@ -27,7 +28,7 @@ import {
 } from "./parse-tool-parts";
 import type { JuggleWorkServerClient, JuggleWorkSessionSnapshot } from "@/app/lib/jugglework-server";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
-import { mergeSnapshotAndLiveMessages } from "./message-merge";
+import { getPartMetadataId, mergeSnapshotAndLiveMessages } from "./message-merge";
 import {
   applyRevertToSessionHistory,
   removeMessageFromSessionHistory,
@@ -995,7 +996,7 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
       providerMetadata: { opencode: { partId: part.id } },
     };
   }
-  if (part.type === "step-start") return { type: "step-start" };
+  if (part.type === "step-start") return toStepStartUIPart(part.id);
   if (part.type === "compaction") {
     // A CompactionPart marks the context boundary that the engine will use;
     // it is not proof that summarization has finished. Completion is rendered
@@ -1014,18 +1015,6 @@ function toUIParts(part: Part): UIMessage["parts"] {
     return [mapped, ...visibleToolAttachments(part).flatMap(toFileUIParts)];
   }
   return [mapped];
-}
-
-function getPartMetadataId(part: UIMessage["parts"][number]) {
-  if (part.type === "dynamic-tool") {
-    const metadata = part.callProviderMetadata?.opencode;
-    if (!metadata || typeof metadata !== "object") return null;
-    return "partId" in metadata ? (metadata as { partId?: string }).partId ?? null : null;
-  }
-  if (part.type !== "text" && part.type !== "reasoning" && part.type !== "file" && part.type !== "source-url" && part.type !== "source-document") return null;
-  const metadata = part.providerMetadata?.opencode;
-  if (!metadata || typeof metadata !== "object") return null;
-  return "partId" in metadata ? (metadata as { partId?: string }).partId ?? null : null;
 }
 
 function upsertMessage(messages: UIMessage[], next: UIMessage) {
@@ -1085,15 +1074,16 @@ function inferStubRole(
 }
 
 function upsertPart(messages: UIMessage[], messageId: string, partId: string, next: UIMessage["parts"][number]) {
+  const toolCallId = "toolCallId" in next ? next.toolCallId : undefined;
+  const matches = (part: UIMessage["parts"][number]) => getPartMetadataId(part) === partId
+    || ("toolCallId" in part && (part.toolCallId === partId || part.toolCallId === toolCallId));
   return messages.map((message) => {
     if (message.id !== messageId) return message;
-    const index = message.parts.findIndex((part) =>
-      ("toolCallId" in part && part.toolCallId === partId) || getPartMetadataId(part) === partId,
-    );
+    const index = message.parts.findIndex(matches);
     if (index === -1) {
       return { ...message, parts: [...message.parts, next] };
     }
-    const parts = message.parts.slice();
+    const parts = message.parts.filter((part, partIndex) => partIndex <= index || !matches(part));
     parts[index] = next;
     return { ...message, parts };
   });

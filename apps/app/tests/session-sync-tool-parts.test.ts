@@ -324,6 +324,52 @@ describe("tool part mapper", () => {
     });
   });
 
+  test("replayed step starts and snapshot refreshes share part IDs and clean the transcript cache", () => {
+    const workspaceId = "workspace-step-parts";
+    const sessionId = "session-step-parts";
+    const messageId = "assistant";
+    const syncInput = { workspaceId, baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, sessionId);
+    const key = transcriptKey(workspaceId, sessionId);
+    const queryClient = getReactQueryClient();
+    const parts: Part[] = [
+      { id: "step", sessionID: sessionId, messageID: messageId, type: "step-start" },
+      { id: "body", sessionID: sessionId, messageID: messageId, type: "text", text: "Deployment complete.", time: { start: 2, end: 3 } },
+    ];
+    const emitPart = (part: Part) => __applySessionSyncEventForTest(syncInput, {
+      type: "message.part.updated",
+      properties: { part },
+    });
+    const snapshot = {
+      session: { id: sessionId, time: { created: 1, updated: 3 } },
+      messages: [{ info: { id: messageId, sessionID: sessionId, role: "assistant", time: { created: 2, completed: 3 } }, parts }],
+      status: { type: "idle" },
+      todos: [],
+    } as Parameters<typeof seedSessionState>[1];
+    const expectedParts = snapshotToUIMessages(snapshot)[0]!.parts;
+
+    try {
+      parts.forEach(emitPart);
+      expect(queryClient.getQueryData<UIMessage[]>(key)?.[0]?.parts).toEqual(expectedParts);
+
+      seedSessionState(workspaceId, snapshot);
+      parts.forEach(emitPart);
+      expect(queryClient.getQueryData<UIMessage[]>(key)?.[0]?.parts).toEqual(expectedParts);
+
+      const [step, body] = expectedParts;
+      queryClient.setQueryData<UIMessage[]>(key, (messages = []) => messages.map((message) => ({
+        ...message,
+        parts: [step!, { type: "step-start" }, body!, { ...body! }],
+      })));
+      seedSessionState(workspaceId, { ...snapshot });
+      expect(queryClient.getQueryData<UIMessage[]>(key)?.[0]?.parts).toEqual(expectedParts);
+    } finally {
+      release();
+      cleanup();
+    }
+  });
+
   test("session sync defers empty in-progress write tools until input arrives", () => {
     const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
     const cleanup = __createWorkspaceSessionSyncForTest(syncInput);

@@ -85,6 +85,8 @@ export type DenProductTask = {
   listId: string | null;
   /** Visible memberships. An empty projection supersedes the legacy listId. */
   listIds?: string[];
+  assigneeCompletionActionsSupported?: boolean;
+  multiAssigneePolicySupported?: boolean;
   listFilingMoveSupported?: boolean;
   parentTask?: { id: string; title: string };
   subtaskCount?: number;
@@ -992,6 +994,8 @@ function normalizeProductTask(value: unknown): DenProductTask | null {
     ...(isRecord(parent) ? { parentTask: { id: parent.id as string, title: parent.title as string } } : {}),
     ...counts,
     ...(typeof value.subtaskOrderSupported === "boolean" ? { subtaskOrderSupported: value.subtaskOrderSupported } : {}),
+    ...(typeof value.assigneeCompletionActionsSupported === "boolean" ? { assigneeCompletionActionsSupported: value.assigneeCompletionActionsSupported } : {}),
+    ...(typeof value.multiAssigneePolicySupported === "boolean" ? { multiAssigneePolicySupported: value.multiAssigneePolicySupported } : {}),
     ...(typeof value.listFilingMoveSupported === "boolean" ? { listFilingMoveSupported: value.listFilingMoveSupported } : {}),
     title: value.title,
     description: value.description,
@@ -4618,7 +4622,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return { taskId, sourceListId: input.sourceListId, destinationListId: input.destinationListId };
     },
 
-    async transitionProductTask(orgId: string, taskId: string, operation: "complete" | "complete-whole" | "cancel" | "reopen" | "restore", input: { expectedVersion: number; idempotencyKey: string }): Promise<DenProductTaskResult> {
+    async transitionProductTask(orgId: string, taskId: string, operation: "complete" | "complete-whole" | "reopen-mine" | "cancel" | "reopen" | "restore", input: { expectedVersion: number; idempotencyKey: string }): Promise<DenProductTaskResult> {
       const payload = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/${operation}`, { method: "POST", token, organizationId: orgId, body: input });
       return normalizeProductTaskResult(payload);
     },

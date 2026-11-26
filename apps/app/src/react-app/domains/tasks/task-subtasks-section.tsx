@@ -29,11 +29,12 @@ type TaskSubtasksSectionProps = {
   onLoadMore: () => void;
   onSelect: (taskId: string) => void;
   onCreate: (input: TaskSubtaskCreateInput) => Promise<boolean>;
-  onTransition: (task: DenProductTask, op: "complete" | "reopen") => void;
+  onTransition: (task: DenProductTask, op: "complete" | "reopen", anchor?: HTMLElement) => void;
   onReorder?: (task: DenProductTask, order: DenProductTaskSubtaskOrder) => Promise<boolean>;
   editing?: {
     load: (task: DenProductTask) => Promise<DenProductTaskResult | undefined>;
     title: SaveTaskTitle;
+    completionPolicy?: React.ComponentProps<typeof AssigneeCell>["onCompletionPolicyChange"];
     due: (task: DenProductTask, dueAt: string | null) => Promise<boolean>;
     assignees: (task: DenProductTask, ids: string[], previousIds: string[]) => Promise<boolean>;
   };
@@ -194,7 +195,7 @@ function TaskSubtaskRow({ child, projectedMembers, members, currentMemberId, onS
   const assignees = (detail && detail.task.version >= child.version && !detail.tombstone ? detail.members : projectedMembers)?.filter((member) => member.role === "assignee") ?? [];
   const ids = assignees.map((member) => member.memberId);
   const completedIds = new Set(assignees.filter((member) => member.completedAt).map((member) => member.memberId));
-  const ownComplete = rowTask.status === "todo" && currentMemberId !== null && completedIds.has(currentMemberId);
+  const ownComplete = !rowTask.assigneeCompletionActionsSupported && rowTask.status === "todo" && currentMemberId !== null && completedIds.has(currentMemberId);
   const completed = rowTask.status === "completed";
   const operation = rowTask.status === "todo" ? "complete" : "reopen";
   const operationLabel = t(ownComplete ? "tasks.assignee_completed" : operation === "reopen" ? "tasks.reopen" : rowTask.completionPolicy === "all_assignees" ? "tasks.complete_my_part" : "tasks.complete");
@@ -217,7 +218,7 @@ function TaskSubtaskRow({ child, projectedMembers, members, currentMemberId, onS
         onDragEnd={sorting.end} onKeyDown={(event) => { if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); if (!sorting.disabled && !event.repeat) sorting.step(event.key === "ArrowUp" ? -1 : 1); } }}>
         <GripVertical aria-hidden="true" className="size-4" />
       </button> : null}
-      <button type="button" data-testid={`task-subtask-transition-${child.id}`} disabled={ownComplete} aria-label={operationLabel} aria-description={rowTask.title} title={ownComplete ? t("tasks.waiting_for_assignees") : operationLabel} onClick={() => onTransition(rowTask, operation)} className={`grid size-[18px] shrink-0 place-items-center rounded-full border text-dls-secondary focus-visible:outline-2 focus-visible:outline-blue-8 ${completed ? "border-green-8 bg-green-8 text-white" : ownComplete ? "border-blue-8 bg-blue-8 text-white" : "border-dls-secondary hover:border-blue-8 hover:bg-dls-hover"}`}>
+      <button type="button" data-testid={`task-subtask-transition-${child.id}`} disabled={ownComplete} aria-label={operationLabel} aria-description={rowTask.title} title={ownComplete ? t("tasks.waiting_for_assignees") : operationLabel} onClick={(event) => onTransition(rowTask, operation, event?.currentTarget)} className={`grid size-[18px] shrink-0 place-items-center rounded-full border text-dls-secondary focus-visible:outline-2 focus-visible:outline-blue-8 ${completed ? "border-green-8 bg-green-8 text-white" : ownComplete ? "border-blue-8 bg-blue-8 text-white" : "border-dls-secondary hover:border-blue-8 hover:bg-dls-hover"}`}>
         {completed || ownComplete ? <Check aria-hidden="true" className="size-3" /> : rowTask.status === "canceled" ? <RotateCcw aria-hidden="true" className="size-2.5" /> : null}
       </button>
       {title !== null ? <input autoFocus aria-label={t("tasks.field_title")} data-testid={`task-subtask-title-input-${child.id}`} value={title} readOnly={saving} className="h-8 min-w-0 flex-1 rounded bg-transparent text-sm text-dls-text outline-none focus-visible:ring-1 focus-visible:ring-blue-8"
@@ -232,7 +233,7 @@ function TaskSubtaskRow({ child, projectedMembers, members, currentMemberId, onS
       <div className={subtaskMetadataClass}>
         <SubtaskDeadline task={rowTask} onChange={editing && permissions?.canEditTime ? (value) => editing.due(rowTask, value) : undefined} />
         <div className={`flex min-w-8 justify-center ${ids.length ? "" : subtaskHoverAction}`}>
-          {ids.length || canAssign ? <AssigneeCell task={rowTask} ids={ids} completedIds={completedIds} members={members} avatarOnly onChange={editing && canAssign ? (_task, next) => editing.assignees(rowTask, next, ids) : undefined} /> : null}
+          {ids.length || canAssign ? <AssigneeCell task={rowTask} ids={ids} completedIds={completedIds} members={members} avatarOnly onCompletionPolicyChange={canAssign && permissions?.canManageMembers ? editing?.completionPolicy : undefined} onChange={editing && canAssign ? (_task, next) => editing.assignees(rowTask, next, ids) : undefined} /> : null}
         </div>
         <button type="button" data-testid={`task-subtask-open-${child.id}`} aria-label={t("tasks.open_subtask", { title: rowTask.title })} onClick={() => void openDetail()} className={`${subtaskArrowClass} ${subtaskHoverAction}`}><ChevronRight aria-hidden="true" className="size-4 rtl:rotate-180" /></button>
       </div>

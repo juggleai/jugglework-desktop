@@ -55,6 +55,10 @@ function assigneeAvatarLabel(person: AssigneeAvatarPerson) {
   return person.completed ? `${person.name} · ${t("tasks.completed")}` : person.name;
 }
 
+export function AssigneeCompletionBadge() {
+  return <span aria-hidden="true" data-testid="task-assignee-completed" className="absolute end-0 bottom-0 z-10 grid size-3 place-items-center rounded-full bg-green-9 text-white ring-1 ring-dls-surface"><Check className="size-2" strokeWidth={3} /></span>;
+}
+
 function AssigneeAvatars({ people, detail, avatarOnly }: { people: AssigneeAvatarPerson[]; detail: boolean; avatarOnly?: boolean }) {
   const single = people.length === 1;
   const slots = avatarOnly ? 2 : maxAssigneeSlots;
@@ -70,7 +74,7 @@ function AssigneeAvatars({ people, detail, avatarOnly }: { people: AssigneeAvata
       {people.slice(0, visibleAssigneeCount).map((person) => <Avatar key={person.id} className={single ? "size-7" : "size-7 ring-2 ring-dls-surface"}>
         <AvatarImage src={person.avatar} />
         <AvatarFallback className="text-xs">{Array.from(person.name)[0]?.toUpperCase()}</AvatarFallback>
-        {person.completed ? <span aria-hidden="true" data-testid="task-assignee-completed" className="absolute end-0 bottom-0 z-10 grid size-3 place-items-center rounded-full bg-green-9 text-white ring-1 ring-dls-surface"><Check className="size-2" strokeWidth={3} /></span> : null}
+        {person.completed ? <AssigneeCompletionBadge /> : null}
       </Avatar>)}
       {hidden.length ? <span data-testid="task-assignee-overflow" className="relative inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-muted px-1 text-xs tabular-nums text-muted-foreground ring-2 ring-dls-surface">+{hidden.length}</span> : null}
     </span>
@@ -103,8 +107,8 @@ export function AssigneeCell(props: { task: DenProductTask; ids: string[]; membe
   // Inline subtask pickers are controlled by the refreshed child projection (or local draft).
   const ids = canEdit && !props.avatarOnly ? selectedIds : props.ids;
   // Whole-task completion has an actor, not a per-assignee timestamp.
-  const taskCompletionActor = props.task.status === "completed" && props.task.completionPolicy === "any_assignee" ? props.task.completedByMemberId : null;
-  const people = ids.map((id) => ({ id, name: taskMemberName(id, props.members), avatar: props.members.get(id)?.user.avatar ?? undefined, completed: id === taskCompletionActor || Boolean(props.completedIds?.has(id)) }));
+  const taskCompletionActor = ids.length === 1 && props.task.status === "completed" && props.task.completionPolicy === "any_assignee" ? props.task.completedByMemberId : null;
+  const people = ids.map((id) => ({ id, name: taskMemberName(id, props.members), avatar: props.members.get(id)?.user.avatar ?? undefined, completed: id === taskCompletionActor || (props.task.completionPolicy === "all_assignees" && Boolean(props.completedIds?.has(id))) }));
   const content = people.length ? <AssigneeAvatars people={people} detail={detail} avatarOnly={props.avatarOnly} /> : canEdit || props.avatarOnly ? <EmptyAssigneeIcon /> : <span className="text-dls-secondary/80">{t("tasks.unassigned")}</span>;
   if (!canEdit) return people.length ? <AssigneeNamesTooltip people={people} detail={detail}><TooltipTrigger delay={250} render={<span className="inline-flex min-w-0 max-w-full rounded-full focus-visible:outline-2 focus-visible:outline-blue-8" tabIndex={0} />}>{content}</TooltipTrigger></AssigneeNamesTooltip> : content;
   const query = search.trim().toLocaleLowerCase();
@@ -123,9 +127,9 @@ export function AssigneeCell(props: { task: DenProductTask; ids: string[]; membe
   const updateCompletionPolicy = async (policy: DenProductTaskCompletionPolicy) => {
     if (pending || policy === completionPolicy || !props.onCompletionPolicyChange) return;
     setPending(true);
-    const saved = await props.onCompletionPolicyChange(props.task, policy);
-    if (saved) setCompletionPolicy(policy);
-    setPending(false);
+    try {
+      if (await props.onCompletionPolicyChange(props.task, policy)) setCompletionPolicy(policy);
+    } finally { setPending(false); }
   };
   const trigger = <button type="button" data-testid={`task-assignee-trigger-${props.task.id}`} aria-label={t("tasks.edit_assignees")} aria-description={people.map(assigneeAvatarLabel).join(", ") || t("tasks.unassigned")} className={`flex min-h-8 min-w-8 items-center rounded-md text-left outline-none transition-colors hover:bg-dls-hover data-popup-open:bg-dls-active data-popup-open:ring-1 data-popup-open:ring-blue-8 focus-visible:ring-2 focus-visible:ring-blue-8 ${props.avatarOnly ? "justify-center px-0.5" : "px-1"}`} />;
   const picker = <Popover onOpenChange={(open) => { if (!open) setSearch(""); }}>
@@ -134,8 +138,7 @@ export function AssigneeCell(props: { task: DenProductTask; ids: string[]; membe
       <div className="border-b border-dls-border px-4 pt-3"><div className="inline-flex h-10 items-center border-b-2 border-blue-9 px-0.5 font-medium text-blue-10">{t("tasks.assign_to_people")}</div></div>
       <div className="p-3"><input autoFocus data-testid={`task-assignee-search-${props.task.id}`} aria-label={t("tasks.search_assignees")} placeholder={t("tasks.add_assignee")} value={search} onInput={(event) => setSearch(event.currentTarget.value)} className="h-10 w-full rounded-lg border border-dls-border bg-dls-surface px-3 text-sm text-dls-text outline-none placeholder:text-dls-secondary focus:border-blue-8 focus:ring-2 focus:ring-blue-8/20" /></div>
       <div className="max-h-80 overflow-y-auto px-2 pb-3">{options.length ? options.map((member) => { const active = ids.includes(member.id); const name = taskMemberName(member.id, props.members); return <button key={member.id} type="button" role="checkbox" data-testid={`task-assignee-option-${props.task.id}-${member.id}`} aria-checked={active} disabled={pending} onClick={() => void toggle(member.id)} className="flex h-12 w-full items-center gap-3 rounded-lg px-2 text-left text-sm text-dls-text hover:bg-dls-hover disabled:opacity-60"><Avatar><AvatarImage src={member.user.avatar ?? undefined} /><AvatarFallback>{name.slice(0, 1).toUpperCase()}</AvatarFallback></Avatar><span className={`min-w-0 flex-1 truncate ${active ? "text-blue-10" : ""}`}>{name}</span>{active ? <Check className="size-4 shrink-0 text-blue-10" /> : null}</button>; }) : <div className="px-3 py-6 text-center text-sm text-dls-secondary">{t("tasks.no_matching_members")}</div>}</div>
-      {props.onCompletionPolicyChange && selectedIds.length > 1 ? <div className="border-t border-dls-border px-3 py-3 text-sm text-dls-secondary">{t("tasks.completion_policy_all_assignees")}</div> : null}
-      {props.onCompletionPolicyChange && selectedIds.length <= 1 ? <div className="border-t border-dls-border px-3 py-3">
+      {props.onCompletionPolicyChange ? <div className="border-t border-dls-border px-3 py-3">
         <DropdownMenu>
           <DropdownMenuTrigger render={<button type="button" data-testid={`task-completion-policy-trigger-${props.task.id}`} disabled={pending || !props.onCompletionPolicyChange} className="flex h-9 max-w-full items-center gap-2 rounded-lg bg-dls-hover px-3 text-left text-sm text-dls-text outline-none transition-colors hover:bg-dls-active data-popup-open:bg-dls-active disabled:cursor-default disabled:opacity-60" />}><span className="truncate">{t(`tasks.completion_policy_${completionPolicy}`)}</span><ChevronDown className="size-4 shrink-0 text-dls-secondary" /></DropdownMenuTrigger>
           <DropdownMenuContent align="start" side="bottom" sideOffset={4} className="w-auto min-w-72 rounded-xl border border-dls-border bg-dls-surface p-1.5 shadow-xl">
@@ -392,7 +395,7 @@ function TaskListTitle({ task, draft, setDraft, onSave, onSelect }: {
   </div>;
 }
 
-function renderTaskTitleCell(props: { task: DenProductTask; title: ReactNode; depth: number; titleInset: number; expanded: boolean; reorderHandle?: ReactNode; onToggle?: () => void; onSelect: (id: string) => void; onTransition: (task: DenProductTask, operation: "complete-whole" | "reopen") => void }) {
+function renderTaskTitleCell(props: { task: DenProductTask; title: ReactNode; depth: number; titleInset: number; expanded: boolean; reorderHandle?: ReactNode; onToggle?: () => void; onSelect: (id: string) => void; onTransition: (task: DenProductTask, operation: "complete-whole" | "reopen", anchor?: HTMLElement) => void }) {
   const { task, depth } = props;
   const attachments = splitTaskAttachments(task.description).files.length;
   const subtasks = task.subtaskCount ?? 0;
@@ -405,7 +408,7 @@ function renderTaskTitleCell(props: { task: DenProductTask; title: ReactNode; de
       {props.reorderHandle}
       {depth > 0 ? <span aria-hidden="true" className="pointer-events-none absolute -start-9 bottom-1/2 h-6 w-3 rounded-es border-b border-s border-dls-border" /> : null}
       {props.onToggle ? <button type="button" data-testid={`task-subtasks-toggle-${task.id}`} aria-label={expandLabel} title={expandLabel} aria-expanded={props.expanded} onClick={props.onToggle} className="absolute -start-6 flex size-5 items-center justify-center rounded text-dls-secondary hover:bg-dls-active hover:text-dls-text focus-visible:outline-2 focus-visible:outline-blue-8">{props.expanded ? <ChevronDown aria-hidden="true" className="size-3" /> : <ChevronRight aria-hidden="true" className="size-3 rtl:rotate-180" />}</button> : null}
-      <button type="button" className={`${completionIndicatorClass(task.status)} transition-colors hover:border-dls-accent`} aria-label={t(task.status === "todo" ? "tasks.complete" : "tasks.reopen")} onClick={() => props.onTransition(task, task.status === "todo" ? "complete-whole" : "reopen")}>{completionMark(task.status)}</button>
+      <button type="button" className={`${completionIndicatorClass(task.status)} transition-colors hover:border-dls-accent`} aria-label={t(task.status === "todo" ? "tasks.complete" : "tasks.reopen")} onClick={(event) => props.onTransition(task, task.status === "todo" ? "complete-whole" : "reopen", event?.currentTarget)}>{completionMark(task.status)}</button>
       {props.title}
       {parent ? <button type="button" data-testid={`task-parent-link-${task.id}`} title={parent.title} aria-label={t("tasks.parent_task", { title: parent.title })} onClick={() => props.onSelect(parent.id)} className="flex min-w-0 max-w-28 items-center gap-1 rounded text-xs text-dls-secondary hover:text-blue-10 hover:underline focus-visible:outline-2 focus-visible:outline-blue-8"><CornerUpLeft aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{parent.title}</span></button> : null}
       {subtasks > 0 || attachments > 0 || comments > 0 ? <span className="flex shrink-0 items-center gap-2 text-xs tabular-nums text-dls-secondary">
@@ -421,46 +424,71 @@ function TaskTitleCount({ kind, label, value, icon: Icon }: { kind: string; labe
   return <span data-testid={`task-title-count-${kind}`} className="inline-flex items-center gap-1" title={label}><Icon aria-hidden="true" className="size-3.5" /><span aria-hidden="true">{value}</span><span className="sr-only">{label}</span></span>;
 }
 
-type SubtaskPageRequest = { cursor?: string };
-type SubtaskPageResult = { request: SubtaskPageRequest; items: DenProductTask[]; members: NonNullable<DenProductTaskPage["membersByTaskId"]>; nextCursor: string; failed: boolean };
+type SubtaskPageRequest = { cursor?: string; revision?: TaskSubtaskLoading["subtasksRevision"] };
+type SubtaskPageResult = {
+  request: SubtaskPageRequest;
+  revision: TaskSubtaskLoading["subtasksRevision"];
+  pages: DenProductTaskPage[];
+  failed: boolean;
+  retryCursor?: string;
+};
 
-// Mount only under a visible, expanded placement. Unmounting drops the pages;
-// reopening checks authorization again rather than reusing the previous branch.
-function TaskSubtaskRows(props: { parentId: string; path: string[]; titleInset: number; columnCount: number; onLoad: NonNullable<TaskSubtaskLoading["onLoadSubtasks"]>; renderRow: (task: DenProductTask, members?: DenProductTaskMember[]) => ReactNode }) {
+// Collapsing a branch drops its pages. Background refreshes keep its mounted
+// rows until the same number of pages has been read using fresh cursors.
+function TaskSubtaskRows(props: { parentId: string; revision?: TaskSubtaskLoading["subtasksRevision"]; path: string[]; titleInset: number; columnCount: number; onLoad: NonNullable<TaskSubtaskLoading["onLoadSubtasks"]>; renderRow: (task: DenProductTask, members?: DenProductTaskMember[]) => ReactNode }) {
   const [request, setRequest] = useState<SubtaskPageRequest>({});
   const [result, setResult] = useState<SubtaskPageResult>();
-  const loadPage = useEffectEvent(async (cursor?: string) => props.onLoad(props.parentId, cursor));
+  const loadPage = useEffectEvent((cursor?: string) => props.onLoad(props.parentId, cursor));
+  const loadedPages = useEffectEvent(() => result?.pages ?? []);
+  const revision = props.revision;
   useEffect(() => {
     let active = true;
-    void loadPage(request.cursor).then((page) => {
-      if (!active) return;
-      setResult((previous) => {
-        const items = new Map((request.cursor ? previous?.items : undefined)?.map((task) => [task.id, task]));
-        for (const task of page.items) {
-          if (!task.deletedAt && (!task.parentTask || task.parentTask.id === props.parentId)) items.set(task.id, task);
+    const previous = loadedPages();
+    const appendCursor = request.revision === revision ? request.cursor : undefined;
+    async function load() {
+      const pages = appendCursor ? [...previous] : [];
+      const count = appendCursor ? 1 : Math.max(previous.length, 1);
+      let cursor = appendCursor;
+      try {
+        for (let i = 0; i < count; i++) {
+          const page = await loadPage(cursor);
+          if (!active) return;
+          const nextCursor = page.nextCursor === cursor ? "" : page.nextCursor;
+          pages.push({ ...page, nextCursor });
+          if (!nextCursor) break;
+          cursor = nextCursor;
         }
-        return { request, items: [...items.values()], members: { ...(request.cursor ? previous?.members : undefined), ...page.membersByTaskId }, nextCursor: page.nextCursor === request.cursor ? "" : page.nextCursor, failed: false };
-      });
-    }, (error: unknown) => {
-      if (!active) return;
-      if (request.cursor && isInvalidTaskCursor(error)) {
-        setResult(undefined);
-        setRequest({});
-        return;
+        setResult({ pages, request, revision, failed: false });
+      } catch (error) {
+        if (!active) return;
+        if (appendCursor && isInvalidTaskCursor(error)) {
+          setRequest({});
+          return;
+        }
+        const inaccessible = error instanceof DenApiError && [401, 403, 404, 410].includes(error.status);
+        setResult({ pages: inaccessible ? [] : previous, request, revision, failed: true, retryCursor: inaccessible ? undefined : appendCursor });
       }
-      const inaccessible = error instanceof DenApiError && [401, 403, 404, 410].includes(error.status);
-      setResult((previous) => ({ items: inaccessible ? [] : previous?.items ?? [], members: inaccessible ? {} : previous?.members ?? {}, nextCursor: inaccessible ? "" : previous?.nextCursor ?? "", request, failed: true }));
-    });
+    }
+    void load();
     return () => { active = false; };
-  }, [props.parentId, request]);
+  }, [props.parentId, revision, request]);
 
-  const children = result?.items.filter((task) => !props.path.includes(task.id)) ?? [];
-  const pending = result?.request !== request;
-  const status = pending ? <span role="status">{t("tasks.loading")}</span>
-    : result.failed ? <><span role="alert">{t("tasks.subtasks_load_error")}</span><button type="button" className="hover:underline" onClick={() => setRequest({ cursor: result.nextCursor || undefined })}>{t("tasks.retry")}</button></>
-    : result.nextCursor ? <button type="button" className="hover:underline" onClick={() => setRequest({ cursor: result.nextCursor })}>{t("tasks.load_more_subtasks")}</button>
+  const items = new Map<string, DenProductTask>();
+  const members: NonNullable<DenProductTaskPage["membersByTaskId"]> = {};
+  for (const page of result?.pages ?? []) {
+    for (const task of page.items) {
+      if (!task.deletedAt && (!task.parentTask || task.parentTask.id === props.parentId) && !props.path.includes(task.id)) items.set(task.id, task);
+    }
+    Object.assign(members, page.membersByTaskId);
+  }
+  const children = [...items.values()];
+  const nextCursor = result?.pages.at(-1)?.nextCursor;
+  const pending = result?.request !== request || result?.revision !== revision;
+  const status = !result ? <span role="status">{t("tasks.loading")}</span>
+    : result.failed ? <><span role="alert">{t("tasks.subtasks_load_error")}</span><button type="button" disabled={pending} className="hover:underline" onClick={() => setRequest({ cursor: result.retryCursor, revision })}>{t("tasks.retry")}</button></>
+    : nextCursor ? <button type="button" disabled={pending} className="hover:underline" onClick={() => setRequest({ cursor: nextCursor, revision })}>{t("tasks.load_more_subtasks")}</button>
     : children.length === 0 ? <span>{t("tasks.no_visible_subtasks")}</span> : null;
-  return <>{children.map((task) => props.renderRow(task, result?.members[task.id]))}{status ? <tr data-testid={`task-subtasks-status-${props.parentId}`}><td colSpan={props.columnCount} style={{ paddingInlineStart: titleInsetAtDepth(props.titleInset, props.path.length) }} className="py-2 text-xs text-dls-secondary"><div className="flex items-center gap-2">{status}</div></td></tr> : null}</>;
+  return <>{children.map((task) => props.renderRow(task, members[task.id]))}{status ? <tr data-testid={`task-subtasks-status-${props.parentId}`}><td colSpan={props.columnCount} style={{ paddingInlineStart: titleInsetAtDepth(props.titleInset, props.path.length) }} className="py-2 text-xs text-dls-secondary"><div className="flex items-center gap-2">{status}</div></td></tr> : null}</>;
 }
 
 type TaskListDragging = {
@@ -484,7 +512,7 @@ function taskDropPlacement(event: DragEvent<HTMLTableRowElement>): TaskOrderPlac
   return event.clientY < top + height / 2 ? "before" : "after";
 }
 
-export function TaskListTable(props: TaskPresentation & TaskSubtaskLoading & TaskListDragging & { onTitleChange?: SaveTaskTitle; fields: TaskWorkbenchField[]; group: TaskWorkbenchGroup; customGroupName: string; customGroups: TaskCustomGroup[]; customGroupAssignments: Record<string, string>; selectedTaskId: string | null; inlineCreatePosition: InlineCreatePosition | null; inlineCreateGroupKey: string | null; inlineCreateDefaults: TaskQuickCreateDefaults; inlineCreateTitle: string; inlineCreatePending: boolean; inlineCreateMemberId: string | null; inlineCreateCreatedAt: string; onCustomGroupsChange: (groups: TaskCustomGroup[]) => void; onCustomGroupNameChange: (name: string) => void; onInlineCreatePositionChange: (position: InlineCreatePosition | null, groupKey?: string) => void; onInlineCreateTitleChange: (title: string) => void; onInlineCreateSubmit: () => void; onSelect: (id: string) => void; onTransition: (task: DenProductTask, operation: "complete-whole" | "reopen") => void; onAssigneesChange?: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onCompletionPolicyChange?: (task: DenProductTask, policy: DenProductTaskCompletionPolicy) => Promise<boolean>; onTimeChange?: (task: DenProductTask, field: TaskTimeField, value: string | null) => Promise<boolean>; onLoadReminders?: (task: DenProductTask) => Promise<DenProductTaskReminder[]>; onReminderChange?: (task: DenProductTask, reminder: TaskReminderDraft) => Promise<boolean>; onListChange?: (task: DenProductTask, listId: string) => Promise<boolean>; onListCreate?: (task: DenProductTask, name: string) => Promise<string | null>; onPriorityChange?: (task: DenProductTask, priority: EditableTaskPriority) => Promise<boolean> }) {
+export function TaskListTable(props: TaskPresentation & TaskSubtaskLoading & TaskListDragging & { onTitleChange?: SaveTaskTitle; fields: TaskWorkbenchField[]; group: TaskWorkbenchGroup; customGroupName: string; customGroups: TaskCustomGroup[]; customGroupAssignments: Record<string, string>; selectedTaskId: string | null; inlineCreatePosition: InlineCreatePosition | null; inlineCreateGroupKey: string | null; inlineCreateDefaults: TaskQuickCreateDefaults; inlineCreateTitle: string; inlineCreatePending: boolean; inlineCreateMemberId: string | null; inlineCreateCreatedAt: string; onCustomGroupsChange: (groups: TaskCustomGroup[]) => void; onCustomGroupNameChange: (name: string) => void; onInlineCreatePositionChange: (position: InlineCreatePosition | null, groupKey?: string) => void; onInlineCreateTitleChange: (title: string) => void; onInlineCreateSubmit: () => void; onSelect: (id: string) => void; onTransition: (task: DenProductTask, operation: "complete-whole" | "reopen", anchor?: HTMLElement) => void; onAssigneesChange?: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onCompletionPolicyChange?: (task: DenProductTask, policy: DenProductTaskCompletionPolicy) => Promise<boolean>; onTimeChange?: (task: DenProductTask, field: TaskTimeField, value: string | null) => Promise<boolean>; onLoadReminders?: (task: DenProductTask) => Promise<DenProductTaskReminder[]>; onReminderChange?: (task: DenProductTask, reminder: TaskReminderDraft) => Promise<boolean>; onListChange?: (task: DenProductTask, listId: string) => Promise<boolean>; onListCreate?: (task: DenProductTask, name: string) => Promise<string | null>; onPriorityChange?: (task: DenProductTask, priority: EditableTaskPriority) => Promise<boolean> }) {
   // Nested rows can remount when a list refreshes. Keep unfinished edits with their placement.
   const [titleDrafts, setTitleDrafts] = useState<Record<string, TitleDraft>>({});
   const setTitleDraft = (placement: string, draft?: TitleDraft) => setTitleDrafts(current => {
@@ -657,7 +685,7 @@ export function TaskListTable(props: TaskPresentation & TaskSubtaskLoading & Tas
         {renderTaskTitleCell({ task, title: <TaskListTitle task={task} draft={titleDrafts[placement]} setDraft={draft => setTitleDraft(placement, draft)} onSave={props.onTitleChange} onSelect={props.onSelect} />, depth: ancestors.length, titleInset, expanded, reorderHandle, onToggle, onSelect: props.onSelect, onTransition: props.onTransition })}
         {visibleFields.map((field) => <td key={field} className={`border-b border-dls-border px-4 py-2 align-middle whitespace-nowrap ${field === "due" && overdue ? "font-medium text-red-9" : "text-dls-secondary"}`}><TaskFieldCell field={field} task={task} taskMembers={taskMembers} members={props.memberById} lists={props.listById} onAssigneesChange={props.onAssigneesChange} onCompletionPolicyChange={props.onCompletionPolicyChange} onTimeChange={props.onTimeChange} onLoadReminders={props.onLoadReminders} onReminderChange={props.onReminderChange} onListChange={props.onListChange} onListCreate={props.onListCreate} onPriorityChange={props.onPriorityChange} /></td>)}
       </tr>
-      {expanded && loadSubtasks ? <TaskSubtaskRows key={props.subtasksRevision} parentId={task.id} path={path} titleInset={titleInset} columnCount={visibleFields.length + 1} onLoad={loadSubtasks} renderRow={(child, members) => renderTaskRow(child, groupKey, path, members)} /> : null}
+      {expanded && loadSubtasks ? <TaskSubtaskRows revision={props.subtasksRevision} parentId={task.id} path={path} titleInset={titleInset} columnCount={visibleFields.length + 1} onLoad={loadSubtasks} renderRow={(child, members) => renderTaskRow(child, groupKey, path, members)} /> : null}
     </Fragment>;
   };
   return <div className="min-h-0 w-full flex-1 overflow-auto" data-testid="assigned-task-table">

@@ -276,6 +276,10 @@ function mapSnapshotToolParts(part: ToolPart, authoritativeIdle: boolean): UIMes
   return [mapped];
 }
 
+export function toStepStartUIPart(partId: string) {
+  return { type: "step-start" as const, providerMetadata: { opencode: { partId } } };
+}
+
 export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMessage[] {
   let pendingCompactionMode: "auto" | "manual" | null = null;
   const authoritativeIdle = snapshot.status.type === "idle";
@@ -354,7 +358,7 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
           }];
         }
         if (part.type === "step-start") {
-          return [{ type: "step-start", providerMetadata: { opencode: { partId: part.id } } }];
+          return [toStepStartUIPart(part.id)];
         }
         if (part.type === "compaction") {
           // This is a persisted context-boundary marker, not a completion

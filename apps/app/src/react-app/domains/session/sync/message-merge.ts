@@ -2,14 +2,100 @@ import type { UIMessage } from "ai";
 
 import { getSessionCompactionFromMessage, getSessionCompactionFromPart } from "../../../../app/lib/session-compaction";
 
-function mergeMessageParts(snapshotMessage: UIMessage, cachedMessage: UIMessage) {
-  const parts = snapshotMessage.parts.map((part, index) => {
-    const cachedPart = cachedMessage.parts[index];
-    if (!cachedPart) return part;
+type MessagePart = UIMessage["parts"][number];
 
+export function getPartMetadataId(part: MessagePart): string | null {
+  const metadata = "callProviderMetadata" in part ? part.callProviderMetadata
+    : "providerMetadata" in part ? part.providerMetadata : undefined;
+  const partId = metadata?.opencode?.partId;
+  return typeof partId === "string" && partId ? partId : null;
+}
+
+function partKeys(part: MessagePart): string[] {
+  const partId = getPartMetadataId(part);
+  const keys = partId ? [`part:${partId}`] : [];
+  // Older projections may carry only the SDK identity. Each message also has
+  // at most one compaction receipt, whose ID may predate the persisted marker.
+  if ("toolCallId" in part && part.toolCallId) keys.push(`tool:${part.toolCallId}`);
+  if ("sourceId" in part && part.sourceId) keys.push(`source:${part.sourceId}`);
+  if (getSessionCompactionFromPart(part)) keys.push("compaction");
+  return keys;
+}
+
+function deduplicateParts(parts: MessagePart[]): MessagePart[] {
+  if (parts.length < 2) return parts;
+  const seen = new Set<string>();
+  const hasIdentifiedStep = parts.some((part) => part.type === "step-start" && getPartMetadataId(part));
+  const unique = parts.filter((part) => {
+    const keys = partKeys(part);
+    // Before live step markers carried IDs, replaying them created anonymous
+    // copies alongside the persisted markers.
+    if (hasIdentifiedStep && part.type === "step-start" && keys.length === 0) return false;
+    const duplicate = keys.some((key) => seen.has(key));
+    for (const key of keys) seen.add(key);
+    return !duplicate;
+  });
+  return unique.length === parts.length ? parts : unique;
+}
+
+function deduplicateMessage(message: UIMessage): UIMessage {
+  const parts = deduplicateParts(message.parts);
+  return parts === message.parts ? message : { ...message, parts };
+}
+
+function deduplicateMessages(messages: UIMessage[]): UIMessage[] {
+  const unique = messages.map(deduplicateMessage);
+  return unique.every((message, index) => message === messages[index]) ? messages : unique;
+}
+
+function indexParts(parts: MessagePart[]) {
+  const byKey = new Map<string, MessagePart>();
+  for (const part of parts) {
+    for (const key of partKeys(part)) byKey.set(key, part);
+  }
+  return byKey;
+}
+
+function findPart(keys: string[], byKey: Map<string, MessagePart>) {
+  for (const key of keys) {
+    const part = byKey.get(key);
+    if (part) return part;
+  }
+}
+
+/** Insert missing parts before the next shared anchor in the fallback order. */
+function fillMissingParts(parts: MessagePart[], fallback: MessagePart[], identifiedOnly = false) {
+  const byKey = indexParts(parts);
+  let merged = parts;
+  let nextAnchor: MessagePart | undefined;
+  for (let index = fallback.length - 1; index >= 0; index -= 1) {
+    const part = fallback[index]!;
+    const keys = partKeys(part);
+    if (identifiedOnly && keys.length === 0) continue;
+    const match = findPart(keys, byKey);
+    if (match) {
+      nextAnchor = match;
+      continue;
+    }
+    if (merged === parts) merged = parts.slice();
+    merged.splice(nextAnchor ? merged.indexOf(nextAnchor) : merged.length, 0, part);
+    nextAnchor = part;
+  }
+  return merged === parts ? parts : deduplicateParts(merged);
+}
+
+function mergeMessageParts(snapshotMessage: UIMessage, cachedMessage: UIMessage) {
+  const snapshot = deduplicateParts(snapshotMessage.parts);
+  const cached = deduplicateParts(cachedMessage.parts);
+  const cachedByKey = indexParts(cached);
+  const completed = (snapshotMessage.metadata as { opencode?: { completed?: unknown } } | undefined)?.opencode?.completed;
+
+  const parts = snapshot.map((part) => {
+    const cachedPart = findPart(partKeys(part), cachedByKey);
     if (
+      typeof completed !== "number" &&
       (part.type === "text" || part.type === "reasoning") &&
-      cachedPart.type === part.type &&
+      cachedPart?.type === part.type &&
       cachedPart.text.length > part.text.length
     ) {
       return { ...part, text: cachedPart.text };
@@ -18,11 +104,7 @@ function mergeMessageParts(snapshotMessage: UIMessage, cachedMessage: UIMessage)
     return part;
   });
 
-  if (cachedMessage.parts.length > snapshotMessage.parts.length) {
-    parts.push(...cachedMessage.parts.slice(snapshotMessage.parts.length));
-  }
-
-  return parts;
+  return fillMissingParts(parts, cached);
 }
 
 function mergeSnapshotMessageWithCached(snapshotMessage: UIMessage, cachedMessage: UIMessage): UIMessage {
@@ -31,12 +113,8 @@ function mergeSnapshotMessageWithCached(snapshotMessage: UIMessage, cachedMessag
 
   // A snapshot window that excludes the compaction boundary maps its summary
   // receipt to mode "unknown", while the live stream already observed the
-  // real mode (from the boundary or the compaction lifecycle events). Live
-  // and snapshot part orderings also differ (the live marker is created
-  // before the summary streams, the snapshot marker is appended last), so
-  // index-paired merging cannot carry the mode across. Patch it at the
-  // message level: a known cached mode must not be downgraded to unknown, or
-  // grouping would split the run into a standalone compaction task.
+  // real mode (from the boundary or the compaction lifecycle events). Keep
+  // the known mode so grouping keeps the compaction within the same run.
   const cachedCompaction = getSessionCompactionFromMessage(cachedMessage);
   if (cachedCompaction && cachedCompaction.mode !== "unknown") {
     const mergedCompaction = getSessionCompactionFromMessage({ ...snapshotMessage, parts });
@@ -68,50 +146,11 @@ function mergeSnapshotMessageWithCached(snapshotMessage: UIMessage, cachedMessag
   };
 }
 
-function recoveryPartKeys(part: UIMessage["parts"][number]): string[] {
-  const metadata = "callProviderMetadata" in part ? part.callProviderMetadata
-    : "providerMetadata" in part ? part.providerMetadata : undefined;
-  const partId = metadata?.opencode?.partId;
-  const keys = typeof partId === "string" && partId ? [`part:${partId}`] : [];
-  // Tool calls and sources also have stable SDK identities. Retain these aliases
-  // when an older live projection has not carried over OpenCode's part metadata.
-  if ("toolCallId" in part && part.toolCallId) keys.push(`tool:${part.toolCallId}`);
-  if ("sourceId" in part && part.sourceId) keys.push(`source:${part.sourceId}`);
-  return keys;
-}
-
 /** Only fill missing identified parts; live content, role and terminal metadata win. */
 function recoverMissingSnapshotParts(snapshotMessage: UIMessage, liveMessage: UIMessage): UIMessage {
-  const liveByKey = new Map<string, UIMessage["parts"][number]>();
-  for (const part of liveMessage.parts) {
-    for (const key of recoveryPartKeys(part)) liveByKey.set(key, part);
-  }
-  const seen = new Set<string>();
-  const snapshotParts = snapshotMessage.parts.flatMap((part) => {
-    const keys = recoveryPartKeys(part);
-    // Anonymous parts cannot be safely matched by index or text. In particular,
-    // equal text may belong to two distinct parts, while stale text may differ.
-    if (!keys.length || keys.some((key) => seen.has(key))) return [];
-    for (const key of keys) seen.add(key);
-    return [{ part, live: keys.map((key) => liveByKey.get(key)).find(Boolean) }];
-  });
-  if (snapshotParts.every(({ live }) => live)) return liveMessage;
-
-  const parts = liveMessage.parts.slice();
-  let nextAnchor: UIMessage["parts"][number] | undefined;
-  // Insert before the next shared snapshot anchor, preserving both the order of
-  // recovered parts and the relative order of every existing live-only part.
-  for (let index = snapshotParts.length - 1; index >= 0; index -= 1) {
-    const { part, live } = snapshotParts[index]!;
-    if (live) {
-      nextAnchor = live;
-      continue;
-    }
-    const insertionIndex = nextAnchor ? parts.indexOf(nextAnchor) : parts.length;
-    parts.splice(insertionIndex, 0, part);
-    nextAnchor = part;
-  }
-  return { ...liveMessage, parts };
+  const live = deduplicateParts(liveMessage.parts);
+  const parts = fillMissingParts(live, deduplicateParts(snapshotMessage.parts), true);
+  return parts === liveMessage.parts ? liveMessage : { ...liveMessage, parts };
 }
 
 function messageCreated(message: UIMessage) {
@@ -181,19 +220,24 @@ export function mergeSnapshotAndLiveMessages(
   liveMessages: UIMessage[],
   options: { appendLiveOnlyMessages?: boolean; preserveLiveMessages?: boolean } = {},
 ) {
-  if (snapshotMessages.length === 0) return liveMessages;
-  if (liveMessages.length === 0) return snapshotMessages;
+  if (snapshotMessages.length === 0) return deduplicateMessages(liveMessages);
+  if (liveMessages.length === 0) return deduplicateMessages(snapshotMessages);
 
   const liveById = new Map(liveMessages.map((message) => [message.id, message]));
   const snapshotIds = new Set(snapshotMessages.map((message) => message.id));
   const merged = snapshotMessages.map((snapshotMessage) => {
     const liveMessage = liveById.get(snapshotMessage.id);
-    return liveMessage ? (options.preserveLiveMessages ? recoverMissingSnapshotParts(snapshotMessage, liveMessage) : mergeSnapshotMessageWithCached(snapshotMessage, liveMessage)) : snapshotMessage;
+    if (!liveMessage) return deduplicateMessage(snapshotMessage);
+    return options.preserveLiveMessages
+      ? recoverMissingSnapshotParts(snapshotMessage, liveMessage)
+      : mergeSnapshotMessageWithCached(snapshotMessage, liveMessage);
   });
 
   if (options.appendLiveOnlyMessages) {
     for (const liveMessage of liveMessages) {
-      if (!snapshotIds.has(liveMessage.id)) insertMessageByChronology(merged, liveMessage, liveMessages);
+      if (snapshotIds.has(liveMessage.id)) continue;
+      snapshotIds.add(liveMessage.id);
+      insertMessageByChronology(merged, deduplicateMessage(liveMessage), liveMessages);
     }
   }
 
@@ -201,26 +245,5 @@ export function mergeSnapshotAndLiveMessages(
 }
 
 export function mergeSnapshotIntoCachedMessages(snapshotMessages: UIMessage[], cachedMessages: UIMessage[]) {
-  if (snapshotMessages.length === 0) return cachedMessages;
-  if (cachedMessages.length === 0) return snapshotMessages;
-
-  const snapshotById = new Map(snapshotMessages.map((message) => [message.id, message]));
-  const cachedById = new Map(cachedMessages.map((message) => [message.id, message]));
-  const seen = new Set<string>();
-  const merged = snapshotMessages.map((message) => {
-    seen.add(message.id);
-    const snapshotMessage = snapshotById.get(message.id);
-    const cachedMessage = cachedById.get(message.id);
-    return snapshotMessage && cachedMessage
-      ? mergeSnapshotMessageWithCached(snapshotMessage, cachedMessage)
-      : message;
-  });
-
-  for (const message of cachedMessages) {
-    if (seen.has(message.id)) continue;
-    seen.add(message.id);
-    insertMessageByChronology(merged, message, cachedMessages);
-  }
-
-  return sortFullyTimestampedMessages(merged);
+  return mergeSnapshotAndLiveMessages(snapshotMessages, cachedMessages, { appendLiveOnlyMessages: true });
 }

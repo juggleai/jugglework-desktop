@@ -70,7 +70,7 @@ export function useTransitionProductTask(client: DenClient, scope: ProductTaskSc
   return useMutation({
     retry: false,
     onMutate: () => captureScope(scope),
-    mutationFn: (input: { taskId: string; operation: "complete" | "complete-whole" | "cancel" | "reopen" | "restore"; expectedVersion: number; idempotencyKey: string }) => client.transitionProductTask(scope!.organizationId, input.taskId, input.operation, {
+    mutationFn: (input: { taskId: string; operation: "complete" | "complete-whole" | "reopen-mine" | "cancel" | "reopen" | "restore"; expectedVersion: number; idempotencyKey: string }) => client.transitionProductTask(scope!.organizationId, input.taskId, input.operation, {
       expectedVersion: input.expectedVersion,
       idempotencyKey: input.idempotencyKey,
     }),

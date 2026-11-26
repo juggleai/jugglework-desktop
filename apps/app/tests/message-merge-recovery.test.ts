@@ -99,9 +99,36 @@ describe("stale snapshot part recovery", () => {
     expect(recover([], result)).toBe(result);
   });
 
-  test("leaves the non-preserving snapshot merge behavior unchanged", () => {
-    const snapshot = message("a", [text("p", "short")]);
-    const live = message("a", [text("p", "long live text")]);
-    expect(mergeSnapshotAndLiveMessages([snapshot], [live])[0]!.parts).toEqual([text("p", "long live text")]);
+  test("keeps longer live text only for the matching ID in an unfinished snapshot", () => {
+    const snapshot = message("a", [text("p", "short"), text("q", "same")]);
+    const liveOnly = text("live-only", "same");
+    const live = message("a", [text("p", "long live text"), liveOnly, text("q", "same")]);
+    expect(mergeSnapshotAndLiveMessages([snapshot], [live])[0]!.parts).toEqual([
+      text("p", "long live text"), liveOnly, text("q", "same"),
+    ]);
+  });
+
+  test("keeps one copy of a completed reply over duplicated or overlong cache entries", () => {
+    const identifiedStep = { type: "step-start" as const, providerMetadata: { opencode: { partId: "step" } } };
+    const answer = text("answer", "Deployment complete.");
+    const distinct = text("follow-up", "Deployment complete.");
+    const snapshot = {
+      ...message("a", [identifiedStep, answer, distinct]),
+      metadata: { opencode: { completed: 12 } },
+    };
+    const cached = message("a", [
+      identifiedStep, { type: "step-start" }, text("answer", "Deployment complete.Deployment complete."), answer, distinct,
+    ]);
+    const merged = mergeSnapshotAndLiveMessages([snapshot], [cached]);
+    expect(merged).toEqual([snapshot]);
+    expect(mergeSnapshotAndLiveMessages([snapshot], merged)).toEqual(merged);
+  });
+
+  test("cleans existing duplicate parts even when a stale snapshot adds nothing", () => {
+    const identifiedStep = { type: "step-start" as const, providerMetadata: { opencode: { partId: "step" } } };
+    const answer = text("answer", "Deployment complete.");
+    const snapshot = message("a", [identifiedStep, answer]);
+    const live = message("a", [identifiedStep, { type: "step-start" }, answer, { ...answer }]);
+    expect(recover([snapshot], [live])).toEqual([snapshot]);
   });
 });

@@ -51,6 +51,15 @@ describe("session render state", () => {
     expect(deriveRenderedSessionMessages({ snapshot, transcriptState: live, snapshotCurrent: false })).toEqual(live);
   });
 
+  test("deduplicates historical replies even without a current snapshot", () => {
+    const answer = { type: "text" as const, text: "Deployment complete.", providerMetadata: { opencode: { partId: "reply:text" } } };
+    const repeatedOnPurpose = { ...answer, providerMetadata: { opencode: { partId: "reply:other" } } };
+    const live: UIMessage[] = [{ id: "reply", role: "assistant", parts: [answer, { ...answer }, repeatedOnPurpose] }];
+    const rendered = deriveRenderedSessionMessages({ snapshot: null, transcriptState: live });
+    expect(rendered[0]?.parts).toEqual([answer, repeatedOnPurpose]);
+    expect(live[0]?.parts).toHaveLength(3);
+  });
+
   test("an out-of-order error follows its parent without moving result text into the collapsed process", () => {
     const note = (id: string): UIMessage => ({ id, role: "user", parts: [{ type: "text", text: id }] });
     const error = createSessionErrorUIMessage("second-failure", "Forbidden", { parentID: "second" });

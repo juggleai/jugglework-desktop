@@ -24,13 +24,7 @@ export type ReconcileTranscriptInput = {
  * truncation path instead of relying on snapshot absence.
  */
 export function reconcileTranscriptMessages(input: ReconcileTranscriptInput): UIMessage[] {
-  const current = input.currentMessages;
-  const snapshot = input.snapshotMessages;
-
-  if (current.length === 0) return snapshot;
-  if (snapshot.length === 0) return current;
-
-  return mergeSnapshotIntoCachedMessages(snapshot, current);
+  return mergeSnapshotIntoCachedMessages(input.snapshotMessages, input.currentMessages);
 }
 
 /**

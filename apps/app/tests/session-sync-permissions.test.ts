@@ -72,7 +72,7 @@ function uiMessage(id: string, role: "user" | "assistant", text: string): UIMess
   return {
     id,
     role,
-    parts: [{ type: "text", text, state: "done" }],
+    parts: [{ type: "text", text, state: "done", providerMetadata: { opencode: { partId: `part_${id}` } } }],
   };
 }
 
@@ -681,7 +681,7 @@ describe("session transcript sync", () => {
     ]));
 
     const transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
-    expect(transcript?.[1]?.parts[0]).toMatchObject({ text: "finished answer" });
+    expect(transcript?.[1]?.parts).toEqual(uiMessage("msg-assistant", "assistant", "finished answer").parts);
   });
 
   test("keeps live todos when an older snapshot arrives later", () => {

@@ -194,6 +194,35 @@ test("open branches reload after invalidation, retry pagination, and ignore stal
   } finally { await act(async () => renderer.unmount()); }
 });
 
+test("refreshing a paginated branch keeps its rows mounted until all visible pages are current", async () => {
+  const child = { ...hierarchyChild, subtaskCount: 0 };
+  const sibling = { ...child, id: "second-page-child" };
+  const initial = async (_id: string, cursor?: string) => cursor
+    ? { items: [sibling], nextCursor: "" }
+    : { items: [child], nextCursor: "old-cursor" };
+  let finishRefresh!: (page: DenProductTaskPage) => void;
+  const refresh = mock(async (_id: string, cursor?: string) => cursor
+    ? new Promise<DenProductTaskPage>((resolve) => { finishRefresh = resolve; })
+    : { items: [child], nextCursor: "new-cursor" });
+  const render = (revision: number, loader: typeof initial | typeof refresh) => hierarchyWorkbench({
+    tasks: [hierarchyParent], subtasksRevision: revision, onLoadSubtasks: loader,
+  });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(render(1, initial)); });
+  try {
+    const statusId = { "data-testid": `task-subtasks-status-${hierarchyParent.id}` };
+    await act(async () => { renderer.root.findByProps(statusId).findByType("button").props.onClick(); });
+    const secondRow = hierarchyRows(renderer)[2];
+    await act(async () => { renderer.update(render(2, refresh)); });
+    expect(refresh.mock.calls.map(([, cursor]) => cursor)).toEqual([undefined, "new-cursor"]);
+    expect(renderer.root.findAllByProps(statusId)).toHaveLength(0);
+    expect(hierarchyRows(renderer)[2]).toBe(secondRow);
+    await act(async () => { finishRefresh({ items: [{ ...sibling, status: "todo" }], nextCursor: "" }); });
+    expect(hierarchyRows(renderer)[2]).toBe(secondRow);
+    expect(secondRow.findByProps({ "aria-label": "Complete task" })).toBeDefined();
+  } finally { await act(async () => renderer.unmount()); }
+});
+
 test("a task list keeps its hierarchy independent of the system subtask visibility preference", async () => {
   const originalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   const storage = new Map<string, string>();

@@ -121,13 +121,13 @@ Each time a collection is opened, the Desktop SHALL populate its page semantics 
 - **WHEN** the user opens Assigned to me, Following, All tasks, Created by me, Assigned by me, or Completed
 - **THEN** the Desktop shows the same List/Board workbench and visibly populates that collection's editable initial filters
 
-When the user activates an editable Assignee cell, the List SHALL open a people picker with organization-member search, current-assignee indicators, and multi-select add/remove operations. For multiple assignees the footer SHALL show the fixed individual-completion rule rather than offering a way to complete for everyone. Member and permitted completion-rule changes SHALL use the latest version and permissions and preserve unrelated task fields and roles.
+When the user activates an editable Assignee cell, the List SHALL open a people picker with organization-member search, current-assignee indicators, and multi-select add/remove operations. For tasks and subtasks on a capable server, the footer SHALL show the current completion rule and let an authorized member manager switch between any-assignee and all-assignees completion. Member and permitted completion-rule changes SHALL use the latest version and permissions and preserve unrelated task fields and roles.
 
 #### Scenario: Scan assignees in the task list
 - **WHEN** a task row has assignees
 - **THEN** the Assignee cell shows an avatar and nickname for one assignee, overlapping avatars for two to four assignees, or the first three avatars followed by a `+N` count for the rest when there are five or more assignees
 - **AND** a tooltip on hover or keyboard focus shows every assignee nickname, including those represented by `+N`
-- **AND** an assignee's avatar shows a completion badge only when that member has an individual completion record or is the recorded actor of whole-task completion under `any_assignee`
+- **AND** an assignee's avatar shows a completion badge only when that member has an individual completion record or is the sole assignee and recorded completion actor under `any_assignee`
 
 #### Scenario: The creator completes a task assigned to someone else
 - **WHEN** the creator has permission to complete an `any_assignee` task assigned to another member and marks it complete
@@ -190,16 +190,16 @@ The Assigned to me tool area SHALL expose exactly New task and New task list. Ne
 - **THEN** the Desktop offers exactly New task and New task list
 
 ### Requirement: Multi-assignee completion behavior
-The leading completion control in a List row, including expanded subtasks, SHALL reflect the task status. An authorized click SHALL complete the whole open task or reopen a completed task. Personal progress appears on assignee avatars. The task detail’s Complete my part action SHALL use the signed-in assignee’s own completion record and the authoritative version.
+The leading completion control in a List row, including expanded subtasks, SHALL reflect the task status. For multiple assignees under the any-assignee rule the control SHALL toggle the task status directly, with no avatar checkmarks. Under the all-assignees rule it SHALL offer personal completion or personal reopening according to the caller’s progress, and a whole-task action. Completing for everyone while assignees remain unfinished and reopening for everyone SHALL require confirmation. Canceling SHALL leave all progress intact. Personal progress appears on assignee avatars. The task detail’s Complete my part action SHALL use the signed-in assignee’s own completion record and the authoritative version.
 
 #### Scenario: Old server reports whole-task completion for a multi-assignee task
-- **WHEN** a personal completion action reads an authoritative task response reporting `any_assignee` for a task with multiple assignees
+- **WHEN** a personal completion action reads an authoritative task response reporting `any_assignee` for a task with multiple assignees without the `multiAssigneePolicySupported` capability
 - **THEN** the Desktop explains that individual completion is not supported for the task and sends no completion mutation
 
 #### Scenario: Complete one portion of an all-assignees task
 - **WHEN** the current assignee completes an `all_assignees` task while another assignee remains incomplete
 - **THEN** the Desktop displays that the current assignee's portion is complete, leaves the task in the todo presentation, and does not send the same completion again
-- **AND** the detail action is labeled Complete my part before submission and shows the personal completion state while waiting for the others
+- **AND** the menu offers Reopen my part to the assignee who completed their part while others are still working
 
 ### Requirement: Task creation surfaces
 The Desktop SHALL support full creation in a compact dialog with a fixed, viewport-bounded height with a borderless title, assignees, a custom group for the selected task list, Today/Tomorrow/Other-time due-date actions, a searchable or creatable task list, description, and followers. The description editor SHALL be expanded by default at a fixed 168px height without changing the fixed 460px outer dialog height. Top and bottom dialog padding SHALL remain compact. Hovering or keyboard-focusing the leading assignee, due-time, task-list, or description icon in either the creation dialog or task detail panel SHALL show a tooltip identifying that field. Activating description SHALL expand an editor with a bottom toolbar for bold, strikethrough, italic, underline, numbered list, bulleted list, quote, link, emoji, mention, and image markup; applied markup SHALL be included in the submitted description. The follower affordance SHALL remain left-aligned at the bottom-left of the dialog across responsive breakpoints, with its leading icon adjacent to its label or selected-member summary and without a trailing dropdown arrow. The primary submit button SHALL be labeled Create. New tasks SHALL leave assignees and followers empty until the user explicitly selects them. Selecting any member other than the signed-in member SHALL automatically use members visibility; otherwise creation SHALL remain private. Creating a list in the dialog SHALL persist the list before submitting its returned ID with the task. Creating or choosing a non-default custom group SHALL persist that group in the selected task list settings and assign the created task through `customGroupAssignments`. Empty assignee cells SHALL present an add-person affordance, while empty start-time and due-time cells SHALL present muted calendar affordances instead of textual unavailable values.

@@ -231,6 +231,12 @@ buffering or one request per token. Disposal SHALL clear recovery timers and buf
 - **THEN** the delta is retained exactly once
 - **AND** a later terminal cumulative declaration corrects duplicate text and retains its done state
 
+#### Scenario: Live replay overlaps persisted reply parts
+- **WHEN** a live event and a snapshot project the same part, including a step-start marker
+- **THEN** both projections use the persisted part ID and reconciliation keeps one copy
+- **AND** any existing duplicate parts in cached history are displayed once
+- **AND** parts with distinct IDs remain visible even if their text is identical
+
 #### Scenario: Snapshot predates pending tokens
 - **WHEN** a stale snapshot contains a prefix of pending cumulative text
 - **THEN** the longer compatible content is retained

@@ -82,15 +82,13 @@ export function deriveContextEstimationMessages(input: {
   // Render the server snapshot as the history floor and layer live stream
   // updates on top. During prompt submission the live cache can briefly contain
   // only the new turn; it must not replace the older persisted transcript.
-  const messages = snapshotMessages.length > 0
-    ? mergeSnapshotAndLiveMessages(snapshotMessages, liveMessages, {
-        // A live-only record has no provable position relative to an active
-        // revert boundary. Overlapping live records can still update retained
-        // messages, but stale tail records must not be appended.
-        appendLiveOnlyMessages: !revertMessageId,
-        preserveLiveMessages: input.snapshotCurrent === false || (input.historyPages?.length ?? 0) > 0,
-      })
-    : liveMessages;
+  const messages = mergeSnapshotAndLiveMessages(snapshotMessages, liveMessages, {
+    // A live-only record has no provable position relative to an active
+    // revert boundary. Overlapping live records can still update retained
+    // messages, but stale tail records must not be appended.
+    appendLiveOnlyMessages: !revertMessageId,
+    preserveLiveMessages: input.snapshotCurrent === false || (input.historyPages?.length ?? 0) > 0,
+  });
 
   // Older clients may have left synthetic completion diagnostics in the live
   // cache. They are structured activity state, not assistant transcript, and

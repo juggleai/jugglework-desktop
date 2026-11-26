@@ -2328,6 +2328,107 @@ test.each([true, false])("list circle completes the whole shared task when the s
   } finally { await act(async () => renderer.unmount()); }
 });
 
+test.each([
+  { done: false, mine: false, personal: "Complete my part only", action: "complete" },
+  { done: false, mine: true, personal: "Reopen my part", action: "reopen-mine" },
+  { done: true, mine: true, personal: "Reopen my part", action: "reopen-mine" },
+] as const)("shared completion choices use the authoritative progress (done=$done, mine=$mine)", async ({ done, mine, personal, action }) => {
+  const detail = result({ ...task(4), completionPolicy: "all_assignees", assigneeCompletionActionsSupported: true, status: done ? "completed" : "todo" });
+  detail.members = [
+    { memberId: "member_self", role: "assignee", completedAt: mine ? detail.task.updatedAt : null },
+    { memberId: "member_two", role: "assignee", completedAt: done ? detail.task.updatedAt : null },
+  ];
+  detail.permissions.canCompleteWhole = true;
+  detail.permissions.canReopen = true;
+  detail.permissions.canComplete = !mine;
+  const transition = mock<DenClient["transitionProductTask"]>(async () => detail);
+  const client = connectedClient({
+    listProductTasks: async () => ({ items: [detail.task], membersByTaskId: { [detail.task.id]: detail.members }, nextCursor: "" }),
+    getProductTask: async () => detail,
+    transitionProductTask: transition,
+  });
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  sessionValues.set(taskSectionStorageKey(scope), "all");
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  try {
+    await settle();
+    const click = async (button: TestRenderer.ReactTestInstance) => { await act(async () => { button.props.onClick(); }); await settle(); };
+    const byLabel = (label: string) => renderer.root.findAllByType("button").find((button) => button.props.children === label)!;
+    const toggle = () => renderer.root.findByProps({ "aria-label": done ? "Reopen task" : "Complete task" });
+    const everyone = done ? "Reopen for everyone" : "Complete for all assignees";
+    await click(toggle());
+    await click(byLabel(everyone));
+    expect(transition).not.toHaveBeenCalled();
+    await click(byLabel("Cancel"));
+    expect(transition).not.toHaveBeenCalled();
+    await click(toggle());
+    await click(byLabel(personal));
+    expect(transition).toHaveBeenLastCalledWith("org_one", detail.task.id, action, { expectedVersion: 4, idempotencyKey: expect.any(String) });
+    await click(toggle());
+    await click(byLabel(everyone));
+    await click(byLabel(done ? "Confirm reopening" : "Confirm completion"));
+    expect(transition).toHaveBeenLastCalledWith("org_one", detail.task.id, done ? "reopen" : "complete-whole", { expectedVersion: 4, idempotencyKey: expect.any(String) });
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("detail shows my completed part and opens its actions while other assignees are still working", async () => {
+  const shared = result({ ...task(5), completionPolicy: "all_assignees", assigneeCompletionActionsSupported: true });
+  shared.members = [
+    { memberId: "member_self", role: "assignee", completedAt: shared.task.updatedAt },
+    { memberId: "member_two", role: "assignee", completedAt: null },
+  ];
+  shared.permissions.canComplete = false;
+  shared.permissions.canCompleteWhole = true;
+  shared.permissions.canReopen = true;
+  const transition = mock<DenClient["transitionProductTask"]>();
+  const client = connectedClient({ getProductTask: async () => shared, transitionProductTask: transition });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, shared.task.id)); });
+  try {
+    await settle();
+    const panel = renderer.root.findByProps({ "data-testid": "task-detail-panel" });
+    const button = panel.findAllByType("button").find((node) => React.Children.toArray(node.props.children).includes("My part is complete"))!;
+    expect(button.props.className).toContain("bg-green-4");
+    expect(button.props["aria-haspopup"]).toBe("menu");
+    expect(button.props.disabled).toBeFalsy();
+    expect(button.findAllByType("svg")).toHaveLength(2);
+    await act(async () => { button.props.onClick(); });
+    await settle();
+    const menu = renderer.root.findByProps({ "aria-label": "Task completion options" });
+    expect(menu.findAllByType("button").map((node) => node.props.children)).toEqual(["Reopen my part", "Complete for all assignees"]);
+    expect(transition).not.toHaveBeenCalled();
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("a multi-assignee any-rule task toggles directly without avatar checkmarks", async () => {
+  const detail = result({ ...task(1), completionPolicy: "any_assignee", assigneeCompletionActionsSupported: true, multiAssigneePolicySupported: true });
+  detail.members = ["member_self", "member_two"].map((memberId) => ({ memberId, role: "assignee" }));
+  detail.permissions.canReopen = true;
+  detail.permissions.canCompleteWhole = true;
+  const transition = mock<DenClient["transitionProductTask"]>(async (_org, _id, operation) => {
+    detail.task = { ...detail.task, status: operation === "complete" ? "completed" : "todo", completedByMemberId: operation === "complete" ? "member_self" : null, version: detail.task.version + 1 };
+    return { ...detail };
+  });
+  const client = connectedClient({
+    listProductTasks: async () => ({ items: [detail.task], membersByTaskId: { [detail.task.id]: detail.members }, nextCursor: "" }),
+    getProductTask: async () => ({ ...detail }),
+    transitionProductTask: transition,
+  });
+  sessionValues.set(taskSectionStorageKey({ baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" }), "all");
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  try {
+    await settle();
+    for (const label of ["Complete task", "Reopen task"]) {
+      await act(async () => { renderer.root.findByProps({ "aria-label": label }).props.onClick(); });
+      await settle();
+      expect(renderer.root.findAllByProps({ "data-testid": "task-assignee-completed" })).toHaveLength(0);
+    }
+    expect(transition.mock.calls.map((call) => call[2])).toEqual(["complete", "reopen"]);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
 test("workbench transitions stop when authoritative detail denies permission", async () => {
   const listed = task(1, "Protected task", "", "protected_task");
   const authoritative = result(listed);
@@ -2407,17 +2508,17 @@ test("workbench completion sends only lifecycle contract fields and refreshes th
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
-test("workbench completion rule loads the latest task and sends a CAS update", async () => {
-  const listed = task(1, "Rule task", "", "rule_task");
-  const authoritative = result({ ...listed, version: 7 });
-  authoritative.members = [{ memberId: "member_one", role: "assignee" }];
+test.each([true, undefined])("workbench switches a multi-assignee rule using the authoritative version (capability %s)", async (supported) => {
+  const listed = { ...task(1, "Rule task", "", "rule_task"), multiAssigneePolicySupported: supported };
+  let authoritative = result({ ...listed, version: 7, completionPolicy: "all_assignees" });
+  authoritative.members = ["member_one", "member_two", "member_three"].map((memberId) => ({ memberId, role: "assignee" }));
   const gets: string[] = [];
   const updates: Array<Parameters<DenClient["updateProductTask"]>[2]> = [];
   const client = connectedClient({
-    listProductTasks: async () => ({ items: [listed], membersByTaskId: { [listed.id]: authoritative.members }, nextCursor: "" }),
+    listProductTasks: async () => ({ items: [authoritative.task], membersByTaskId: { [listed.id]: authoritative.members }, nextCursor: "" }),
     listOrganizationMembers: async () => ({ members: [{ id: "member_one", userId: "user_one", role: "member", user: { id: "user_one", name: "Self", account: null, email: null, avatar: null } }], total: 1, limit: 200, offset: 0 }),
     getProductTask: async (_orgId, taskId) => { gets.push(taskId); return authoritative; },
-    updateProductTask: async (_orgId, _taskId, patch) => { updates.push(patch); return result({ ...authoritative.task, completionPolicy: patch.completionPolicy ?? authoritative.task.completionPolicy, version: 8 }); },
+    updateProductTask: async (_orgId, _taskId, patch) => { updates.push(patch); authoritative = { ...authoritative, task: { ...authoritative.task, completionPolicy: patch.completionPolicy!, version: authoritative.task.version + 1 } }; return authoritative; },
   });
   let renderer: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
@@ -2427,12 +2528,71 @@ test("workbench completion rule loads the latest task and sends a CAS update", a
     const assigned = sidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Assigned to me"))!;
     await act(async () => { assigned.props.onClick(); });
     await settle();
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-completion-policy-rule_task-all_assignees" }).props.onClick(); });
-    await settle();
-    expect(gets).toEqual(["rule_task"]);
-    expect(updates).toHaveLength(1);
-    expect(updates[0]).toEqual({ expectedVersion: 7, idempotencyKey: expect.any(String), completionPolicy: "all_assignees" });
+    for (const policy of ["any_assignee", "all_assignees"] as const) {
+      await act(async () => { renderer!.root.findByProps({ "data-testid": `task-completion-policy-rule_task-${policy}` }).props.onClick(); });
+      await settle();
+      const selected = renderer!.root.findByProps({ "data-testid": `task-completion-policy-rule_task-${policy}` });
+      expect(selected.findAll((node) => node.type === "svg")).toHaveLength(1);
+    }
+    expect(gets).toEqual(["rule_task", "rule_task"]);
+    expect(updates).toEqual([
+      { expectedVersion: 7, idempotencyKey: expect.any(String), completionPolicy: "any_assignee" },
+      { expectedVersion: 8, idempotencyKey: expect.any(String), completionPolicy: "all_assignees" },
+    ]);
   } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test.each(["reject", "keep original"] as const)("the assignee picker reports an unsupported rule when a legacy server chooses to %s", async (outcome) => {
+  const detail = result({ ...task(2), completionPolicy: "all_assignees" });
+  detail.members = ["member_self", "member_two"].map((memberId) => ({ memberId, role: "assignee" }));
+  const patch = mock<DenClient["updateProductTask"]>(async () => {
+    if (outcome === "reject") throw new DenApiError(400, "invalid_task_request", "The task request is invalid.");
+    return detail;
+  });
+  const client = connectedClient({ getProductTask: async () => detail, updateProductTask: patch });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, detail.task.id)); });
+  try {
+    await settle();
+    const panel = renderer.root.findByProps({ "data-testid": "task-detail-panel" });
+    await act(async () => { panel.findByProps({ "data-testid": "task-completion-policy-task_one-any_assignee" }).props.onClick(); });
+    await settle();
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(toastErrors).toContain("This server version does not support changing the completion rule for tasks with multiple assignees.");
+    expect(panel.findByProps({ "data-testid": "task-completion-policy-task_one-all_assignees" }).findAll((node) => node.type === "svg")).toHaveLength(1);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("an assignee can finish a shared task from detail after switching to any-assignee completion", async () => {
+  let detail = result({ ...task(3), completionPolicy: "all_assignees", multiAssigneePolicySupported: true });
+  detail.members = ["member_self", "member_two"].map((memberId) => ({ memberId, role: "assignee" }));
+  const transitions: string[] = [];
+  const client = connectedClient({
+    getProductTask: async () => detail,
+    updateProductTask: async (_org, _id, patch) => {
+      detail = { ...detail, task: { ...detail.task, completionPolicy: patch.completionPolicy!, version: 4 } };
+      return detail;
+    },
+    transitionProductTask: async (_org, _id, operation, input) => {
+      transitions.push(operation);
+      expect(input.expectedVersion).toBe(4);
+      detail = { ...detail, task: { ...detail.task, status: "completed", version: 5 } };
+      return detail;
+    },
+  });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client, detail.task.id)); });
+  try {
+    await settle();
+    const panel = renderer.root.findByProps({ "data-testid": "task-detail-panel" });
+    const action = (label: string) => panel.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes(label));
+    expect(action("Complete my part")).toBeDefined();
+    await act(async () => { panel.findByProps({ "data-testid": "task-completion-policy-task_one-any_assignee" }).props.onClick(); });
+    await settle();
+    await act(async () => { action("Complete task")!.props.onClick(); });
+    await settle();
+    expect(transitions).toEqual(["complete"]);
+  } finally { await act(async () => renderer.unmount()); }
 });
 
 test("workbench time update loads the latest task permission and sends a CAS patch", async () => {

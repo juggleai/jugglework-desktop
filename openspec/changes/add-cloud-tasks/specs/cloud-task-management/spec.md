@@ -8,7 +8,7 @@ The system SHALL store tasks in JuggleWork Server as the sole write authority an
 - **THEN** the server creates the task and returns its stable internal ID, organization-scoped display number, and version
 
 ### Requirement: Task fields and lifecycle
-The system SHALL support a required title, optional description, priority, start time, due time, assignees, followers, visibility, list membership, reminders, and `todo`, `completed`, and `canceled` states. Tasks with multiple assignees SHALL use effective `all_assignees` completion even when their stored compatibility policy is `any_assignee`. The API SHALL report the effective rule and retain existing rules for zero or one assignee.
+The system SHALL support a required title, optional description, priority, start time, due time, assignees, followers, visibility, list membership, reminders, and `todo`, `completed`, and `canceled` states. Tasks with multiple assignees SHALL default to `all_assignees` until a member manager explicitly selects a completion rule. Under `any_assignee`, the first completion by a current assignee SHALL complete the task. The API SHALL report the effective rule and retain existing rules for zero or one assignee.
 
 #### Scenario: Create an unassigned task
 - **WHEN** a member creates a task without assignees
@@ -16,10 +16,10 @@ The system SHALL support a required title, optional description, priority, start
 
 #### Scenario: Mark a shared task complete from List
 - **WHEN** an authorized editor uses the task row’s whole-task completion control
-- **THEN** the task changes to completed and records the actor while preserving each assignee’s personal progress
+- **THEN** the task changes to completed and records the actor and marks every outstanding assignee complete under the all-assignees rule
 
 #### Scenario: Each assignee completes only their portion
-- **WHEN** a current assignee completes a task with multiple assignees, including a legacy task stored with `any_assignee`
+- **WHEN** a current assignee completes a task using the effective `all_assignees` rule
 - **THEN** the system records only that assignee's completion while keeping the task in `todo` until every current assignee has completed their portion
 - **AND THEN** the final assignee completion changes the single task state to `completed`
 
@@ -28,7 +28,7 @@ The system SHALL support a required title, optional description, priority, start
 - **THEN** the system rejects the operation without changing completion progress, even for the creator or a list editor who is not assigned
 
 #### Scenario: Start a new completion round
-- **WHEN** a task is reopened or its assignee set or effective completion policy changes
+- **WHEN** a task is reopened for everyone or an open task’s assignee set or effective completion policy changes
 - **THEN** the system clears per-assignee progress; changing only a stored policy that does not affect the effective rule does not clear progress
 
 ### Requirement: Task visibility and authorization
