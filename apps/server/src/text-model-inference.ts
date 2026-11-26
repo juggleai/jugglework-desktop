@@ -90,18 +90,13 @@ export function describeConfiguredTextModel(effective: Record<string, unknown>, 
   return protocol ? { protocol, baseURL, provider, model, configured, upstreamModelId, headers } : null;
 }
 
-/** Reasoning capability is not a requirement to enable thinking. The native
- * protocols cap total output; compatible OpenAI reasoning models need the newer
- * completion cap instead of legacy max_tokens. Unknown compatible dialects skip. */
-export function textModelIneligibility(protocol: TextProtocol, model: Record<string, any>, provider: Record<string, any>, upstreamModelId: string) {
+/** 只排除无法产出文本的模型。思考能力不构成拦截：请求照常发出，
+ * 思考耗尽额度或输出不合格时，normalizeSuggestion 会丢弃结果，用户看不到建议。 */
+export function textModelIneligibility(model: Record<string, any>) {
   if (model.imageGeneration !== undefined || model.mediaGeneration !== undefined ||
     record(record(model.capabilities).output).text === false ||
     (Array.isArray(record(model.modalities).output) && !model.modalities.output.includes("text"))) return "model_non_text";
   if (typeof record(model.limit).output === "number" && model.limit.output < 512) return "model_output_limit";
-  if ([model.options, provider.options, model.api].some(options => Object.entries(record(options)).some(([key, value]) =>
-    /thinking|reasoning/i.test(key) && !(value === false || value === "none" || record(value).type === "disabled")))) return "model_reasoning_options";
-  if (protocol === "openai-completions" && !usesCompletionTokenLimit(upstreamModelId) &&
-    (model.reasoning === true || record(model.capabilities).reasoning === true || /reasoner|thinking/i.test(upstreamModelId))) return "model_reasoning_protocol";
   return null;
 }
 
@@ -118,7 +113,7 @@ export function createTextModelResolver(options: { config: ServerConfig; env: En
     if (!selected) { diagnose?.("model_configuration_unavailable"); return null; }
     if (!live.connected.includes(ref.providerID)) { diagnose?.("provider_disconnected"); return null; }
     const model = { ...record(live.all.find(item => item.id === ref.providerID)?.models?.[ref.modelID]), ...selected.model };
-    const ineligible = textModelIneligibility(selected.protocol, model, selected.provider, selected.upstreamModelId);
+    const ineligible = textModelIneligibility(model);
     if (ineligible) { diagnose?.(ineligible); return null; }
     const envKeys = Array.isArray(selected.configured.env) ? selected.configured.env.filter((key: unknown): key is string => typeof key === "string") : [];
     const beforeDispatch = credentials.beforeDispatch(workspace.id, ref.providerID, selected.configured);

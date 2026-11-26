@@ -205,7 +205,7 @@ test("disabled/blacklisted/non-text/unsupported/credentialless models do not fal
   const variants = [
     { disabled_providers: ["test-provider"] }, { enabled_providers: [] },
     ...[{ blacklist: ["text"] }, { whitelist: ["other"] }, { npm: "@ai-sdk/google" }, { env: [] },
-      { models: { text: { imageGeneration: { textToImage: true } } } }, { models: { text: { reasoning: true, options: { thinking: { type: "enabled", budgetTokens: 1024 } } } } },
+      { models: { text: { imageGeneration: { textToImage: true } } } },
       { models: { text: { capabilities: { output: { text: false } } } } }].map(patch => ({ provider: { "test-provider": { ...f.provider, ...patch } } })),
   ];
   for (const patch of variants) {
@@ -219,6 +219,7 @@ test.each([
   ["anthropic", "@ai-sdk/anthropic", "claude-sonnet-4-5"],
   ["responses", "@ai-sdk/openai", "gpt-6.1-sol"],
   ["chat", "@ai-sdk/openai-compatible", "gpt-6.1-sol"],
+  ["chat", "@ai-sdk/openai-compatible", "claude-sonnet-5.5"],
 ] as const)("%s: real SDK capability shape reaches one bounded request on the selected model", async (protocol, npm, upstreamModelId) => {
   const f = await fixture();
   f.state.protocol = protocol; f.state.upstreamModelId = upstreamModelId;
@@ -239,7 +240,7 @@ test("route diagnostics identify silent skips without body, model config, creden
     [{ source: "unknown" }, "ineligible_turn", "context_unknown_text_source"],
     [{ finish: "tool-calls" }, "ineligible_turn", "context_assistant_not_successful"],
     [{ permission: true }, "ineligible_turn", "interaction_waiting"],
-    [{ liveModels: { text: { reasoning: true } } }, "model_unavailable", "model_reasoning_protocol"],
+    [{ liveModels: { text: { capabilities: { output: { text: false } } } } }, "model_unavailable", "model_non_text"],
   ] as const) {
     const previous = { ...f.state };
     Object.assign(f.state, patch);

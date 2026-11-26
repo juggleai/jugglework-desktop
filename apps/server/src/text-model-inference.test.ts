@@ -50,18 +50,13 @@ test("unsupported or unresolved routing configuration skips instead of dropping 
   expect(describe({ provider: { npm: "@ai-sdk/google-vertex/anthropic" } })).toBeNull();
 });
 
-test("reasoning capability does not mandate thinking on bounded native protocols or GPT completion caps", () => {
-  for (const model of [{ reasoning: true }, { capabilities: { reasoning: true, output: { text: true } } }]) {
-    expect(textModelIneligibility("anthropic-messages", model, {}, "claude-sonnet-4-5")).toBeNull();
-    expect(textModelIneligibility("openai-responses", model, {}, "gpt-6.1-sol")).toBeNull();
-    expect(textModelIneligibility("openai-completions", model, {}, "gpt-6.1-sol")).toBeNull();
-    expect(textModelIneligibility("openai-completions", model, {}, "unknown-thinking-dialect")).toBe("model_reasoning_protocol");
+test("reasoning capability or options never make a text model ineligible", () => {
+  for (const model of [{ reasoning: true }, { capabilities: { reasoning: true, output: { text: true } } },
+    { options: { thinking: { type: "enabled", budgetTokens: 1024 } } }, { options: { reasoningEffort: "high" } }]) {
+    expect(textModelIneligibility(model)).toBeNull();
   }
-  expect(textModelIneligibility("anthropic-messages", { reasoning: true, options: { thinking: { type: "disabled" } } }, {}, "claude-sonnet-4-5")).toBeNull();
-  for (const options of [{ thinking: { type: "enabled", budgetTokens: 1024 } }, { reasoningEffort: "high" }]) {
-    expect(textModelIneligibility("anthropic-messages", { options }, {}, "claude-sonnet-4-5")).toBe("model_reasoning_options");
-    expect(textModelIneligibility("openai-responses", {}, { options }, "gpt-6.1-sol")).toBe("model_reasoning_options");
-  }
+  expect(textModelIneligibility({ capabilities: { output: { text: false } } })).toBe("model_non_text");
+  expect(textModelIneligibility({ limit: { output: 256 } })).toBe("model_output_limit");
 });
 
 for (const [protocol, npm, endpoint] of [
