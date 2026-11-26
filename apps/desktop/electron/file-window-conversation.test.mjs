@@ -19,6 +19,25 @@ const own = { workspaceId: "ws", sessionId: "ses", runId: "run" };
 const interaction = { id: "permission", sessionID: "ses", targetSessionId: "ses", rootSessionId: "ses", parentSessionId: null, ancestryPath: ["ses"], protocol: "v2" };
 const providers = (id = "provider", source = "api", models = ["model"]) => ({ all: [{ id, source, models: Object.fromEntries(models.map((id) => [id, { id }])) }], connected: [id], default: {} });
 
+test("文件窗口保留 Composer 文本来源，但拒绝未知来源、额外字段和伪造引用", () => {
+  const start = (metadata) => {
+    const input = prompt();
+    input.prompt.parts[0].metadata = metadata;
+    return authorizeFileWindowFetch(entry(), access, url("sessions/ses/runs/start"), post(input));
+  };
+  for (const composerTextSource of ["user", "capability", "app", "attachment"]) {
+    const request = start({ composerTextSource });
+    assert.equal(request.conversation.kind, "start");
+    assert.deepEqual(JSON.parse(request.init.body.toString()).prompt.parts[0].metadata, { composerTextSource });
+  }
+  for (const metadata of [
+    { composerTextSource: "unknown" }, { composerTextSource: ["user"] },
+    { composerTextSource: "user", referenceIds: ["forged"] },
+    { composerTextSource: "user", officeSelectionGroup: {} },
+    { cloudDocSourceText: "unverified context" },
+  ]) assert.throws(() => start(metadata), { message: "文件窗口会话请求不可用" });
+});
+
 test("文件窗口选区只能使用 Main 投递的当前文档引用，发送与校验/释放使用同一身份边界", () => {
   const e = { ...entry(), tabs: [{ path: "report.docx", documentId: "doc" }], officeReferences: new Map([["ref", "doc"]]) };
   const input = prompt();

@@ -133,6 +133,7 @@ test("旧服务和失联观测分别采样", async () => {
 });
 
 test("收到 loading 后等待真实正文，隐藏期间不结算可交互耗时", async () => {
+  /** @type {import('./cloud-docs-startup.mjs').CloudDocsObservationRequest} */
   let request;
   let now = 0;
   const samples = [];

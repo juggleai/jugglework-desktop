@@ -125,6 +125,16 @@ function validateOfficeDisplay(metadata, prompt) {
   }
 }
 
+function validateTextMetadata(metadata, prompt) {
+  if (record(metadata) && Object.hasOwn(metadata, "composerTextSource")) {
+    // Shared Composer provenance is a label, never an Office reference or permission.
+    keys(metadata, ["composerTextSource"]);
+    if (!["user", "capability", "app", "attachment"].includes(metadata.composerTextSource)) throw conversationDenied();
+    return;
+  }
+  validateOfficeDisplay(metadata, prompt);
+}
+
 /** 文件窗口只可把登记云文档标签作为本轮范围，不能伪造其他组织或未打开的可写目标。 */
 function validateCloudDocTurn(entry, turn) {
   if (turn === undefined) return;
@@ -161,7 +171,7 @@ function validatePrompt(entry, prompt) {
     keys(part, ["id", "type", "text", "synthetic", "metadata"]);
     if (part.type !== "text" || typeof part.text !== "string" || part.text.length > 48_000 ||
         (part.id !== undefined && !identifier(part.id)) || (part.synthetic !== undefined && typeof part.synthetic !== "boolean")) throw conversationDenied();
-    if (part.metadata !== undefined) validateOfficeDisplay(part.metadata, prompt);
+    if (part.metadata !== undefined) validateTextMetadata(part.metadata, prompt);
   }
   const refs = prompt.officeSelectionRefs ?? [];
   validateOfficeReferences(entry, refs);

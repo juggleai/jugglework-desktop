@@ -796,3 +796,10 @@ At operator direction, the later Git closeout used a new detached worktree at th
 - [x] 47.4 Record the standing-policy dispositions and migration caveats. No lower-version immutable-target or Stable-feed upgrade canary was attempted. Both were skipped, as were mutable Cache-Control mutation and required-value validation. The observed `public, max-age=31536000` can leave old responses in client/CDN caches despite refresh and exact read-back. Existing macOS ARM64 Stable users must manually install the signed, notarized `1.2.41` DMG to switch feeds. This is not proof of install, relaunch, retained state, or fleet cache convergence. The new Stable feed had no previous bytes to restore.
 
 Git closeout is documentation-only. Final push and fast-forward SHAs are reported separately from the commit itself.
+
+## 48. Stable macOS ARM64 1.2.42 — candidate preparation
+
+- [x] 48.1 Synchronize App, Desktop and embedded Server to `1.2.42`; record isolated source validation in [the preparation record](./source-freeze-1.2.42.md).
+- [ ] 48.2 Confirm production predecessor/bucket/lock preflight, review the candidate and freeze the exact release commit.
+- [ ] 48.3 Build and verify the final signed and notarized native package, including packaged updater and media acceptance.
+- [ ] 48.4 Verify immutable publication and serialized Stable promotion against the approved `1.2.41` predecessor, then record authorized downstream rollout separately.

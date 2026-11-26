@@ -22,7 +22,12 @@ function validDuration(value) {
   return Number.isFinite(value) && value >= 0 && value <= 120_000 ? Math.round(value) : undefined;
 }
 
-/** 为每个原生视图保留一次启动样本及一个正文观测。 */
+/** @typedef {{instanceId:string,contextId:string,observationId:string,targetKind:string,workspaceId:string,docId:string|null}} CloudDocsObservationRequest */
+
+/**
+ * 为每个原生视图保留一次启动样本及一个正文观测。
+ * @param {{instanceId:string,send:(request:CloudDocsObservationRequest)=>void,record:(sample:object)=>void,launchMs?:number,now?:()=>number,startedAt?:number,timeoutMs?:number,path?:string,workTiming?:{runtimeConfigMs?:number,launchRequestMs?:number}}} options
+ */
 export function createCloudDocsStartup({
   instanceId, send, record, launchMs, now = () => performance.now(), startedAt = now(), timeoutMs = 5_000,
   path = "bootstrap", workTiming,

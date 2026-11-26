@@ -55,7 +55,7 @@ export function validateCloudDocsLaunch(input) {
 /**
  * 独立受限原生视图承载云文档，来源／账号隔离，不复用通用浏览器会话。
  * 刷新恢复和启动预热默认启用，各自环境变量设为 0 后在下次进程启动时关闭。
- * @param {{getWindow:()=>any,getWindows?:()=>any[],onDocumentChanged?:(window:any,instanceId:string,document:{tenantId:string,workspaceId:string,docId:string,title:string})=>void,onOpenInNewTab?:(request:{sourceInstanceId:string,sourceServerOrigin:string,sourceUserId:string,document:{tenantId:string,workspaceId:string,docId:string,title:string}})=>void,attachments?:{open:(input:any)=>Promise<any>,clearScope:(scope:any)=>Promise<void>,clearContext?:(scope:any,contextId:string)=>Promise<void>}}} options 宿主窗口、受限附件访问与独立标签入口
+ * @param {{getWindow:()=>any,getWindows?:()=>any[],onDocumentChanged?:(window:any,instanceId:string,document:{tenantId:string,workspaceId:string,docId:string,title:string})=>void,onOpenInNewTab?:(request:{sourceInstanceId:string,sourceServerOrigin:string,sourceUserId:string,document:{tenantId:string,workspaceId:string,docId:string,title:string}})=>void,attachments?:{open:(input:any)=>Promise<any>,clearScope:(scope:any)=>Promise<void>,clearContext?:(scope:any,contextId:string)=>Promise<void>},recentPath?:string,liveResume?:boolean,startupWarmup?:boolean}} options 宿主窗口、受限附件访问与独立标签入口
  */
 export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow()], onDocumentChanged, onOpenInNewTab, attachments, recentPath, liveResume = process.env.JUGGLEWORK_DOCS_LIVE_RESUME !== "0", startupWarmup = process.env.JUGGLEWORK_DOCS_STARTUP_WARMUP !== "0" }) {
   const currents = new Map();
@@ -411,6 +411,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
         backgroundThrottling: false,
       },
     });
+    /** @type {{ownerWindow:typeof win,view:typeof view,input:typeof input,target:typeof target,nativeSession:typeof nativeSession,origin:string,ready:boolean,denied:boolean,routeEpoch:number,warmup:boolean,hostBinding?:string,startup?:ReturnType<typeof createCloudDocsStartup>,hasBeenReady?:boolean}} */
     const item = {
       ownerWindow: win,
       view,

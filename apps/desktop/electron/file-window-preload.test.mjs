@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { test } from "node:test";
 import { EventEmitter } from "node:events";
-import { CALENDAR_WINDOW_GESTURE, installCalendarWindowGestures } from "./calendar-window-gestures.mjs";
+import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { build } from "esbuild";
 
 test("shared UI initialization is harmless but unrelated desktop IPC stays denied", async () => {
   /** @type {{ bridge?: { invokeDesktop(command: string, ...args: unknown[]): Promise<unknown> } }} */
@@ -117,16 +119,25 @@ test("only Main preload exposes stop preparation and acknowledges cleanup withou
   let bridge;
   const ipc = Object.assign(new EventEmitter(), { invoke: async (...args) => { calls.push(args); }, sendSync: () => null });
   const calls = [];
-  const load = (name) => vm.runInNewContext(readFileSync(new URL(name, import.meta.url), "utf8")
-    .replace(/^import .* from "electron";$/m, "")
-    .replace('import { CALENDAR_WINDOW_GESTURE, installCalendarWindowGestures } from "./calendar-window-gestures.mjs";', ""), {
-    CALENDAR_WINDOW_GESTURE, installCalendarWindowGestures,
-    process: { platform: "darwin", versions: {} }, contextBridge: { exposeInMainWorld(_name, value) { bridge = value; } }, ipcRenderer: ipc,
-  });
-  load("./file-window-preload.mjs");
+  const load = async (name) => {
+    // Resolve the real ESM helpers; mock only the explicit host imports in the VM.
+    const { outputFiles: [bundle] } = await build({
+      entryPoints: [fileURLToPath(new URL(name, import.meta.url))], bundle: true,
+      format: "cjs", platform: "node", external: ["electron"], write: false,
+    });
+    vm.runInNewContext(bundle.text, {
+      process: { platform: "darwin", versions: {} },
+      require(specifier) {
+        if (specifier === "electron") return { contextBridge: { exposeInMainWorld(_name, value) { bridge = value; } }, ipcRenderer: ipc };
+        if (specifier === "node:crypto") return { randomUUID };
+        throw new Error(`Unexpected test VM dependency: ${specifier}`);
+      },
+    }, { filename: name });
+  };
+  await load("./file-window-preload.mjs");
   assert.equal(bridge.fileWindow.onSessionStopRequest, undefined);
   // Production Main preload includes a synchronous bootstrap; supply its harmless test response.
-  load("./preload.mjs");
+  await load("./preload.mjs");
   const received = [];
   let finishCleanup = () => {};
   const cleanup = new Promise((resolve) => { finishCleanup = () => resolve(undefined); });

@@ -1,4 +1,7 @@
-/** 将原生视图的实际路由转换成 Work 的启动目标。 */
+/**
+ * 将原生视图的实际路由转换成 Work 的启动目标。
+ * @returns {{kind:"page",workspaceId:string,pageId:string}|{kind:"home"}|null}
+ */
 export function cloudDocsResumeTarget(content) {
   if (!content) return null;
   return content.docId
