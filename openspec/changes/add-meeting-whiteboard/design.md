@@ -7,7 +7,7 @@
 ## 评审修正
 
 1. **Excalidraw 不能直接渲染进 Portal。** 0.18.1 在全局 `window`/`document` 上绑定了绘制必需的事件：按下后的 `pointermove`/`pointerup`/`keydown`/`keyup` 绑在 `window`；`copy`/`paste`/`cut` 及 `document.fonts` 的字体加载绑在 `document`。直接 Portal 进会议窗口时，这些都会落到主窗口，拖拽绘制、快捷键和粘贴会失效。
-2. **白板不另开窗口。** 产品确认白板与屏幕共享一样显示在会议窗口的共享区域。因此白板页面 `whiteboard.html` 以同源 `iframe` 嵌入共享区域：iframe 有自己的 `window`/`document`，满足第 1 点；它仍在会议窗口内，不产生新的原生窗口。（早期方案用独立 `BrowserWindow` 加 `WebFrameMain` 采集，已废弃。）
+2. **统一共享交互修正。** 本轮产品要求共享成功后会议窗口退后台，因此白板使用独立同源原生窗口，由主渲染进程 Portal 托管 Stage，Stage 内仍用同源 iframe 隔离 Excalidraw 的全局事件。镜像视频链路不变，不回到 WebFrameMain 系统采集。关闭白板只停止共享。底部共享工具栏独立于会议焦点，停止共享后恢复会议窗口。
 3. **画面来源是画布镜像，不经过系统采集。** 白板页面把 Excalidraw 的场景画布逐帧绘制到一张输出画布，`canvas.captureStream(15)` 得到视频轨，再走 `MeetingMedia` 的 ZEGO 自定义流发布。好处：不需要系统屏幕录制权限，不经过选择器的主进程回调，会议窗口被遮挡、隐藏或收成小窗时画面不受影响（会议窗口 `backgroundThrottling: false`）。
 4. **字体必须随包。** Excalidraw 先按 `window.EXCALIDRAW_ASSET_PATH` 拼本地地址，再追加 `https://esm.sh/...` 作为兜底源。构建把 `dist/prod/fonts` 打进 `whiteboard-assets/`，`whiteboard.html` 在 `<head>` 设置该路径。
 

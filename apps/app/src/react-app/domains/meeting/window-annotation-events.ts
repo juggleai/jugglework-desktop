@@ -4,7 +4,7 @@ import type { WindowShareCompositor } from "./window-share-compositor";
 export type WindowAnnotationScene = { size: ScreenSize; elements: AnnotationElement[]; lasers: { stroke: AnnotationStroke; opacity: number }[] };
 type CloseReason = "manual" | "resized" | "target-closed" | "tracking-lost";
 type Event = { captureId: string; annotationId: string; seq: number } & (
-  { kind: "opened" | "paused" | "resumed" } | { kind: "geometry"; width: number; height: number } |
+  { kind: "opened" | "paused" | "resumed" | "geometry-pending" } | { kind: "geometry"; width: number; height: number } |
   { kind: "scene"; scene: WindowAnnotationScene } | { kind: "closed"; reason: CloseReason });
 
 // Shared presentation values for the local Konva overlay and the capture renderer.
@@ -33,27 +33,46 @@ export function annotationArrowHeadSize(strokeWidth: number) {
   return Math.max(12, strokeWidth * 3.5);
 }
 
-export function createWindowAnnotationReceiver(captureId: string, output: Pick<WindowShareCompositor, "setOverlay" | "confirmSize" | "setPaused">, onClose: (reason: CloseReason) => void) {
+export function createWindowAnnotationReceiver(captureId: string, output: Pick<WindowShareCompositor, "setOverlay" | "confirmSize" | "setGeometryPending" | "setPaused">, onClose: (reason: CloseReason) => void) {
   let current: string | undefined;
   let seq = 0;
+  const retired = new Set<string>();
+  const reset = () => {
+    output.setOverlay(null);
+    output.confirmSize(0, 0);
+    output.setGeometryPending(false);
+    output.setPaused(false);
+  };
   // undefined = not yet needed; null = unavailable (do not retry each frame).
   let scratch: CanvasRenderingContext2D | null | undefined;
-  return (event: Event) => {
-    if (event.captureId !== captureId || !Number.isSafeInteger(event.seq)) return;
+  const receive = (event: Event) => {
+    if (event.captureId !== captureId || !Number.isSafeInteger(event.seq) || event.seq <= 0 ||
+        !event.annotationId || retired.has(event.annotationId)) return;
     if (event.kind === "opened") {
+      // Opened is a session boundary, never a way to rewind an existing session.
+      if (event.annotationId === current) return;
+      if (current) retired.add(current);
       current = event.annotationId;
       seq = event.seq;
-      output.confirmSize(0, 0);
-      output.setOverlay(null);
+      reset();
       return;
     }
     if (event.annotationId !== current || event.seq <= seq) {
-      if (!current && event.kind === "closed" && event.reason === "target-closed") onClose(event.reason);
+      if (!current && event.kind === "closed" && event.reason === "target-closed") {
+        retired.add(event.annotationId);
+        onClose(event.reason);
+      }
       return;
     }
     seq = event.seq;
     switch (event.kind) {
-      case "geometry": output.confirmSize(event.width, event.height); break;
+      case "geometry-pending": output.setGeometryPending(true); break;
+      case "geometry":
+        if (Number.isFinite(event.width) && Number.isFinite(event.height) && event.width > 0 && event.height > 0) {
+          output.confirmSize(event.width, event.height);
+          output.setGeometryPending(false);
+        }
+        break;
       case "scene": output.setOverlay((ctx, w, h) => {
         if (!event.scene.elements.length && !event.scene.lasers.length) return;
         if (scratch === undefined) scratch = ctx.canvas.ownerDocument.createElement("canvas").getContext("2d");
@@ -62,12 +81,13 @@ export function createWindowAnnotationReceiver(captureId: string, output: Pick<W
       case "paused": output.setPaused(true); break;
       case "resumed": output.setPaused(false); break;
       case "closed":
+        retired.add(event.annotationId);
         current = undefined;
-        output.setOverlay(null);
-        output.setPaused(false);
+        reset();
         onClose(event.reason);
     }
   };
+  return receive;
 }
 
 function drawScene(video: CanvasRenderingContext2D, ink: CanvasRenderingContext2D, scene: WindowAnnotationScene, width: number, height: number) {

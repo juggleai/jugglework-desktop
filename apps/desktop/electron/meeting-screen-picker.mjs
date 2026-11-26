@@ -4,12 +4,14 @@ import { createHash, randomUUID } from "node:crypto";
 // Confirming a thumbnail resolves this exact request; closing never captures.
 export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getMeetingWindow, getDisplays = () => [],
   platform = process.platform,
+  activateWindowsWindow = async (/** @type {import('@jugglework/types/desktop-ipc').MeetingWindowShareTarget} */ _target) => false,
   resolveWindowIdentity = async (/** @type {number} */ _windowId) => /** @type {{pid: number} | null} */ (null),
   resolveWindowsIdentity = async (/** @type {string} */ _hwnd) => /** @type {{pid: number, processStartedAt: string} | null} */ (null), timeoutMs = 120_000 }) {
   let pending = null;
   // The renderer can read, but cannot set, the source verified by the picker.
   /** @type {{kind: 'screen', displayId: number} | import('@jugglework/types/desktop-ipc').MeetingWindowShareTarget | null} */
   let shared = null;
+  let activationAttempted = false;
   function notify(channel, requestId) {
     const main = getMainWindow();
     if (main && !main.isDestroyed() && !main.webContents.isDestroyed()) main.webContents.send(channel, { requestId });
@@ -47,11 +49,21 @@ export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getM
       return shared?.kind === 'window' ? { ...shared } : null;
     },
     clearShared() { shared = null; },
+    windowShareReady(event, { captureId, ready }) {
+      assertCaller(event);
+      if (ready !== true || activationAttempted || platform !== 'win32' || shared?.kind !== 'window' ||
+          shared.platform !== 'win32' || shared.captureId !== captureId) return;
+      // Consume before dispatch, including rejection: a capture gets one attempt only.
+      activationAttempted = true;
+      try { Promise.resolve(activateWindowsWindow({ ...shared })).catch(() => {}); }
+      catch { /* Foreground failure must never affect an already published share. */ }
+    },
     handle(request, callback) {
       const main = getMainWindow();
       const owner = [main, getMeetingWindow()].find(w => w && !w.isDestroyed() && request.frame === w.webContents.mainFrame);
       if (!owner || !main || !request.userGesture || pending) { callback(null); return; }
       shared = null;
+      activationAttempted = false;
       const current = { id: randomUUID(), owner, main, frame: request.frame, callback, allowed: new Set(), selecting: false, timer: null, cancel: null };
       current.cancel = () => finish(current);
       pending = current;

@@ -1,6 +1,10 @@
 import { createMeetingScreenPicker } from "./meeting-screen-picker.mjs";
 import { createMeetingAnnotation } from "./meeting-annotation.mjs";
 import { createMeetingWindowTracker } from "./meeting-window-tracker.mjs";
+import { createWindowsAnnotationDev } from "./meeting-window-windows-dev.mjs";
+import { createSemanticOverlayDev, semanticOverlayDevEnabled } from "./meeting-semantic-overlay-dev.mjs";
+import { createMeetingSemanticAnnotation } from "./meeting-semantic-annotation.mjs";
+import { createMeetingAnnotationRouter } from "./meeting-annotation-router.mjs";
 import { createWhiteboardStore } from "./whiteboard-store.mjs";
 import { createWhiteboardCommands } from "./whiteboard-ipc.mjs";
 import { installMeetingDiagnostics } from "./meeting-diagnostics.mjs";
@@ -978,9 +982,17 @@ const meetingWindowTracker = process.platform === "darwin" && process.env.JUGGLE
     ? path.join(process.resourcesPath, "helpers/MeetingWindowTracker")
     : path.resolve(__dirname, "../resources/helpers/MeetingWindowTracker") })
   : null;
+const windowsAnnotationDev = createWindowsAnnotationDev({ platform: process.platform, arch: process.arch,
+  isPackaged: app.isPackaged, flag: process.env.JUGGLEWORK_WINDOW_ANNOTATION, desktopRoot: path.resolve(__dirname, '..') });
+const semanticOverlaySelected = semanticOverlayDevEnabled({ platform: process.platform, arch: process.arch,
+  isPackaged: app.isPackaged, flag: process.env.JUGGLEWORK_SEMANTIC_OVERLAY_POC });
+const semanticOverlayDev = createSemanticOverlayDev({ platform: process.platform, arch: process.arch,
+  isPackaged: app.isPackaged, flag: process.env.JUGGLEWORK_SEMANTIC_OVERLAY_POC, desktopRoot: path.resolve(__dirname, '..') });
 const meetingScreenPicker = createMeetingScreenPicker({ desktopCapturer, getMainWindow: () => mainWindow, getMeetingWindow: () => meetingWindow,
-  getDisplays: () => screen.getAllDisplays(), resolveWindowIdentity: meetingWindowTracker?.resolveWindowIdentity });
-const meetingAnnotation = createMeetingAnnotation({
+  getDisplays: () => screen.getAllDisplays(), resolveWindowIdentity: meetingWindowTracker?.resolveWindowIdentity,
+  resolveWindowsIdentity: semanticOverlaySelected ? semanticOverlayDev?.resolveWindowsIdentity : windowsAnnotationDev?.resolveWindowsIdentity,
+  activateWindowsWindow: semanticOverlaySelected ? semanticOverlayDev?.activateWindow : windowsAnnotationDev?.activateWindow });
+const legacyMeetingAnnotation = createMeetingAnnotation({
   BrowserWindow,
   // `screen` is only usable after app ready; resolve it lazily.
   screen: {
@@ -994,7 +1006,10 @@ const meetingAnnotation = createMeetingAnnotation({
   getMeetingWindow: () => meetingWindow,
   getSharedDisplayId: () => meetingScreenPicker.sharedDisplayId(),
   getSharedWindow: () => { const target = meetingScreenPicker.sharedTarget(); return target?.kind === "window" ? target : null; },
-  watchWindow: meetingWindowTracker?.watchWindow,
+  watchWindow: windowsAnnotationDev?.watchWindow ?? meetingWindowTracker?.watchWindow,
+  placeWindowCanvas: windowsAnnotationDev?.placeWindowCanvas,
+  getPlacementFailure: windowsAnnotationDev?.getPlacementFailure,
+  traceEvent: windowsAnnotationDev?.traceEvent,
   getDisplayMatching: (bounds) => screen.getDisplayMatching(bounds),
   clearShared: () => meetingScreenPicker.clearShared(),
   loadPage: async (window, view) => {
@@ -1006,6 +1021,28 @@ const meetingAnnotation = createMeetingAnnotation({
     } else await window.loadFile(app.isPackaged ? path.join(process.resourcesPath, "app-dist/annotation.html") : path.resolve(__dirname, "../../app/dist/annotation.html"), { query: { view } });
   },
 });
+const semanticMeetingAnnotation = createMeetingSemanticAnnotation({
+  BrowserWindow,
+  screen: { getAllDisplays: () => screen.getAllDisplays() },
+  ipcMain,
+  preloadPath: path.join(__dirname, 'semantic-annotation-preload.cjs'),
+  getMainWindow: () => mainWindow,
+  getMeetingWindow: () => meetingWindow,
+  getSharedWindow: () => { const target = meetingScreenPicker.sharedTarget(); return target?.kind === 'window' ? target : null; },
+  watchWindow: semanticOverlayDev?.watchWindow,
+  openNative: semanticOverlayDev?.open,
+  clearShared: () => meetingScreenPicker.clearShared(),
+  enabled: semanticOverlaySelected,
+  loadPage: async (window, view) => {
+    const url = process.env.JUGGLEWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
+    if (url) {
+      const target = new URL('/annotation.html', url);
+      target.searchParams.set('view', view);
+      await window.loadURL(target.href);
+    } else await window.loadFile(app.isPackaged ? path.join(process.resourcesPath, 'app-dist/annotation.html') : path.resolve(__dirname, '../../app/dist/annotation.html'), { query: { view } });
+  },
+});
+const meetingAnnotation = createMeetingAnnotationRouter({ legacy: legacyMeetingAnnotation, semantic: semanticMeetingAnnotation });
 /** @type {(() => {storageAvailable: boolean, records: Array<Record<string, unknown>>}) & {record?: (event: string, data?: Record<string, unknown>) => void}} */
 let readMeetingNativeDiagnostics = () => ({ storageAvailable: false, records: [] });
 let runtimeHealthMonitor = null;
@@ -2546,6 +2583,10 @@ const desktopCommandHandlers = {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可初始化会议小窗");
     meetingCompact?.markReady();
   },
+  "meetingSharePresentation": async (event, sharing) => {
+    if (event.sender !== mainWindow?.webContents || typeof sharing !== 'boolean') throw new Error('Invalid meeting presentation request');
+    meetingCompact?.setSharing(sharing);
+  },
   "meetingWindowState": async (event) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可读取会议窗口状态");
     return { compact: meetingCompact?.isCompact() ?? false };
@@ -2566,9 +2607,14 @@ const desktopCommandHandlers = {
   "meetingWhiteboardExport": (event, input) => meetingWhiteboard.exportFile(event, input),
   "meetingAnnotationState": async (event) => meetingAnnotation.state(event),
   "meetingWindowShareTarget": async (event) => meetingScreenPicker.readSharedWindow(event),
-  "meetingWindowShareReady": async (event, input) => { if (input) meetingAnnotation.windowShareReady(event, input); },
+  "meetingWindowShareReady": async (event, input) => {
+    if (!input) return;
+    meetingAnnotation.windowShareReady(event, input);
+    meetingScreenPicker.windowShareReady(event, input);
+  },
   "meetingAnnotationOpen": (event) => meetingAnnotation.open(event),
   "meetingAnnotationClose": async (event, input) => meetingAnnotation.close(event, { shareStopped: input?.shareStopped === true }),
+  "meetingSemanticAnnotationWrite": (event, input) => meetingAnnotation.writeSemantic(event, input),
   "toonFactoryOpen": async (event, ...args) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可打开漫剧工厂");
     return toonFactoryRuntime.open(args[0]);
@@ -3579,6 +3625,11 @@ async function createMainWindow() {
   });
 
   mainWindow.webContents.on("did-create-window", (child, details) => {
+    if (details.frameName === 'jugglework-meeting-whiteboard') {
+      child.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      child.webContents.on('will-navigate', event => event.preventDefault());
+      return;
+    }
     if (!["jugglework-meeting", "jugglework-meeting-mini"].includes(details.frameName)) return;
     if (details.frameName === "jugglework-meeting") {
       meetingWindow = child;
@@ -3594,6 +3645,10 @@ async function createMainWindow() {
   session.defaultSession.setDisplayMediaRequestHandler(meetingScreenPicker.handle, { useSystemPicker: false });
 
   mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    if (url === 'about:blank' && frameName === 'jugglework-meeting-whiteboard') {
+      return { action: 'allow', overrideBrowserWindowOptions: { width: 1200, height: 800, minWidth: 720, minHeight: 540, autoHideMenuBar: true,
+        webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: undefined, backgroundThrottling: false } } };
+    }
     // The meeting UI is a React portal owned by the authenticated main renderer.
     // No second app runtime, IM login or preload is loaded in the blank child.
     if (url === "about:blank" && frameName === "jugglework-meeting-mini") {

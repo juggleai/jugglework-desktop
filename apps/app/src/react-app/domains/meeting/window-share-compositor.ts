@@ -5,7 +5,9 @@ export type WindowShareCompositor = {
   stream: MediaStream;
   setOverlay(draw: DrawOverlay | null): void;
   confirmSize(width: number, height: number): void;
+  setGeometryPending(pending: boolean): void;
   setPaused(paused: boolean): void;
+  getPixelSize(): PixelSize | null;
   dispose(): void;
 };
 
@@ -18,7 +20,7 @@ export async function createWindowShareCompositor(capture: MediaStream, doc = do
     throw new Error("窗口画面合成不可用");
   let stream: MediaStream | undefined;
   let latestFrame: number | undefined;
-  let disposed = false, paused = false, queued = false;
+  let disposed = false, paused = false, geometryPending = false, queued = false;
   let overlay: DrawOverlay | null = null;
   let opening = true;
   let geometry: { target: PixelSize; waitingFrom?: PixelSize & { allowInk: boolean } } | undefined;
@@ -70,7 +72,7 @@ export async function createWindowShareCompositor(capture: MediaStream, doc = do
       if (canvas.width !== width) canvas.width = width;
       if (canvas.height !== height) canvas.height = height;
       ctx.drawImage(video, 0, 0, width, height);
-      if (overlay && allowInk) {
+      if (overlay && allowInk && !geometryPending) {
         ctx.save();
         try { overlay(ctx, width, height); } finally { ctx.restore(); }
       }
@@ -91,7 +93,7 @@ export async function createWindowShareCompositor(capture: MediaStream, doc = do
       stream,
       setOverlay(draw) { overlay = draw; invalidate(); },
       confirmSize(width, height) {
-        if (!(width > 0 && height > 0)) {
+        if (!(Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0)) {
           geometry = undefined;
           opening = true;
         } else {
@@ -109,7 +111,21 @@ export async function createWindowShareCompositor(capture: MediaStream, doc = do
         }
         invalidate();
       },
+      setGeometryPending(value) {
+        geometryPending = value;
+        if (value) {
+          // A transient ends the old confirmation even if the dimensions never
+          // change. Only confirmSize followed by clearing pending can restore ink.
+          geometry = undefined;
+          opening = false;
+        }
+        invalidate();
+      },
       setPaused(value) { paused = value; if (!paused) invalidate(); },
+      getPixelSize() {
+        const { videoWidth: width, videoHeight: height } = video;
+        return !disposed && width > 0 && height > 0 ? { width, height } : null;
+      },
       dispose,
     };
   } catch (error) {

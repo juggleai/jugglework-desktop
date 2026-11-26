@@ -6,6 +6,8 @@
 // through to the apps below; every other tool draws on the canvas.
 import { randomUUID } from 'node:crypto';
 import { classifyWindowSample } from './meeting-window-tracker.mjs';
+import { HIDDEN_EXTERNAL_INTERPOSER, HIDDEN_HOST_NEIGHBOR, HIDDEN_HOST_TARGET_NOT_BELOW, PLACEMENT_ORDER_UNCONFIRMED, TARGET_POSITION_STALE, TARGET_SIZE_UNCONFIRMED } from './meeting-window-placement-windows.mjs';
+/** @typedef {boolean | typeof HIDDEN_EXTERNAL_INTERPOSER | typeof HIDDEN_HOST_NEIGHBOR | typeof HIDDEN_HOST_TARGET_NOT_BELOW | typeof PLACEMENT_ORDER_UNCONFIRMED | typeof TARGET_POSITION_STALE | typeof TARGET_SIZE_UNCONFIRMED} PlacementResult */
 
 export const ANNOTATION_TOOLS = ["pointer", "laser", "pen", "highlighter", "ellipse", "rectangle", "arrow", "eraser"];
 export const ANNOTATION_COLORS = ["#ef4444", "#facc15", "#22c55e", "#3b82f6", "#a855f7"];
@@ -52,15 +54,26 @@ function validTool(value) {
  *   getSharedWindow?: () => import('@jugglework/types/desktop-ipc').MeetingWindowShareTarget | null,
  *   watchWindow?: ReturnType<typeof import('./meeting-window-tracker.mjs').createMeetingWindowTracker>['watchWindow'],
  *   placeWindowCanvas?: (canvas: any, target: import('@jugglework/types/desktop-ipc').MeetingWindowShareTarget,
- *     request: {bounds: any, visible: boolean, checkOnly?: boolean}) => boolean | Promise<boolean>,
- *   getDisplayMatching?: (bounds: any) => any }} options
+ *     request: {bounds: any, visible: boolean, checkOnly?: boolean, stage?: string}) => PlacementResult | Promise<PlacementResult>,
+ *   getDisplayMatching?: (bounds: any) => any, getPlacementFailure?: () => string | undefined, traceEvent?: (event: string) => void }} options
  */
-export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloadPath, loadPage, getMainWindow, getMeetingWindow, getSharedDisplayId, clearShared, platform = process.platform, getSharedWindow, watchWindow, placeWindowCanvas, getDisplayMatching }) {
+export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloadPath, loadPage, getMainWindow, getMeetingWindow, getSharedDisplayId, clearShared, platform = process.platform, getSharedWindow, watchWindow, placeWindowCanvas, getDisplayMatching, getPlacementFailure, traceEvent }) {
   let session = null;
   let opening = null;
+  let lastExitReason;
+  let lastRecoveryState;
   let state = initialState();
   let readyCaptureId = null;
   let pendingWindow = null;
+  const focusableByWindow = new WeakMap();
+
+  function setFocusable(win, value) {
+    // Even repeated false calls can reorder native Windows windows. Seed this
+    // cache from BrowserWindow construction, rather than writing the initial value.
+    if (focusableByWindow.get(win) === value) return;
+    win.setFocusable(value);
+    focusableByWindow.set(win, value);
+  }
 
   const live = (win) => win && !win.isDestroyed();
   const display = (id) => screen.getAllDisplays().find((d) => d.id === id) ?? null;
@@ -86,9 +99,9 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
       // drops the strokes from the screen capture for a few frames. The next
       // click goes through to the app below and takes focus there anyway.
       if (platform !== "darwin") canvas.blur?.();
-      canvas.setFocusable(false);
+      setFocusable(canvas, false);
     } else {
-      canvas.setFocusable(true);
+      setFocusable(canvas, true);
       canvas.setIgnoreMouseEvents(false);
       canvas.focus();
     }
@@ -96,7 +109,7 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
   }
   function orderWindowLayers(current, bestEffort = false) {
     const {canvas, target} = current;
-    if (!target || current.hidden || !current.shown || !live(canvas)) return;
+    if (!target || current.hidden || current.geometryPending || !current.shown || !live(canvas)) return;
     if (platform === 'win32') {
       void placeWindowsLayers(current);
       return;
@@ -106,35 +119,115 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
     } catch { if (!bestEffort) teardown('tracking-lost'); }
   }
   function suspendWindowsLayers(current) {
+    traceEvent?.('suspend');
     current.placementReady = false;
-    current.canvas.setIgnoreMouseEvents(true, { forward: true });
-    current.canvas.setFocusable(false);
-    current.canvas.hide();
-    current.toolbar.hide();
+    for (const win of [current.canvas, current.toolbar]) {
+      win.setIgnoreMouseEvents(true, { forward: true });
+      win.hide();
+      // The hidden toolbar already cannot receive input. Toggling its
+      // native focusability on every move can reorder the owned window pair.
+      if (win === current.canvas) setFocusable(win, false);
+    }
+  }
+  function suspendWindowsGeometry(current) {
+    suspendWindowsLayers(current);
+    if (current.geometryRecovery) return;
+    current.geometryRecovery = true;
+    current.geometryKey = '';
+    if (current.announced) windowEvent(current, 'geometry-pending');
+  }
+  function waitForFreshPlacement(current) {
+    current.waitingForPlacementSample = true;
+    current.placementRevision++;
+    suspendWindowsGeometry(current);
+    // No retry against the rejected coordinates. Only the watcher may advance
+    // this attempt, and repeated stale replies cannot extend the deadline.
+    current.placementDeadline ??= setTimeout(() => {
+      if (session === current) teardown('tracking-lost');
+    }, 2500);
+    return false;
+  }
+  function reportWindowsPlacement(current) {
+    if (session !== current || !current.announced || current.hidden || current.geometryPending || !current.placementReady) return;
+    // Keep the pause latched through incomplete restores, including a second
+    // pending epoch. Only verified placement is allowed to resume drawing.
+    if (current.minimized) {
+      current.minimized = false;
+      windowEvent(current, 'resumed');
+    }
+    current.geometryRecovery = false;
+    reportSize(current);
+  }
+  function deferUnconfirmedOrder(current, result) {
+    if (result !== PLACEMENT_ORDER_UNCONFIRMED || state.mode !== 'pointer' || !current.retriedHiddenNeighbor ||
+        !current.geometryRecovery || !current.placementDeadline || current.deferredRecoveryOrder) return false;
+    current.deferredRecoveryOrder = true;
+    // A foreground reorder can outlast a helper call. Keep both layers
+    // suspended through two additional trusted visible observer samples.
+    current.recoverySamplesToSkip = 2;
+    waitForFreshPlacement(current);
+    return true;
   }
   function placeWindowsLayers(current) {
-    if (session !== current || current.hidden || !current.shown) return Promise.resolve(false);
+    if (session !== current || current.hidden || current.geometryPending || current.waitingForPlacementSample || !current.shown) return Promise.resolve(false);
     if (current.placementTask) return current.placementTask;
+    // Even unchanged geometry starts a new placement epoch (e.g. tool changes),
+    // invalidating stationary checks of the previously visible canvas.
+    current.placementRevision++;
     suspendWindowsLayers(current);
+    const place = async request => {
+      const stage = request.checkOnly ? 'final' : request.visible ? 'visible' : 'hidden';
+      traceEvent?.(`${stage}-start`);
+      try {
+        const result = await placeWindowCanvas(current.canvas, current.target, request);
+        if (session === current) traceEvent?.(`${stage}-${result === true ? 'ok' : 'fail'}`);
+        return result;
+      }
+      // Native failures must pass the same revision check as false replies.
+      catch { return false; }
+    };
     const task = (async () => {
-      while (session === current && !current.hidden) {
+      while (session === current && !current.hidden && !current.geometryPending) {
         const revision = current.placementRevision;
         const bounds = { ...current.bounds };
-        const active = () => session === current && !current.hidden && revision === current.placementRevision;
+        const active = () => session === current && !current.hidden && !current.geometryPending && revision === current.placementRevision;
         // Both native replies must refer to the same geometry. Hidden placement
         // precedes display; visible readback precedes any drawing input.
-        let placed = await placeWindowCanvas(current.canvas, current.target, { bounds, visible: false });
+        let placed = await place({ bounds, visible: false });
         if (!active()) continue;
+        if (placed === TARGET_POSITION_STALE) return waitForFreshPlacement(current);
+        if (deferUnconfirmedOrder(current, placed)) return false;
         if (placed !== true) { teardown('tracking-lost'); return false; }
+        // Windows single-window ink receives mouse input without activation,
+        // including pen/eraser. Keep native focusability stable across modes;
+        // mouse routing is enabled only after the final strict readback below.
+        const mode = state.mode;
+        setFocusable(current.canvas, false);
+        setFocusable(current.toolbar, true);
         current.canvas.showInactive();
-        placed = await placeWindowCanvas(current.canvas, current.target, { bounds, visible: true });
+        placed = await place({ bounds, visible: true });
         if (!active()) { if (session === current) suspendWindowsLayers(current); continue; }
+        if (placed === TARGET_POSITION_STALE) return waitForFreshPlacement(current);
+        if (deferUnconfirmedOrder(current, placed)) return false;
         if (placed !== true) { teardown('tracking-lost'); return false; }
-        current.placementReady = true;
-        // Do not focus/blur here: that would change the just-verified Z order.
-        current.canvas.setFocusable(state.mode !== 'pointer');
-        current.canvas.setIgnoreMouseEvents(state.mode === 'pointer', { forward: true });
+        // Either focusable value can reorder native windows. Complete all such
+        // changes before the final readonly check, while input is still gated.
+        // Chromium's Windows palette must remain focusable to dispatch real
+        // button clicks reliably. DOM click smoke tests cannot validate this.
         current.toolbar.showInactive();
+        placed = await place({ bounds, visible: true, checkOnly: true, stage: 'tool-final' });
+        if (!active()) { if (session === current) suspendWindowsLayers(current); continue; }
+        if (placed === TARGET_POSITION_STALE || placed === TARGET_SIZE_UNCONFIRMED) return waitForFreshPlacement(current);
+        if (placed !== true) { teardown('tracking-lost'); return false; }
+        if (mode !== state.mode) { suspendWindowsLayers(current); continue; }
+        current.placementReady = true;
+        if (current.retriedExternalInterposer) current.externalRecoveryVerified = true;
+        clearTimeout(current.placementDeadline);
+        current.placementDeadline = undefined;
+        // Do not focus/blur after verification: that would change the Z order.
+        current.canvas.setIgnoreMouseEvents(state.mode === 'pointer', { forward: true });
+        current.toolbar.setIgnoreMouseEvents(false);
+        reportWindowsPlacement(current);
         return true;
       }
       return false;
@@ -142,17 +235,40 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
       if (session === current) teardown('tracking-lost');
       return false;
     }).finally(() => {
-      if (current.placementTask === task) current.placementTask = null;
+      if (current.placementTask === task) {
+        current.placementTask = null;
+        // A trusted sample may arrive while a suspended task is draining.
+        if (session === current && current.shown && !current.hidden && !current.geometryPending && !current.waitingForPlacementSample && !current.placementReady) void placeWindowsLayers(current);
+      }
     });
     current.placementTask = task;
     return task;
   }
   function verifyWindowsLayers(current) {
-    if (current.verificationTask || current.placementTask || !current.placementReady || current.hidden) return;
+    if (current.verificationTask || current.placementTask || !current.placementReady || current.hidden || current.geometryPending) return;
     const revision = current.placementRevision;
+    traceEvent?.('stationary-start');
     const task = Promise.resolve().then(() => placeWindowCanvas(current.canvas, current.target,
-      { bounds: { ...current.bounds }, visible: true, checkOnly: true })).then(verified => {
-      if (session === current && revision === current.placementRevision && verified !== true) teardown('tracking-lost');
+      { bounds: { ...current.bounds }, visible: true, checkOnly: true, stage: 'stationary' })).then(verified => {
+      if (session !== current || revision !== current.placementRevision) return;
+      traceEvent?.(verified === true ? 'stationary-ok' : 'stationary-fail');
+      if (verified === TARGET_POSITION_STALE || verified === TARGET_SIZE_UNCONFIRMED) waitForFreshPlacement(current);
+      else if (verified === HIDDEN_EXTERNAL_INTERPOSER && !current.retriedExternalInterposer) {
+        // A diagnosis never grants adjacency. Withdraw both layers and input;
+        // a fresh sample must pass every native placement check again.
+        current.retriedExternalInterposer = true;
+        traceEvent?.('external-recovery');
+        waitForFreshPlacement(current);
+      }
+      else if ((verified === HIDDEN_HOST_NEIGHBOR || verified === HIDDEN_HOST_TARGET_NOT_BELOW) && state.mode === 'pointer' && !current.retriedHiddenNeighbor) {
+        // A diagnosis is not proof of safe order. Withdraw both layers, allow
+        // just one recovery per session, and require full native placement again.
+        current.retriedHiddenNeighbor = true;
+        // Repeated target activation can still reorder windows after a short
+        // delay. Stay passive longer before using the single recovery budget.
+        if (verified === HIDDEN_HOST_TARGET_NOT_BELOW) current.recoverySamplesToSkip = 10;
+        waitForFreshPlacement(current);
+      } else if (verified !== true) teardown('tracking-lost');
     }).catch(() => { if (session === current && revision === current.placementRevision) teardown('tracking-lost'); }).finally(() => {
       if (current.verificationTask === task) current.verificationTask = null;
     });
@@ -163,8 +279,18 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
   // relative level is ignored; keep the toolbar above it.
   function raiseToolbar() {
     if (session?.target) {
-      if (session.hidden || !session.shown) return;
+      if (session.hidden || session.geometryPending || !session.shown) return;
+      if (platform === 'win32') {
+        // Mouse activation is not a geometry/tool change. Do not hide the
+        // newly focused canvas and flip focusability on every drawing click.
+        // Owner ordering handles the palette; exact readonly checks still run.
+        verifyWindowsLayers(session);
+        return;
+      }
       orderWindowLayers(session);
+      // Windows single-window placement owns the entire ordering transaction.
+      // moveTop on the owned toolbar can also reorder its canvas owner after
+      // placement/readback, invalidating the very adjacency just verified.
     }
     const toolbar = session?.toolbar;
     if (live(toolbar)) toolbar.moveTop?.();
@@ -184,6 +310,10 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
   }
 
   function teardown(reason = 'manual') {
+    if (session || pendingWindow) traceEvent?.('closed');
+    if (session || pendingWindow) lastRecoveryState = session?.retriedExternalInterposer ?
+      (session.externalRecoveryVerified ? 'recovered-then-lost' : 'recovery-not-verified') : undefined;
+    if (session || pendingWindow) lastExitReason = reason === 'manual' ? undefined : reason;
     const current = session;
     session = null;
     opening = null;
@@ -193,6 +323,7 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
     // A confirmed target closure must stop sharing even before layers exist.
     if (current?.shown || reason === 'target-closed') windowEvent(current ?? pending, 'closed', { reason });
     if (!current) return;
+    clearTimeout(current.placementDeadline);
     current.detach();
     for (const win of [current.toolbar, current.canvas]) if (live(win)) win.destroy();
   }
@@ -206,12 +337,16 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
       minimizable: false, maximizable: false, fullscreenable: false,
       webPreferences: { preload: preloadPath, partition: "meeting-annotation", sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
     };
-    const canvas = new BrowserWindow({ ...common, ...(bounds ?? target.bounds), transparent: true, backgroundColor: "#00000000", enableLargerThanScreen: true, focusable: true });
+    const initialFocusable = platform !== 'win32';
+    const toolbarFocusable = platform === 'win32' && windowTarget ? true : initialFocusable;
+    const canvas = new BrowserWindow({ ...common, ...(bounds ?? target.bounds), transparent: true, backgroundColor: "#00000000", enableLargerThanScreen: true, focusable: initialFocusable });
+    focusableByWindow.set(canvas, initialFocusable);
     // Windows ignores the relative top-most level, so a focused canvas would
     // cover the toolbar. An owned window always stays above its owner there.
     // macOS keeps the level-based ordering (child windows would follow the canvas).
     const toolbar = new BrowserWindow({ ...common, ...annotationToolbarBounds(target.workArea), ...(platform === "win32" ? { parent: canvas } : {}),
-      transparent: true, backgroundColor: "#00000000", focusable: true });
+      transparent: true, backgroundColor: "#00000000", focusable: toolbarFocusable });
+    focusableByWindow.set(toolbar, toolbarFocusable);
     // The canvas must stay capturable; only the toolbar is excluded.
     toolbar.setContentProtection(true);
     if (!windowTarget) canvas.setAlwaysOnTop(true, "screen-saver");
@@ -232,6 +367,10 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
     const mainContents = live(main) ? main.webContents : null;
     canvas.on("closed", close); toolbar.on("closed", close);
     canvas.on("focus", raiseToolbar);
+    for (const [win, role] of [[canvas, 'canvas'], [toolbar, 'toolbar']]) {
+      win.on('focus', () => traceEvent?.(`${role}-focus`));
+      win.on('blur', () => traceEvent?.(`${role}-blur`));
+    }
     canvas.webContents.on("render-process-gone", close); toolbar.webContents.on("render-process-gone", close);
     meeting?.on("closed", close);
     main?.on("closed", close);
@@ -250,6 +389,9 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
       }
     };
     const current = { canvas, toolbar, displayId: target.id, target: windowTarget, bounds, initialSize, annotationId: ticket?.annotationId, registerLayers: ticket?.registerLayers, seq: 0, geometryKey: '', hidden: false, minimized: false, shown: false, announced: false,
+      geometryPending: false, geometryRecovery: false,
+      waitingForPlacementSample: false, retriedHiddenNeighbor: false, deferredRecoveryOrder: false, recoverySamplesToSkip: 0,
+      placementDeadline: /** @type {ReturnType<typeof setTimeout> | undefined} */ (undefined),
       placementReady: false, placementRevision: 0, placementTask: /** @type {Promise<boolean> | null} */ (null),
       verificationTask: /** @type {Promise<void> | null} */ (null), detach };
     session = current;
@@ -264,8 +406,10 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
     if (windowTarget) {
       current.announced = true;
       windowEvent(current, 'opened');
+      if (current.geometryRecovery) windowEvent(current, 'geometry-pending');
       if (current.minimized) windowEvent(current, 'paused');
-      else reportSize(current);
+      if (platform === 'win32') reportWindowsPlacement(current);
+      else if (!current.minimized) reportSize(current);
     }
     publish();
   }
@@ -273,6 +417,7 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
   function showLayers(current) {
     if (current.target && platform === 'win32') return placeWindowsLayers(current);
     current.canvas.setIgnoreMouseEvents(state.mode === 'pointer', { forward: true });
+    setFocusable(current.toolbar, true);
     for (const win of [current.canvas, current.toolbar]) win.showInactive();
     applyMode();
     if (platform === 'darwin' && session === current && current.registerLayers) {
@@ -282,7 +427,7 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
   }
 
   function reportSize(current) {
-    if (!current.shown || current.hidden || !current.bounds ||
+    if (!current.shown || current.hidden || current.geometryPending || !current.bounds ||
         (platform === 'win32' && current.target && (!current.placementReady || !current.announced))) return;
     const factor = getDisplayMatching?.(current.bounds)?.scaleFactor;
     if (!(factor > 0)) return;
@@ -332,12 +477,22 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
         try {
           const current = session;
           const nativeSizeRequired = platform === 'win32';
-          const change = classifyWindowSample(current?.initialSize ?? null, sample, nativeSizeRequired);
+          const classified = classifyWindowSample(current?.initialSize ?? null, sample, nativeSizeRequired);
+          const change = classified === 'pending' && !nativeSizeRequired ? 'unavailable' : classified;
           if (change === 'resize' || change === 'close' || change === 'unavailable') {
             if (!current && change === 'unavailable') reject(sample.status === 'needs-accessibility'
               ? new Error('请在 macOS「系统设置 → 隐私与安全性 → 辅助功能」中允许窗口跟踪后重试。')
               : new Error('无法跟踪共享窗口，窗口共享仍在继续。'));
             teardown(change === 'resize' ? 'resized' : change === 'close' ? 'target-closed' : 'tracking-lost');
+            return;
+          }
+          if (change === 'pending') {
+            // Before the first trusted visible sample there is no canvas or
+            // renderer session to suspend. The identity observer bounds this wait.
+            if (!current) return;
+            current.geometryPending = true;
+            current.placementRevision++;
+            suspendWindowsGeometry(current);
             return;
           }
           if (!current) {
@@ -347,31 +502,36 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
           }
           const wasHidden = current.hidden;
           const wasMinimized = current.minimized;
+          const wasPending = current.geometryPending;
           current.hidden = change === 'hide';
           if (current.hidden) {
             current.placementRevision++;
             // Hidden samples can be part of a Dock transition, not a restore.
             if (sample.status === 'minimized') current.minimized = true;
-            for (const win of [current.canvas, current.toolbar]) if (live(win)) win.hide();
+            if (platform === 'win32') suspendWindowsLayers(current);
+            else for (const win of [current.canvas, current.toolbar]) if (live(win)) win.hide();
             if (current.shown && !wasMinimized && current.minimized) windowEvent(current, 'paused');
           } else if (sample.status === 'visible') {
-            current.minimized = false;
-            const geometryChanged = wasHidden || ['x', 'y', 'width', 'height'].some(key => current.bounds[key] !== sample.bounds[key]);
+            current.geometryPending = false;
+            if (platform === 'win32' && current.waitingForPlacementSample && current.recoverySamplesToSkip > 0) {
+              current.recoverySamplesToSkip--;
+              return;
+            }
+            const wasWaiting = current.waitingForPlacementSample;
+            current.waitingForPlacementSample = false;
+            if (platform !== 'win32') current.minimized = false;
+            const geometryChanged = wasHidden || wasPending || wasWaiting || ['x', 'y', 'width', 'height'].some(key => current.bounds[key] !== sample.bounds[key]);
             if (geometryChanged) {
               current.placementRevision++;
-              if (platform === 'win32') suspendWindowsLayers(current);
+              if (platform === 'win32') suspendWindowsGeometry(current);
             }
             current.bounds = sample.bounds;
             current.displayId = getDisplayMatching?.(sample.bounds)?.id ?? current.displayId;
-            current.canvas.setBounds(sample.bounds);
+            if (platform !== 'win32' || geometryChanged) current.canvas.setBounds(sample.bounds);
             if (current.shown) {
               if (platform === 'win32') {
                 if (!geometryChanged) { verifyWindowsLayers(current); return; }
-                void placeWindowsLayers(current).then(verified => {
-                  if (!verified || session !== current || !current.announced || current.hidden) return;
-                  if (wasMinimized) windowEvent(current, 'resumed');
-                  reportSize(current);
-                });
+                void placeWindowsLayers(current);
                 return;
               }
               if (wasHidden) showLayers(current);
@@ -398,6 +558,7 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
   }
 
   function setTool(tool) {
+    traceEvent?.(modeOf(tool.tool) === 'pointer' ? 'tool-pointer' : 'tool-draw');
     const mode = modeOf(tool.tool);
     const changed = mode !== state.mode;
     state = { ...state, mode, tool: { tool: tool.tool, color: tool.color.toLowerCase(), size: STROKE_SIZE } };
@@ -440,7 +601,7 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
   ipcMain.on('jugglework:annotation:scene', (event, scene) => {
     const current = session;
     if (!current?.target || !current.shown || event.sender !== current.canvas.webContents || event.senderFrame !== current.canvas.webContents.mainFrame) return;
-    if (platform === 'win32' && (!current.placementReady || !current.announced)) return;
+    if (platform === 'win32' && (current.hidden || current.geometryPending || !current.placementReady || !current.announced)) return;
     if (!validScene(scene)) { teardown('tracking-lost'); return; }
     windowEvent(current, 'scene', { scene });
   });
@@ -450,10 +611,16 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
       assertMain(event);
       const meeting = getMeetingWindow();
       const id = getSharedDisplayId();
-      return { available: Boolean(live(meeting) && ((id !== null && display(id)) || getReadyWindow())), active: Boolean(session) };
+      return { available: Boolean(live(meeting) && ((id !== null && display(id)) || getReadyWindow())), active: Boolean(session),
+        ...(lastExitReason ? { lastExitReason } : {}),
+        ...(lastExitReason === 'tracking-lost' && getPlacementFailure?.() ? {
+          lastExitDetail: `${getPlacementFailure()}${lastRecoveryState ? ':' + lastRecoveryState : ''}` } : {}) };
     },
     async open(event) {
       assertMain(event);
+      traceEvent?.('open');
+      lastExitReason = undefined;
+      lastRecoveryState = undefined;
       const meeting = getMeetingWindow();
       const windowTarget = getReadyWindow();
       if (live(meeting) && windowTarget) return openWindow(windowTarget);

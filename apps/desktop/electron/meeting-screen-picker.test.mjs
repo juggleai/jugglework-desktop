@@ -2,6 +2,47 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createMeetingScreenPicker } from './meeting-screen-picker.mjs';
+
+test('Windows activation waits for matching publication readiness and consumes failures only once per capture', async () => {
+  /** @type {import('@jugglework/types/desktop-ipc').MeetingWindowShareTarget[]} */
+  const calls = [];
+  const f = fixture({ platform: 'win32', resolveWindowsIdentity: async () => ({ pid: 812, processStartedAt: '123' }),
+    activateWindowsWindow: target => { calls.push(target); return Promise.reject(new Error('foreground denied')); } });
+  const id = f.start();
+  await f.picker.list(f.event, id);
+  await f.picker.choose(f.event, id, 'window:2:0');
+  assert.equal(calls.length, 0); // Choosing/capturing is not publication success.
+  for (const input of [{ captureId: 'stale', ready: true }, { captureId: id, ready: false }])
+    f.picker.windowShareReady(f.event, input);
+  assert.equal(calls.length, 0);
+  assert.throws(() => f.picker.windowShareReady({ ...f.event, senderFrame: {} }, { captureId: id, ready: true }));
+  f.picker.windowShareReady(f.event, { captureId: id, ready: true });
+  f.picker.windowShareReady(f.event, { captureId: id, ready: false });
+  f.picker.windowShareReady(f.event, { captureId: id, ready: true });
+  await Promise.resolve();
+  assert.deepEqual(calls, [f.picker.sharedTarget()]);
+  assert.equal(f.answers[0].video.id, 'window:2:0');
+  f.picker.clearShared();
+  f.picker.windowShareReady(f.event, { captureId: id, ready: true });
+  assert.equal(calls.length, 1);
+  const next = f.start(); await f.picker.list(f.event, next);
+  await f.picker.choose(f.event, next, 'window:3:0');
+  f.picker.windowShareReady(f.event, { captureId: id, ready: true });
+  assert.equal(calls.length, 1);
+  f.picker.windowShareReady(f.event, { captureId: next, ready: true });
+  await Promise.resolve();
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].windowId, '3');
+});
+
+test('non-Windows and unauthenticated captures never request foreground', async () => {
+  for (const platform of ['darwin', 'win32']) {
+    const f = fixture({ platform, activateWindowsWindow: () => assert.fail('unexpected activation') });
+    const id = f.start(); await f.picker.list(f.event, id);
+    await f.picker.choose(f.event, id, 'window:2:0');
+    f.picker.windowShareReady(f.event, { captureId: id, ready: true });
+  }
+});
 function fixture(options = {}) {
   const notices = [], answers = [];
   function window() {

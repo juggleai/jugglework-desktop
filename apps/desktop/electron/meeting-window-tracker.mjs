@@ -3,11 +3,12 @@ import { createInterface } from 'node:readline';
 
 /** @typedef {{ x: number, y: number, width: number, height: number }} Bounds */
 /** @typedef {Pick<Bounds, 'width' | 'height'>} WindowSize */
-/** @typedef {{ status: 'visible', pid: number, bounds: Bounds, actualSize?: WindowSize } | { status: 'hidden' | 'minimized' | 'closed' | 'needs-accessibility' | 'unavailable' }} Sample */
+/** @typedef {{ status: 'visible', pid: number, bounds: Bounds, actualSize?: WindowSize } | { status: 'geometry-pending' } | { status: 'hidden' | 'minimized' | 'closed' | 'needs-accessibility' | 'unavailable' }} Sample */
 /** @typedef {'order-lost' | 'order-interleaved' | 'edge-overlap'} OrderEvent */
 
 /** @param {WindowSize | null} initial @param {Sample} sample @param {boolean} [requireActualSize] */
 export function classifyWindowSample(initial, sample, requireActualSize = false) {
+  if (sample.status === 'geometry-pending') return 'pending';
   if (sample.status === 'hidden' || sample.status === 'minimized') return 'hide';
   if (sample.status === 'closed') return 'close';
   if (sample.status !== 'visible' || !validBounds(sample.bounds)) return 'unavailable';

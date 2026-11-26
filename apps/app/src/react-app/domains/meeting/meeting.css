@@ -402,6 +402,31 @@
 .meeting-compact .compact-controls .compact-hangup:not(:disabled):hover { background: #d84c47; }
 .meeting-compact .compact-error { position: absolute; inset: 0; overflow: auto; background: var(--meet-bg); }
 
+/* Shared mode is a horizontal strip, not the two-row meeting mini. */
+.meeting-ui.meeting-compact.meeting-sharing-bar {
+  box-sizing: border-box;
+  flex-direction: row; align-items: center; gap: 12px; padding: 0 12px;
+  width: 100%; height: 100%; border: 1px solid var(--meet-line); border-radius: 12px;
+}
+.meeting-sharing-bar .compact-speaking {
+  flex: 1 1 auto; min-width: 0; padding: 0; color: var(--meet-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.meeting-sharing-bar .compact-speaking::before {
+  content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 8px;
+  border-radius: 50%; background: #22a06b; vertical-align: 1px;
+}
+.meeting-sharing-bar .compact-controls {
+  flex: 0 0 auto; gap: 6px; height: auto; background: transparent;
+  justify-content: flex-end; -webkit-app-region: no-drag;
+}
+.meeting-sharing-bar .compact-controls button.sharing-stop {
+  display: inline-flex; width: auto; min-width: 80px; padding: 0 10px;
+  white-space: nowrap; color: #fff; background: #d94b4b; border-radius: 7px;
+}
+.meeting-sharing-bar .compact-controls button.sharing-stop:not(:disabled):hover { background: #c63d3d; }
+.meeting-sharing-bar .compact-controls svg { width: 18px; height: 18px; }
+
 /* Reminders, errors and the browser fallback. */
 .meeting-reminder { height: auto; position: fixed; right: 24px; top: 60px; z-index: 150; border: 1px solid var(--meet-line); border-radius: 16px; padding: 18px; max-width: 340px; box-shadow: 0 12px 40px #0002; display: flex; flex-direction: column; gap: 12px; }
 .meeting-reminder > .row > .icon-button { margin-left: auto; }

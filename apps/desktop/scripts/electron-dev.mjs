@@ -3,6 +3,7 @@ import net from "node:net";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { windowsAnnotationDevDir, windowsAnnotationDevEnabled } from '../electron/meeting-window-windows-dev.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
@@ -204,6 +205,17 @@ if (process.env.JUGGLEWORK_ELECTRON_SKIP_SHARED_PREPARE !== "1") {
   runSync(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], { cwd: desktopRoot });
   runSync(nodeCmd, [resolve(__dirname, "prepare-file-window-helper.mjs"), "--outdir", electronHelperDir], { cwd: desktopRoot });
   runSync(nodeCmd, [resolve(__dirname, "prepare-meeting-window-tracker.mjs"), "--outdir", electronHelperDir], { cwd: desktopRoot });
+}
+
+if (windowsAnnotationDevEnabled({ platform: process.platform, arch: process.arch, isPackaged: false, flag: process.env.JUGGLEWORK_WINDOW_ANNOTATION }) ||
+    (process.platform === 'win32' && process.arch === 'x64' && process.env.JUGGLEWORK_SEMANTIC_OVERLAY_POC === '1')) {
+  runSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', resolve(__dirname, 'prepare-meeting-window-identity-windows.ps1'),
+    '-OutDir', windowsAnnotationDevDir(desktopRoot)], { cwd: desktopRoot });
+}
+
+if (process.platform === 'win32' && process.arch === 'x64' && process.env.JUGGLEWORK_SEMANTIC_OVERLAY_POC === '1') {
+  runSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', resolve(__dirname, 'prepare-meeting-semantic-overlay-windows.ps1'),
+    '-OutDir', resolve(desktopRoot, '.dev-helpers', 'semantic-overlay')], { cwd: desktopRoot });
 }
 
 // Keep Electron on compiled shared contracts even in local development. The

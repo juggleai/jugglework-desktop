@@ -5,6 +5,7 @@ import { acceptDeviceState, type MeetingShareKind, type MemberDeviceState } from
 import { openMeetingWhiteboard, readMeetingDesktopConfig, readMeetingWindowShareTarget, setMeetingWindowShareReady } from "@/app/lib/desktop";
 import { createWindowShareCompositor } from "./window-share-compositor";
 import { createWindowAnnotationReceiver } from "./window-annotation-events";
+import { attachMeetingSemanticAnnotation } from "./meeting-semantic-annotation-events";
 import { create } from "zustand";
 import { meetingAPI, meetingScope } from "./api";
 import { meetingClosed, type Meeting, type MeetingJoin } from "./types";
@@ -64,7 +65,7 @@ function dispose() {
   chatJoining = false;
   releaseMediaSession("meeting");
 }
-/** The whiteboard embedded in the meeting stage. Its page saves on unmount. */
+/** The whiteboard hosted independently of the meeting window. Saves on unmount. */
 export type MeetingWhiteboardSession = { meetingId: string; whiteboardId: string; title: string; scene: string | null };
 function addMessage(message: ChatMessage) {
   useMeetingStore.setState((s) => ({
@@ -323,16 +324,21 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
           if (reason === "target-closed") { clearWindowAnnotation(); owner.stopShare(); announceState(); }
           if (reason === "resized") set({ error: "窗口大小已改变，已退出标注，窗口共享仍在继续。" });
         });
+        const detachSemantic = attachMeetingSemanticAnnotation(id);
         const listener = (event: Event) => {
           if (media === owner && owner.getWindowShareCompositor(id) === output) receive((event as CustomEvent).detail);
         };
         window.addEventListener(windowAnnotationChannel, listener);
         const remove = () => {
           window.removeEventListener(windowAnnotationChannel, listener);
+          detachSemantic();
           void setMeetingWindowShareReady({ captureId: id, ready: false }).catch(() => {});
         };
         stopWindowAnnotation = remove;
-        try { await setMeetingWindowShareReady({ captureId: id, ready: true }); }
+        try {
+          const pixelSize = output.getPixelSize();
+          await setMeetingWindowShareReady({ captureId: id, ready: true, ...(pixelSize ? { pixelSize } : {}) });
+        }
         catch { if (stopWindowAnnotation === remove) clearWindowAnnotation(); }
       } finally { if (screenShareRequest === request) screenShareRequest = null; }
     }
@@ -354,7 +360,8 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   async publishWhiteboard(whiteboardId, stream) {
     const run = generation;
     const target = media;
-    if (!target || get().whiteboard?.whiteboardId !== whiteboardId) {
+    const session = get().whiteboard;
+    if (!target || session?.whiteboardId !== whiteboardId) {
       stream.getTracks().forEach((track) => track.stop());
       return;
     }
@@ -362,10 +369,10 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     try {
       await target.startCustomShare(stream);
     } catch (error) {
-      if (run === generation) set({ whiteboard: null, error: error instanceof Error ? error.message : "白板共享失败，请重试。" });
+      if (run === generation && get().whiteboard === session) set({ whiteboard: null, error: error instanceof Error ? error.message : "白板共享失败，请重试。" });
       return;
     }
-    if (run !== generation) return;
+    if (run !== generation || get().whiteboard !== session) return;
     if (!get().tiles.some((t) => t.id === "share")) {
       // Not published (meeting closing or another share won the race).
       stream.getTracks().forEach((track) => track.stop());
@@ -376,7 +383,9 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   },
   closeWhiteboard(error) {
     if (!get().whiteboard) return;
-    if (get().tiles.some((t) => t.id === "share")) media?.stopShare();
+    // The board can close while SDK registration/publication is still pending,
+    // before a share tile exists. Invalidate that attempt as well.
+    media?.stopShare();
     set({ whiteboard: null, ...(error ? { error } : {}) });
     announceState();
   },

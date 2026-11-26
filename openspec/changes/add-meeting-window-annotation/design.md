@@ -35,11 +35,39 @@
 
 #### Windows 实验版（已确认范围）
 
+周期只读检查若精确报告目标仍在画布下方、直接下邻为其他进程隐藏窗，允许每会话一次撤层恢复，包括绘制模式；不授权跳过夹层。双层与输入暂停，等待可信样本后走完整原生放置及最终复核；超时、恢复失败或再次失序退出标注。此候选仍需真人验证。
+
+Windows 单窗口采用“鼠标绘制不激活画布”候选：仅 `platform === 'win32'` 且会话有 `target` 时，画布从构造起始终 `focusable:false`，包括 pen、eraser 等绘图工具，不因模式切换调用 focus/blur 或切换焦点属性。工具栏从构造起保持 `focusable:true`；不可聚焦工具栏在真人试用中未能正常切换画笔，已撤回。鼠标路由仍按模式：pointer 为 ignore true，绘图为 ignore false；完整隐藏定位、可见定位和包含已显示工具栏的最终严格只读复核成功前，两层均禁用鼠标输入。严格双向邻接、非置顶、精确矩形和既有失败撤层/恢复预算保持不变。整屏和 macOS 行为不变。
+
+2026-11-25 独立隔离实验已用 Windows `SendInput` 在不可聚焦画布绘制，观测到工具栏保持前台且生产严格邻接通过，详见 `docs/superpowers/reports/meeting-nonfocusable-os-input-2026-11-25.md`。控制器回归验证 pen/eraser 的 ignore false 与 focusable false、pointer 的 ignore true，以及复核完成前持续禁用输入。隔离 OS 注入不是真人硬件输入或真实会议验收；此候选尚未经真人验收，不能据此认定焦点后的隐藏夹层故障根因已确定或已修复。键盘快捷键（包括画布 Esc）、普通遮挡、多屏/DPI 和真实会议输入仍需验证。
+
+Windows 开发版单窗共享在当前捕获真实发布就绪后，仅一次尝试激活目标。原生程序重新校验 HWND、PID、创建时间与窗口状态，调用 `SetForegroundWindow`；不置顶、不持续抬升，失败仍保留共享。
+
+本轮先接入未打包的 Windows x64 开发版试用，不等待完整夹具矩阵；打包版即使显式设置开关也不开放。开发启动器仅在显式开启时编译标准 helper 到独立的 `.dev-helpers/window-annotation`，不用诊断变体。主进程把身份解析、观察与画布定位接到既有的选窗、发布就绪和标注流程，不为开发模式放宽层级复核。真实双端与安装包验收仍是发布前置条件。
+
 - 保留普通窗口共享、整屏标注和服务端行为。仅在 Windows 显式开启 `JUGGLEWORK_WINDOW_ANNOTATION=1`、来源身份可验证且标注层能可靠跟随并尊重遮挡时提供单窗口标注。复用工具栏、笔迹模型和现有同轨合成；不把 ZEGO 换轨作为前置条件。
 - 先在用户的 Windows 测试机验证只读 Win32 helper：对照 Electron 选中来源与 HWND，以字符串传输句柄；同时校验 PID 和进程身份，并验证销毁与句柄复用。身份不明或跟踪失效只撤标注，确认目标关闭才停止共享。默认先采样；跟随延迟不达标时再以进程外 WinEvent 通知触发复核。
 - 分开测量真实尺寸、原生边框、DWM 可见边界、Electron DIP 和采集帧像素。混合 DPI、负坐标和跨屏移动需实测；只有实际宽高变化才清笔迹并退出标注，不重新选源。
 - 仅验证画布相对层级与正常工具输入，不引入原生边条或逐点边框命中。遮挡窗口应正常收到点击；鼠标模式保留点击、滚动、标题栏拖动和系统缩放。无法安全维持相对层级时撤标注，保留共享。
 - 先验证手头机器上的窗口样式，再扩展兼容矩阵。真实双端会议必须证明同一 `_screen` 保持发布、开关与尺寸退出无黑帧或旧笔迹、远端帧率达到普通共享基线的 90%；Windows 打包验证独立检查助手的 PE 架构和签名。两类验收完成前保持默认关闭。
+
+#### Windows 原生语义 Overlay 重构决策（2026-11-25）
+
+既有 Windows Electron 外部层候选继续默认关闭。它的严格双向 HWND 直接邻接是该实现排除未知夹层、授权输入的保守临时充分条件，不是规格必要条件；旧实现仍在时不得放宽此门禁。规格真正要求的是身份可信、几何同版本、只在目标可见区域呈现和命中、服从普通窗口遮挡、非置顶，以及任一条件不可信时 fail closed。点击激活现场已证明跨进程全局 Z-order 不能稳定提供严格邻接，因此停止继续尝试排序标志、调用线程、等待、owner 和重复重排变体。
+
+单 HWND 技术探针已证明 layered 透明像素与 draw 空白起笔冲突，DComp 透明 HWND 又无法可靠跨进程 pointer 穿透，因此隔离 PoC 改为两个本方原生顶层 HWND。visual 永久为 Direct2D premultiplied layered、`TRANSPARENT|NOACTIVATE` 且不承担输入；input 为无绘制、非 layered、`NOREDIRECTIONBITMAP|NOACTIVATE` 空窗，只在 draw 模式以可信 region 显示，pointer 模式先置空 region 再隐藏，不依赖跨进程 `HTTRANSPARENT`。同一消息循环仍须把身份、几何、遮挡、两层 Z 序、region、像素提交和 epoch 作为一个事务；任一读写或复核失败先撤 input，再隐藏 visual，禁止恢复到旧 scene 的可交互状态。adapter 和产品协议只观察语义状态，不感知两个 HWND，raw HWND 仅限 fixture 诊断。
+
+双 HWND 不等于自动满足遮挡；实现必须依据只读 Win32/DWM 窗口元数据构造保守可见区域，并把同一版本的区域用于 visual 裁剪和 input 命中。身份、几何、遮挡或通信竞争时，先撤输入，再隐藏／销毁 overlay、清除远端旧墨并保留普通共享；不得用放宽旧邻接检查替代该语义边界。本机自有 fixture 的实际像素、OS 命中、设备恢复和资源循环已通过，下一步只授权 DPI/多屏隔离验证；真人硬件输入、外部应用、PageHeap、签名包与真实会议完成前不接产品入口。
+
+保留无损 HWND/PID/进程创建时间绑定、PMv2/DWM 几何、尺寸变化仅退标注、迟到会话隔离、非置顶和有界清理。保持现有窗口共享 compositor、标注模型、同一 `_screen` 发布和远端同轨合成；原生 overlay 只负责本地呈现与输入，不成为第二个媒体合成器。明确不采用输入转发／重放、跨进程注入或钩子、桌面区域捕获、全局 topmost，也不恢复边条／热区拦截。
+
+详细证据等级、分阶段 PoC、不变量和验收矩阵见 `docs/superpowers/plans/2026-11-25-meeting-window-annotation-windows-semantic-overlay.md`。当前已有与产品隔离的 GDI 安全模型 PoC 及 v1 JSON-lines/父进程生命周期/Node adapter 窄路径证据，但尚未接 `main` 或 meeting，也没有 Direct2D/DirectComposition、真人硬件输入、真实外部应用、ZEGO 双端或签名包验收；完成这些门槛前 Windows 单窗口标注保持默认关闭，既有历史证据和未完成项继续有效。
+
+原生输入桥接采用 JS 单一数据权威：原生层只在可信可见区域捕获带 session/epoch/inputSeq 的归一化 pointer 批次，并可即时画当前临时线；渲染侧独立会话复用现有 annotation model 纯函数维护 history、draft 和 `AnnotationElement`，同一 `WindowAnnotationScene` 供现有 compositor，已提交 history 再以有限全量 scene 回写 native。本阶段只开放 pen/highlighter、pointer、undo/clear，未实现的 eraser/laser/shape 明确禁用。该桥接保持独立、未接 main/meeting，Electron Canvas 路径不变。
+
+2026-11-25 B1-B7 审查修复后，产品式 protocol helper 不再有 45 秒总寿命；45 秒只保留在 fixture，并允许 fixture 测试显式缩短。native 自主 epoch/state 变化通过白名单 `state(eventSeq)` 发送，adapter 同步 epoch 并通知 `onState`；`wrong-epoch` 同样安全前移 epoch 并显式返回可重试结果。protocol stdout 仅允许 `hello/ack/state/error/pointer`，race/refused 诊断仅在 fixture stdout 或 protocol stderr。stdin 使用 64 KiB 有界 UTF-8 行读取，stdout 由有界线程安全队列和专用 writer 输出，WndProc 不同步 flush；move 最多 64 点一批，背压撤输入并 cancel，up/cancel 使用预留优先容量且不删除已编号事件。
+
+JS 会话仅在 committed history 改变时串行回写 native scene，draft move 只调用 compositor 的 `onScene`；mode/style、abort、scene 共用可观察失败的写队列。提交前校验完整 scene 结构和最坏协议 envelope 的 UTF-8 字节预算，native 与 adapter 均按 64 KiB 拒绝且不修改 scene。`inputSeq` 必须连续，gap 会 cancel；up 端点去重，零距离 click 不提交。clear/undo/tool switch/dispose 会向 native abort active stroke，draw mode 携带 color/size/highlight，输入/state/scene observer 异常均隔离。以上仍是隔离 GDI PoC 与 adapter/session 证据，不表示 Direct2D/DComp、产品接线或真人/会议验收完成。
 
 ### 3. 合成推流
 
@@ -100,6 +128,17 @@
 - **反例：** 边框层处于启用状态时，目标应用从内容区点击处理程序调用 `NSWindow.setFrame`，窗口宽度仍增加 45 pt。边框层不是系统级尺寸锁定；因此已确认按「拦截边框拖拽，其他途径改变实际尺寸时退出标注、共享继续」实施。双击标题栏、窗口菜单和系统平铺等入口尚未实机验证，P0-3 产品验收仍不勾选。
 
 ## Risks
+
+## Windows Semantic 开发接线状态（2026-11-25）
+
+- 双 HWND Direct2D helper、v1 JSON-lines adapter、toolbar-only main controller、typed IPC、renderer scene/history owner 和现有 compositor 已接入未打包开发路径。该路径仅在 `JUGGLEWORK_SEMANTIC_OVERLAY_POC=1`、Windows x64、单屏 DPI96、固定 helper 与 identity 可用、真实单窗发布就绪且捕获像素尺寸等于可信原生 `actualSize` 时可用。
+- semantic 被选择但任一条件失败时保持 `selected:true, available:false`，不静默回退旧 Electron 多 HWND 路线。Windows semantic 单窗口只创建 content-protected toolbar，不创建 Electron canvas；整屏、macOS 和未选择 semantic 的路径仍使用 legacy controller。
+- picker/main 继续认证 target；main 自身创建时间由 identity helper 的 `GetProcessTimes` 获取。renderer 不提供 executable、HWND 或 PID。IPC 以 `captureId`、`annotationId`、`nativeSessionId`、`generation`、`seq` 隔离，main 校验 scene 后分别写 native 并复用既有 compositor scene 事件。
+- 当前开放 pointer、laser、pen、highlighter、rectangle、ellipse、arrow、eraser、undo、clear、exit；shape/eraser 复用现有 annotation model/history/compositor。laser 使用独立于 committed scene/history/sceneRevision 的 epoch 绑定、单调 revision、有界全量 transient 列表；down/move 可见，up 后 1200ms 线性淡出，clear/tool switch/cancel/input gap/epoch/unknown/close 立即清空。native retained laser 不进入 scene ACK/history，恢复和迟到写不能复活旧 laser。legacy UI 不变，未新增 RTC、`getDisplayMedia`、ZEGO publish 或第二媒体合成器。
+- 目标 DPI96 是 native 全会话硬门禁，不只是 Electron display 预检：启动读回非 96 必须在双层和 hello 前拒绝；运行中目标 DPI 非 96 或 overlay 收到 `WM_DPICHANGED`，必须先 cancel/撤 input/清 region/隐藏并终态退出，不得重建恢复。fixture 可模拟非 96 拒绝和运行变化，但当前 DPI96 主机不得把模拟记作真实 125%/150% 证据。
+- scene/history 使用 renderer 到 main 的单一 `apply-scene(sceneRevision)`。renderer 同会话保持一个 in-flight 并合并最新 committed scene；main 校验会话 key、exact schema 和严格递增 revision，串行等待 native ACK 后才向 compositor 与 toolbar 发布同 revision。native 失败、toolbar/main renderer 生命周期结束均由 main teardown；旧/重复 revision 和迟到 ACK 不发布。draft 仅作本地原生实时线，不改变 committed scene 一致性。
+- adapter close/dispose/replacement 必须先有界等待 child，超时 kill 并返回明确结果；teardown/share stop 立即停止 readiness watcher。toolbar closed/render-process-gone/navigation 与 main renderer destroyed/render-process-gone/navigation 都关闭当前 owned session，旧 toolbar 事件不能命中新 session。
+- 自动接线不等于 P4/P5 放行。真人硬件输入、代表性外部应用、125%/150% 与混合 DPI/多屏、PageHeap/同值 HWND 复用、真实 ZEGO 双端、签名安装包与安全软件验收仍未完成，开关继续默认关闭。
 
 - macOS「辅助功能」权限：首次使用多一步授权；开发版授权对象是 Electron，打包版是 JuggleWork。
 - 应用窗口的层级行为可能不同：不能可靠跟踪或安全展示画布的来源不启用窗口标注，普通窗口共享不受影响。

@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import ts from 'typescript';
 import { create } from 'zustand';
 const diagnosticSource = await fs.readFile(new URL('../src/react-app/domains/meeting/diagnostics.ts', import.meta.url), 'utf8');
@@ -503,7 +507,7 @@ async function windowShareRuntime(t) {
   },
  });
  let capture;
- const deps={create,MeetingMedia,createWindowAnnotationReceiver,
+  const deps={create,MeetingMedia,createWindowAnnotationReceiver,
   meetingAPI:{join:async()=>({meeting,roomId:'r',userId:'u',sessionId:'s',userName:'Local',appId:1,token:'test',chatroomId:'chat'})},
   meetingScope:()=> 'org', acquireMediaSession(){}, releaseMediaSession(){},
   joinMeetingChatroom:async()=>({leave:async()=>{},signal:async()=>{}}),
@@ -512,22 +516,27 @@ async function windowShareRuntime(t) {
   createWindowShareCompositor:async stream=>{
    assert.equal(stream.getVideoTracks()[0],capture.raw);
    const {id,output}=capture;
-   return {stream:new Stream([output]),setOverlay(){},confirmSize(){},setPaused(){},dispose(){disposed.push(id);output.stop();}};
+    return {stream:new Stream([output]),setOverlay(){},confirmSize(){},setGeometryPending(){},setPaused(){},getPixelSize(){return {width:640,height:400}},dispose(){disposed.push(id);output.stop();}};
   },
-  setMeetingWindowShareReady:async input=>{readiness.push(input);},
+   setMeetingWindowShareReady:async input=>{readiness.push(input);},
+   openMeetingWhiteboard:async()=>({whiteboardId:'board',scene:null}),
  };
  const oldWindow=globalThis.window, oldStream=globalThis.MediaStream;
  globalThis.window=roomWindow;
  globalThis.MediaStream=Stream;
  globalThis.__windowShareRuntime=deps;
- const {useMeetingStore,forceMeetingCleanup}=await import(loadRuntime(
-  `const {${Object.keys(deps).join(',')}}=globalThis.__windowShareRuntime;\n`+storeSource.replace(/^import .*;$/gm,''))+
-  '#'+encodeURIComponent(t.name));
- t.after(()=>{
+  const runtimeSource=`const {${Object.keys(deps).join(',')}}=globalThis.__windowShareRuntime;\n`+storeSource.replace(/^import .*;$/gm,'')
+   .replace('        const detachSemantic = attachMeetingSemanticAnnotation(id);\n','')
+   .replace('          detachSemantic();\n','');
+  const runtimePath=path.join(os.tmpdir(),`jugglework-meeting-runtime-${randomUUID()}.mjs`);
+  await fs.writeFile(runtimePath,transpile(runtimeSource,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText);
+  const {useMeetingStore,forceMeetingCleanup}=await import(pathToFileURL(runtimePath).href+'#'+encodeURIComponent(t.name));
+  t.after(()=>{
   forceMeetingCleanup();
   if(oldWindow===undefined)delete globalThis.window;else globalThis.window=oldWindow;
   if(oldStream===undefined)delete globalThis.MediaStream;else globalThis.MediaStream=oldStream;
-  delete globalThis.__windowShareRuntime;
+   delete globalThis.__windowShareRuntime;
+   return fs.rm(runtimePath,{force:true});
  });
  await useMeetingStore.getState().join(meeting,false,false);
  const queueState=(streamID,state,errorCode=0,extendedData='')=>{
@@ -535,10 +544,13 @@ async function windowShareRuntime(t) {
   const callbacks=[...(listeners.get('publisherStateUpdate')??[])];
   return ()=>callbacks.forEach(fn=>fn({streamID,state,errorCode,extendedData}));
  };
- const start=async id=>{
-  capture={id,raw:video('window'),output:video()};
-  const current=capture, count=started.length;
-  const request=useMeetingStore.getState().toggleShare({getDisplayMedia:async()=>new Stream([current.raw])});
+  const start=async (id,kind='window')=>{
+   capture={id,raw:video(kind==='window'?'window':'monitor'),output:video()};
+   const current=capture, count=started.length;
+   if(kind==='whiteboard')await useMeetingStore.getState().shareWhiteboard();
+   const request=kind==='whiteboard'
+    ? useMeetingStore.getState().publishWhiteboard('board',new Stream([current.raw]))
+    : useMeetingStore.getState().toggleShare({getDisplayMedia:async()=>new Stream([current.raw])});
   // Keep rejected requests observed while the test drives SDK events.
   void request.catch(()=>{});
   await new Promise(resolve=>setImmediate(resolve));
@@ -560,8 +572,75 @@ test('composited window readiness waits for PUBLISHING on the local screen strea
  assert.deepEqual(rtc.readiness,[]);
  rtc.queueState(share.publication.id,'PUBLISHING')();
  await share.request;
- assert.deepEqual(rtc.readiness,[{captureId:'first-window',ready:true}]);
+  assert.deepEqual(rtc.readiness,[{captureId:'first-window',ready:true,pixelSize:{width:640,height:400}}]);
  assert.equal(rtc.state().tiles.find(tile=>tile.id==='share').stream.getVideoTracks()[0],share.output);
+});
+
+for (const kind of ['screen','whiteboard']) {
+ test(`${kind} only exposes a share tile after the current local PUBLISHING event`, {timeout:1000}, async t=>{
+  const rtc=await windowShareRuntime(t);
+  const share=await rtc.start('source',kind);
+  assert.deepEqual(rtc.state().tiles,[]);
+  rtc.queueState('another_user_screen','PUBLISHING')();
+  rtc.queueState(share.publication.id,'PUBLISH_REQUESTING')();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(rtc.state().tiles,[]);
+  rtc.queueState(share.publication.id,'PUBLISHING')();
+  await share.request;
+  assert.equal(rtc.state().tiles.find(tile=>tile.id==='share').stream,share.publication.stream);
+  assert.deepEqual(rtc.readiness,[]);
+ });
+
+ test(`${kind} publication failure releases media without exposing SDK credentials`, {timeout:1000}, async t=>{
+  const rtc=await windowShareRuntime(t);
+  const share=await rtc.start('source',kind);
+  const secret='token=do-not-expose-test-credential';
+  rtc.queueState(share.publication.id,'NO_PUBLISH',1102018,secret)();
+  if(kind==='whiteboard') {
+   await share.request;
+   assert.match(rtc.state().error,/共享发布失败.*1102018/);
+   assert.ok(!rtc.state().error.includes(secret));
+   assert.equal(rtc.state().whiteboard,null);
+  } else await assert.rejects(share.request,error=>/共享发布失败.*1102018/.test(error.message)&&!error.message.includes(secret));
+  assert.deepEqual(rtc.state().tiles,[]);
+  assert.equal(share.raw.readyState,'ended');
+  assert.deepEqual(rtc.destroyed,[share.publication.stream]);
+  assert.deepEqual(rtc.stopped,[share.publication.id]);
+ });
+
+ test(`${kind} publication timeout cleans up and rejects queued late success`, {timeout:1000}, async t=>{
+  const rtc=await windowShareRuntime(t);
+  const timers=new Map(), realSet=globalThis.setTimeout, realClear=globalThis.clearTimeout;
+  globalThis.setTimeout=(fn,delay)=>{const timer=Symbol();timers.set(timer,{fn,delay});return timer;};
+  globalThis.clearTimeout=timer=>{timers.delete(timer);};
+  t.after(()=>{globalThis.setTimeout=realSet;globalThis.clearTimeout=realClear;});
+  const share=await rtc.start('source',kind);
+  const late=rtc.queueState(share.publication.id,'PUBLISHING');
+  for(const [timer,{fn,delay}] of timers)if(delay===15_000){timers.delete(timer);fn();}
+  if(kind==='whiteboard') {await share.request;assert.match(rtc.state().error,/超时/);}
+  else await assert.rejects(share.request,/超时/);
+  late();
+  assert.deepEqual(rtc.state().tiles,[]);
+  assert.equal(share.raw.readyState,'ended');
+  assert.deepEqual(rtc.destroyed,[share.publication.stream]);
+ });
+}
+
+test('closing a whiteboard awaiting publication cancels its media and cannot close its replacement', {timeout:1000}, async t=>{
+ const rtc=await windowShareRuntime(t);
+ const first=await rtc.start('first','whiteboard');
+ const late=rtc.queueState(first.publication.id,'PUBLISHING');
+ rtc.state().closeWhiteboard();
+ assert.equal(first.raw.readyState,'ended');
+ const next=await rtc.start('next','whiteboard');
+ await first.request;
+ late();
+ assert.ok(rtc.state().whiteboard);
+ assert.deepEqual(rtc.state().tiles,[]);
+ rtc.queueState(next.publication.id,'PUBLISHING')();
+ await next.request;
+ assert.equal(rtc.state().tiles[0].stream,next.publication.stream);
+ assert.deepEqual(rtc.destroyed,[first.publication.stream]);
 });
 
 test('a duplicate share request cannot supersede a window share awaiting publication', {timeout:1000}, async t=>{
@@ -570,7 +649,7 @@ test('a duplicate share request cannot supersede a window share awaiting publica
  await rtc.state().toggleShare({getDisplayMedia:()=>assert.fail('duplicate picker must not open')});
  rtc.queueState(share.publication.id,'PUBLISHING')();
  await share.request;
- assert.deepEqual(rtc.readiness,[{captureId:'first-window',ready:true}]);
+  assert.deepEqual(rtc.readiness,[{captureId:'first-window',ready:true,pixelSize:{width:640,height:400}}]);
 });
 
 test('initial NO_PUBLISH reports failure and releases the composited window share', {timeout:1000}, async t=>{
@@ -605,7 +684,7 @@ test('ending a window capture while publication is pending cannot enable annotat
  assert.equal(next.raw.readyState,'live');
  rtc.queueState(next.publication.id,'PUBLISHING')();
  await next.request;
- assert.deepEqual(rtc.readiness,[{captureId:'replacement-window',ready:true}]);
+  assert.deepEqual(rtc.readiness,[{captureId:'replacement-window',ready:true,pixelSize:{width:640,height:400}}]);
 });
 
 test('cancellation wins over a publication failure whose continuation has not run', {timeout:1000}, async t=>{

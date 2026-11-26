@@ -4,17 +4,20 @@ export function installMeetingCompactWindow(main, full, mini, getWorkArea) {
   let ready = false;
   let switching = false;
   let disposed = false;
+  let sharing = false;
   const enter = (hideFull = false) => {
     if (!ready || switching || disposed || full.isDestroyed() || mini.isDestroyed()) return;
     switching = true;
     try {
       if (!compact) {
         const area = getWorkArea(full.getBounds());
-        mini.setBounds({ x: area.x + Math.max(0, area.width - 276), y: area.y + 16, width: 260, height: 82 });
+        mini.setMinimumSize?.(Math.min(sharing ? 620 : 260, area.width), sharing ? 56 : 82);
+        mini.setBounds(sharing ? { x: area.x + Math.max(0, Math.floor((area.width - 620) / 2)), y: area.y + area.height - 72, width: Math.min(620, area.width), height: 56 } : { x: area.x + Math.max(0, area.width - 276), y: area.y + 16, width: 260, height: 82 });
       }
       compact = true;
       if (mini.isMinimized()) mini.restore();
       mini.setAlwaysOnTop(true, "floating");
+      mini.setContentProtection?.(true);
       mini.showInactive();
       if (hideFull && full.isVisible()) full.hide();
     } finally { switching = false; }
@@ -27,7 +30,7 @@ export function installMeetingCompactWindow(main, full, mini, getWorkArea) {
       if (full.isMinimized()) full.restore();
       full.show();
       full.focus();
-      if (!mini.isDestroyed()) mini.hide();
+      if (!mini.isDestroyed() && !sharing) mini.hide();
     } finally { switching = false; }
   };
   const checkVisibility = () => {
@@ -46,6 +49,7 @@ export function installMeetingCompactWindow(main, full, mini, getWorkArea) {
   const blurFull = () => enter();
   const focusFull = () => {
     if (switching || disposed) return;
+    if (sharing) { enter(); return; }
     compact = false;
     if (!mini.isDestroyed()) mini.hide();
   };
@@ -79,10 +83,18 @@ export function installMeetingCompactWindow(main, full, mini, getWorkArea) {
   full.once("closed", dispose);
   return {
     isCompact: () => compact, restore, checkVisibility,
+    setSharing(value) {
+      if (disposed || sharing === value) return;
+      sharing = value;
+      compact = false;
+      if (sharing) enter(true);
+      else restore();
+    },
     markReady() {
       ready = true;
       mini.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
-      if (!full.isVisible() || full.isMinimized() || !full.isFocused()) enter();
+      if (sharing) enter(true);
+      else if (!full.isVisible() || full.isMinimized() || !full.isFocused()) enter();
     },
   };
 }

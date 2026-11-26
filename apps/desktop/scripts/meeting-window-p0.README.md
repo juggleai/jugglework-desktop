@@ -197,7 +197,37 @@ node --test apps/desktop/scripts/meeting-window-p0-edge-visible-native.test.cjs
 - `settings` 是视频轨道公布的设置，`intrinsic` 是视频元素的固有尺寸，`frame` 是最近一次 `requestVideoFrameCallback` 回报的媒体像素宽高。三者不保证相等，也不保证等于 DWM 尺寸。`geometrySeq` 仅关联采样时最近一次几何记录；`frameAdvanced:false` 时 `frame` 可能是旧值，`true` 也不证明内容正确或没有黑帧。
 - 如需保存证据，仅保留脱敏的 JSON 行（含 Windows 构建号、进程架构、Electron/Chromium 版本和夹具所在显示器缩放），并附操作步骤。混合 DPI、Snap、实际应用和标注输入仍待实机验证。
 
-### A4 真人输入（需要人在机器前）
+## 最新 Windows 身份/生命周期隔离运行器
+
+`meeting-window-validation.cjs` 用自有原生目标直接调用候选 identity/watch/place/check 适配器，不启动产品、不打开 Windows 门控、不抓屏、不注入输入。只支持当前候选的单屏 100% / DPI96 范围。先用 `prepare-meeting-window-identity-windows.ps1 -OutDir <获准临时目录>` 编译 x64 helper，再运行：
+
+```powershell
+node --test apps/desktop/scripts/meeting-window-validation-lifetime.test.cjs
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-validation.cjs --helper <helper的绝对路径>
+# 可选的合成压力诊断，五段每段200次小幅往返移动，不是实时调度保证：
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-validation.cjs --helper <helper的绝对路径> --motion-stress
+# 全穿透画布：检查目标移动前、停稳后是否严格相邻；不验证真人输入。
+corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-validation.cjs --helper <helper的绝对路径> --dynamic-follow
+# 单次离散平移对照：在上条命令末尾追加 --follow-discrete。
+# 真人前置：在动态模式末尾追加 --follow-tools，复核工具切换和目标自改宽；窗口始终全穿透，不注入输入。
+# 真人点击归属：在动态模式末尾追加 --follow-manual；仅在人已准备好时启动。
+# 等待 manual-input 记录：pen、pointer 各 8 秒。画笔点紫色标记；指针点目标窗口内的「指针：在这里点击 3 次」文字。
+# 只复测指针：追加 --follow-pointer-only，保留工具切换但省略画笔点击窗口。
+# --follow-manual-smoke 只做两段各 1 秒的零输入对照，预期拒绝、清理确认。
+# 激活恢复对照：追加 --follow-manual-smoke --follow-pointer-only --follow-full-window --follow-activation-control。
+# 只激活合成目标自身，不注入输入；须观察到暂停、严格复核恢复且点击为零。
+# 在激活对照上追加 --follow-staggered-raise，以四次间隔不同的自有窗口重排检查恢复后再次失序。
+```
+
+目标仅接受移动自身、分别改宽高、最小化恢复和退出等受限动作，原始身份只在父子协议内传递。覆盖两类关闭、取消 watch 和本轮 helper 故障；每类结束等待实际 close，最后一个 Electron 窗口销毁不会跳过清理。watch 取消的 SIGTERM 只算“请求终止并确认退出”，不是原生优雅 EOF；兜底强制终止始终使清理失败。父端崩溃/被外部终止不在本运行器的完成范围。
+
+50 步约 20ms/步的连续移动仅测试 observer 拒绝，不证明真实拖动、画布跟随或流畅度；任一异常状态会使运行器最终失败，且继续收集不依赖的生命周期与清理证据。2026-11-24 早期两轮分别为 1 次/0 次 unavailable，加固判据后又连续两轮为 0；历史失败仍保留，不能泛化为持续稳定。完整结果见 `docs/superpowers/reports/meeting-window-annotation-windows-2026-11-24.md`。
+
+候选 watch 现可通过适配器第三参数回调读取有限失败码，不输出原始身份。五段压力对照中复现 outer-changed 两次、dwm-changed 两次，仍立即撤层/退出，不重试或放宽容差；只诊断了几何双读竞争，尚未实现可恢复瞬态。
+
+### 历史 A4 真人输入（需要人在机器前）
+
+以下是旧夹具和旧热区实验记录；最新统一方案取消边框输入拦截，不再推进 `--a4-strips` / `--hotzone`。旧遮挡用例由夹具持续抬升遮挡窗，不能替代新版普通非置顶遮挡验收。
 
 ``powershell
 corepack pnpm@12.21.0 --dir apps/desktop exec electron ./scripts/meeting-window-p0-hybrid.cjs --native-target --passive-ink --a4-passive --a4-ms 75000

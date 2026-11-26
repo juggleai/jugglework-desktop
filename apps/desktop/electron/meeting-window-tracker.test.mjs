@@ -16,6 +16,24 @@ test('movement, resize, visibility and target loss are distinct', () => {
   assert.equal(classifyWindowSample(initial, visible({ ...initial, width: 0 })), 'unavailable');
 });
 
+test('geometry pending is independent from visibility and requires a later trusted actual size', () => {
+  assert.equal(classifyWindowSample(initial, { status: 'geometry-pending' }, true), 'pending');
+  assert.equal(classifyWindowSample(null, { status: 'geometry-pending' }, true), 'pending');
+  assert.equal(classifyWindowSample(initial, { status: 'minimized' }, true), 'hide');
+  assert.equal(classifyWindowSample(initial, visible(), true), 'unavailable');
+  assert.equal(classifyWindowSample(initial, { ...visible(), actualSize: initial }, true), 'follow');
+  assert.equal(classifyWindowSample(initial, { ...visible(), actualSize: { width: 641, height: 400 } }, true), 'resize');
+});
+
+test('the macOS helper cannot introduce a Windows geometry-pending sample', () => {
+  const { tracker, child } = fixture();
+  const samples = [];
+  tracker.watchWindow({ windowId: 2, pid: 812 }, state => samples.push(state));
+  child.stdout.write('{"status":"geometry-pending"}\n');
+  assert.deepEqual(samples, [{ status: 'unavailable' }]);
+  assert.equal(child.killed, true);
+});
+
 function fixture() {
   const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), killed: false, kill() { this.killed = true; return true; } });
   const tracker = createMeetingWindowTracker({ helperPath: '/fixture', spawnHelper: () => child });

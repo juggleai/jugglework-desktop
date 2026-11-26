@@ -25,6 +25,7 @@ import { CalendarEventCreateDialog } from "../calendar/calendar-event-create-dia
 import { resolveCalendarPageGate } from "../calendar/calendar-page-gate";
 import { useCalendarBootstrapQuery, useCalendarOrganizationMembersQuery, useCalendarSchedulingEventsQuery } from "../calendar/calendar-queries";
 import { meetingAPI } from "./api";
+import { meetingDiagnosticsJson } from "./diagnostics";
 import { calendarMeetingOccurrences, collapseHistoricalCalendarOccurrences, meetingOverviewWindow, type CalendarMeetingOccurrence } from "./meeting-overview";
 import { meetingReadinessReason } from "./readiness";
 import {
@@ -852,6 +853,17 @@ export function MeetingPrejoin({
     [camera, setCamera] = useState(false),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const [admissionDetail, setAdmissionDetail] = useState("");
+  useEffect(() => {
+    let active = true;
+    void meetingAPI.get(meeting.id).then(({ meeting: current }) => {
+      if (!active || !meetingClosed(current)) return;
+      const seconds = Math.round((Date.parse(current.endAt) - Date.now()) / 1000);
+      const endedSeconds = current.endedAt ? Math.round((Date.now() - Date.parse(current.endedAt)) / 1000) : NaN;
+      setAdmissionDetail(`服务端状态：${current.status}\n距计划结束：${Number.isFinite(seconds) ? seconds + " 秒" : "未知"}\n结束至今：${Number.isFinite(endedSeconds) ? endedSeconds + " 秒" : "未提供结束时间"}\n状态版本：${current.version}`);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [meeting.id]);
   const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
   useEffect(() => {
@@ -917,6 +929,7 @@ export function MeetingPrejoin({
       {error ? (
         <MeetingPermissionNotice message={error} onClose={() => setError("")} />
       ) : null}
+      {admissionDetail ? <pre role="status" style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>{admissionDetail}</pre> : null}
       <div className="modal-foot">
         <button onClick={onClose} disabled={busy}>
           取消
@@ -926,12 +939,23 @@ export function MeetingPrejoin({
           disabled={busy}
           onClick={() => {
             setBusy(true);
+            setAdmissionDetail("");
             stream.current?.getTracks().forEach((t) => t.stop());
             void useMeetingStore
               .getState()
               .join(meeting, mic, camera)
               .then(onClose)
-              .catch((e) => setError(e.message))
+              .catch(async (e) => {
+                setError(e instanceof Error ? e.message : "加入会议失败");
+                // Read-only snapshot: never renew admission or replay an action.
+                const current = await meetingAPI.get(meeting.id).catch(() => null);
+                const log = JSON.parse(meetingDiagnosticsJson()).entries as { event: string; data: Record<string, unknown> }[];
+                const rejected = log.filter(x => x.event === "http.rejected").at(-1)?.data;
+                const status = current?.meeting.status;
+                const knownStatus = status && ["scheduled", "preparing", "live", "ended", "cancelled", "expired"].includes(status) ? status : "未能读取";
+                const endOffset = current ? Math.round((Date.parse(current.meeting.endAt) - Date.now()) / 1000) : NaN;
+                setAdmissionDetail(`当前服务端状态：${knownStatus}\n拒绝类型：${rejected?.reason ?? "未记录"}\nHTTP：${rejected?.status ?? "未记录"}\n距计划结束：${Number.isFinite(endOffset) ? endOffset + " 秒" : "未知"}`);
+              })
               .finally(() => setBusy(false));
           }}
         >

@@ -34,6 +34,22 @@ function setup() {
  control.markReady();
  return {main,full,mini,control};
 }
+test('confirmed sharing hides full and retains bottom controls when returning to meeting', () => {
+ const { full, mini, control } = setup();
+ control.setSharing(true);
+ assert.equal(full.visible, false);
+ assert.deepEqual(mini.bounds, { x: 2330, y: 828, width: 620, height: 56 });
+ assert.equal(mini.visible, true);
+ control.restore();
+ full.emit('focus');
+ assert.equal(full.visible, true);
+ assert.equal(mini.visible, true);
+ control.setSharing(false);
+ assert.equal(full.visible, true);
+ assert.equal(mini.visible, false);
+ full.emit('closed');
+ assert.equal(mini.destroyed, true);
+});
 test("minimize switches persistent windows without resizing or destroying the full window",()=>{
  const {full,mini,control}=setup(), original=full.getBounds();
  full.minimize();

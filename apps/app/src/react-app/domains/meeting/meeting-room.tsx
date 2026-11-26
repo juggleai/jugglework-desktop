@@ -8,7 +8,7 @@ import { MeetingChatToasts } from "./meeting-chat-toasts";
 import { MeetingCode } from "./meeting-code";
 import { MeetingInvitePicker, MeetingMemberAvatar } from "./meeting-invite-picker";
 import { MeetingPermissionNotice, MeetingPermissionRestart } from "./permission-notice";
-import { chooseMeetingScreenSource, focusMeetingWindow, markMeetingMiniReady } from "@/app/lib/desktop";
+import { chooseMeetingScreenSource, focusMeetingWindow, markMeetingMiniReady, setMeetingSharePresentation } from "@/app/lib/desktop";
 import { useMeetingAnnotation } from "./use-meeting-annotation";
 import { syncMeetingWindowStyles } from "./window-styles";
 import { guardMeetingWindowClose } from "./window-lifecycle";
@@ -189,6 +189,21 @@ export function MeetingRoomHost() {
   const sharing = s.tiles.some((t) => t.id === "share");
   // The local whiteboard replaces the local share preview in the stage.
   const localWhiteboard = s.whiteboard;
+  const [whiteboardPopup, setWhiteboardPopup] = useState<Window | null>(null);
+  useEffect(() => {
+    if (!localWhiteboard) return;
+    const child = window.open('about:blank', 'jugglework-meeting-whiteboard', 'popup,width=1200,height=800');
+    if (!child) { s.closeWhiteboard('无法打开白板窗口'); return; }
+    child.document.title = '会议白板';
+    child.document.body.style.cssText = 'margin:0;height:100vh;overflow:hidden';
+    setWhiteboardPopup(child);
+    const timer = setInterval(() => { if (child.closed) s.closeWhiteboard(); }, 500);
+    return () => { clearInterval(timer); setWhiteboardPopup(null); if (!child.closed) child.close(); };
+  }, [localWhiteboard]);
+  useEffect(() => {
+    if (!miniPopup || !window.__JUGGLEWORK_ELECTRON__?.invokeDesktop) return;
+    void setMeetingSharePresentation(sharing).catch(e => setMessage(e.message));
+  }, [sharing, miniPopup]);
   const canShareWhiteboard = !!window.__JUGGLEWORK_ELECTRON__?.invokeDesktop;
   // Only a whole-screen share (decided by the main process) offers annotation.
   const annotation = useMeetingAnnotation(sharing && !localWhiteboard && s.shareKind === "screen", setMessage);
@@ -265,8 +280,8 @@ export function MeetingRoomHost() {
   // Each new meeting opens its own native window through Electron's
   // named-window handler. Closing it never moves the meeting into the main UI.
   useEffect(() => {
-    if (m) { setPanel(null); detach(); }
-  }, [m?.id]);
+    if (m && s.phase === "joined") { setPanel(null); detach(); }
+  }, [m?.id, s.phase]);
   if (!m)
     return s.error ? (
       <div className="meeting-return" role="alert">
@@ -280,13 +295,17 @@ export function MeetingRoomHost() {
       </div>
     ) : null;
   const compactContent = (
-    <div className="meeting-ui meeting-compact">
-      <div className="compact-speaking">正在讲话：</div>
+    <div className={`meeting-ui meeting-compact${sharing ? ' meeting-sharing-bar' : ''}`}>
+      <div className="compact-speaking">{sharing ? '你正在共享屏幕' : '正在讲话：'}</div>
       <div className="compact-controls">
+        {sharing ? <button className="sharing-stop" disabled={busy} onClick={() => void run(() => s.toggleShare())}>停止共享</button> : null}
         <button title="展开会议" aria-label="展开会议" onClick={() => focusWindow("meeting")}><Icon name="expand" /></button>
         <button className={!s.mic ? "device-off" : ""} title={s.mic ? "静音" : "开启麦克风"} aria-label={s.mic ? "静音" : "开启麦克风"} disabled={deviceBusy || s.phase !== "joined"} onClick={() => void changeDevice("mic")}><Icon name="mic" off={!s.mic} /></button>
         <button className={!s.camera ? "device-off" : ""} title={s.camera ? "关闭摄像头" : "开启摄像头"} aria-label={s.camera ? "关闭摄像头" : "开启摄像头"} disabled={deviceBusy || s.phase !== "joined"} onClick={() => void changeDevice("camera")}><Icon off={!s.camera} /></button>
-        {annotation.available ? <button className={annotation.active ? "annotation-on" : ""} title={annotation.active ? "退出标注" : "标注"} aria-label={annotation.active ? "退出标注" : "标注"} aria-pressed={annotation.active} onClick={annotation.toggle}><Icon name="annotate" /></button> : null}
+        {annotation.visible ? <button className={annotation.active ? "annotation-on" : ""}
+          title={annotation.active ? "退出标注" : annotation.available ? "标注" : "正在准备标注"}
+          aria-label={annotation.active ? "退出标注" : annotation.available ? "标注" : "正在准备标注"}
+          aria-pressed={annotation.active} disabled={!annotation.available && !annotation.active} onClick={annotation.toggle}><Icon name="annotate" /></button> : null}
         <button className="compact-hangup" title="离开会议" aria-label="离开会议" onClick={() => { focusWindow("meeting"); setLeaving(true); }}><Icon name="hangup" /></button>
       </div>
       {message || s.error ? <div className="compact-error"><MeetingPermissionNotice message={message || s.error || ""} onClose={() => { setMessage(""); useMeetingStore.setState({ error: null }); }} /></div> : null}
@@ -333,11 +352,11 @@ export function MeetingRoomHost() {
         <div className="room-main">
           <div className="stage-area">
             <div className={`stage${speaker ? " stage-focus" : ""}`}>
-              {localWhiteboard ? (
+              {localWhiteboard && !window.__JUGGLEWORK_ELECTRON__?.invokeDesktop && !whiteboardPopup ? (
                 <div className="tile share-stage whiteboard-stage" key="whiteboard" data-focused={speaker}>
                   <MeetingWhiteboardStage session={localWhiteboard}
                     theme={document.documentElement.dataset.theme === "dark" ? "dark" : "light"}
-                    onPublish={(id, stream) => void s.publishWhiteboard(id, stream)}
+                    onPublish={(id, stream) => s.publishWhiteboard(id, stream)}
                     onFail={(error) => s.closeWhiteboard(error)} />
                 </div>
               ) : null}
@@ -491,11 +510,12 @@ export function MeetingRoomHost() {
             <Icon name="screen" />
             {sharing || localWhiteboard ? "停止共享" : "共享屏幕"}
           </button>
-          {annotation.available ? (
+          {annotation.visible ? (
             <button className="control" aria-pressed={annotation.active} onClick={annotation.toggle}
-              title={annotation.active ? "退出标注" : "在共享的屏幕上标注"}>
+              disabled={!annotation.available && !annotation.active}
+              title={annotation.active ? "退出标注" : annotation.available ? "在共享的屏幕上标注" : "正在准备标注"}>
               <Icon name="annotate" />
-              {annotation.active ? "退出标注" : "标注"}
+              {annotation.active ? "退出标注" : annotation.available ? "标注" : "准备标注"}
             </button>
           ) : null}
           <button className="control" onClick={() => setInvite(true)} title="邀请参会成员">
@@ -539,6 +559,11 @@ export function MeetingRoomHost() {
         ? createPortal(content, popup.document.body)
         : null}
       {miniPopup && !miniPopup.closed ? createPortal(compactContent, miniPopup.document.body) : null}
+      {localWhiteboard && whiteboardPopup && !whiteboardPopup.closed ? createPortal(
+        <MeetingWhiteboardStage session={localWhiteboard} pageBaseURI={document.baseURI}
+          theme={document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'}
+          onPublish={(id, stream) => s.publishWhiteboard(id, stream)} onFail={error => s.closeWhiteboard(error)} />,
+        whiteboardPopup.document.body) : null}
       {screenRequest && !leaving ? <MeetingScreenPicker key={screenRequest} requestId={screenRequest} ownerDocument={popup?.document} onClose={closeScreenPicker}
         onChooseWhiteboard={canShareWhiteboard ? chooseWhiteboard : undefined} /> : null}
       {invite ? (

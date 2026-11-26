@@ -1,7 +1,8 @@
 # Experimental helper, built separately until Windows native validation.
 param(
     [string] $OutDir = (Join-Path $PSScriptRoot '..\resources\helpers'),
-    [ValidateSet('x64', 'arm64')] [string] $Architecture = 'x64'
+    [ValidateSet('x64', 'arm64')] [string] $Architecture = 'x64',
+    [switch] $FixtureNoSendChanging
 )
 $ErrorActionPreference = 'Stop'
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Windows build host required' }
@@ -12,7 +13,14 @@ if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'x64 .NET Fr
 $source = Join-Path $PSScriptRoot '..\native\MeetingWindowIdentityWindows.cs'
 if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw 'Native inspector source missing' }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
-$output = Join-Path $OutDir 'MeetingWindowIdentityWindows.exe'
-& $compiler /nologo /optimize+ /target:exe /platform:x64 "/out:$output" $source
+$options = @()
+$name = 'MeetingWindowIdentityWindows.exe'
+if ($FixtureNoSendChanging) {
+    if (!$PSBoundParameters.ContainsKey('OutDir')) { throw 'Fixture build requires an explicit output directory' }
+    $name = 'MeetingWindowIdentityWindows.FixtureNoSendChanging.exe'
+    $options += '/define:FIXTURE_NO_SEND_CHANGING'
+}
+$output = Join-Path $OutDir $name
+& $compiler /nologo /optimize+ /target:exe /platform:x64 @options "/out:$output" $source
 if ($LASTEXITCODE -ne 0) { throw 'Windows native inspector build failed' }
 Write-Output 'Experimental inspector/placement helper built; not signed or enabled in the product.'

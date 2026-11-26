@@ -8,7 +8,8 @@ import { AnnotationToolbar, type AnnotationCommand } from "../react-app/domains/
 import "../react-app/domains/annotation/annotation.css";
 
 type AnnotationBridge = {
-  init(): Promise<AnnotationState & { windowShare?: boolean }>;
+  init(): Promise<AnnotationState & { windowShare?: boolean; capabilities?: import("../react-app/domains/annotation/annotation-model").AnnotationTool[] |
+    { tools: import("../react-app/domains/annotation/annotation-model").AnnotationTool[]; history?: ("undo" | "clear")[] } }>;
   onState(callback: (state: AnnotationState) => void): () => void;
   onAction(callback: (action: "undo" | "clear") => void): () => void;
   command(command: AnnotationCommand): void;
@@ -21,7 +22,7 @@ declare global { interface Window { __JUGGLEWORK_ANNOTATION__?: AnnotationBridge
 const view = new URLSearchParams(location.search).get("view") === "toolbar" ? "toolbar" : "canvas";
 
 function AnnotationPage({ bridge }: { bridge: AnnotationBridge }) {
-  const [state, setState] = useState<(AnnotationState & { windowShare?: boolean }) | null>(null);
+  const [state, setState] = useState<Awaited<ReturnType<AnnotationBridge["init"]>> | null>(null);
   useEffect(() => {
     let alive = true;
     const off = bridge.onState((next) => { if (alive) setState(current => ({ ...current, ...next })); });

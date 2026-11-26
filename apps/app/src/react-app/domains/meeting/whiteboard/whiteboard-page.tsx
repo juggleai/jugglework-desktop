@@ -12,7 +12,7 @@ export type WhiteboardBridge = {
   save(content: string): Promise<void>;
   exportFile(kind: "png" | "excalidraw", data: string): Promise<{ saved: boolean }>;
   /** Hands the mirrored canvas stream to the meeting for publishing. */
-  publish(stream: MediaStream): void;
+  publish(stream: MediaStream): void | Promise<void>;
   fail(message: string): void;
   /** The stage calls the registered flush right before it removes the iframe. */
   setFlush(flush: (() => void) | null): void;
@@ -33,6 +33,7 @@ function blobToBase64(blob: Blob): Promise<string> {
 export function WhiteboardPage({ bridge }: { bridge: WhiteboardBridge }) {
   const ctx = bridge.context;
   const [status, setStatus] = useState("");
+  const [published, setPublished] = useState(false);
   const board = useRef<MeetingWhiteboardHandle>(null);
   const canvasHost = useRef<HTMLElement>(null);
   // The bridge lives in the long-lived meeting renderer, so an async save
@@ -54,11 +55,17 @@ export function WhiteboardPage({ bridge }: { bridge: WhiteboardBridge }) {
     let alive = true;
     const host = canvasHost.current;
     if (!host) return;
-    waitForSceneCanvas(host, window).then((root) => {
+    setPublished(false);
+    waitForSceneCanvas(host, window).then(async (root) => {
       if (!alive) return;
       mirror = startCanvasMirror(root);
-      bridge.publish(mirror.stream);
-    }, (reason) => alive && bridge.fail(reason instanceof Error ? reason.message : "白板画布加载失败"));
+      await bridge.publish(mirror.stream);
+      if (alive) setPublished(true);
+    }).catch(() => {
+      if (!alive) return;
+      mirror?.stop();
+      bridge.fail("白板画布加载或共享失败，请重新打开白板。");
+    });
     return () => { alive = false; mirror?.stop(); };
   }, [bridge]);
 
@@ -82,7 +89,7 @@ export function WhiteboardPage({ bridge }: { bridge: WhiteboardBridge }) {
     <div className="whiteboard-shell">
       <header className="whiteboard-bar">
         <strong>会议白板</strong>
-        <span className="whiteboard-live">共享中</span>
+        <span className="whiteboard-live">{published ? "共享中" : "正在连接共享…"}</span>
         <span className="whiteboard-status" role="status">{status}</span>
         <button type="button" onClick={() => void exportAs("png")}>导出 PNG</button>
         <button type="button" onClick={() => void exportAs("excalidraw")}>导出源文件</button>

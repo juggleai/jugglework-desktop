@@ -644,12 +644,37 @@ export type MeetingScreenSource = {
   appKey: string;
 };
 
+export type MeetingSemanticPointerBatch = { sessionId: string; epoch: number; inputSeq: number; phase: "down" | "move" | "up" | "cancel"; points: { x: number; y: number }[] };
+export type MeetingSemanticKey = { captureId: string; annotationId: string; nativeSessionId: string; generation: number };
+export type MeetingSemanticTool =
+  { tool: "pointer"; color: string; size: number } |
+  { tool: "laser" | "pen" | "highlighter" | "rectangle" | "ellipse" | "arrow" | "eraser"; color: string; size: number };
+export type MeetingSemanticSceneElement =
+  { type: "stroke"; id: string; color: string; size: number; highlight: boolean; points: number[] } |
+  { type: "shape"; id: string; kind: "rectangle" | "ellipse" | "arrow"; color: string; size: number; x1: number; y1: number; x2: number; y2: number };
+export type MeetingSemanticScene = { size: { width: number; height: number }; elements: MeetingSemanticSceneElement[]; lasers: [] };
+export type MeetingSemanticLaser = { stroke: Extract<MeetingSemanticSceneElement, { type: "stroke" }>; opacity: number };
+export type MeetingSemanticCapabilities = {
+  backend: "windows-semantic";
+  selected: true;
+  tools: ["pointer", "laser", "pen", "highlighter", "ellipse", "rectangle", "arrow", "eraser"];
+  history: ["undo", "clear"];
+};
+export type MeetingSemanticNativeEvent = MeetingSemanticKey & { seq: number } & (
+  { kind: "opened"; size: { width: number; height: number }; capabilities: MeetingSemanticCapabilities } |
+  { kind: "pointer"; batch: MeetingSemanticPointerBatch } |
+  { kind: "state"; state: "active" | "minimized" | "resized" | "unknown" | "closed" | "unsupported-dpi"; epoch: number; input: boolean; visible: boolean } |
+  { kind: "toolbar"; command: { type: "tool"; tool: MeetingSemanticTool } | { type: "undo" | "clear" } } |
+  { kind: "closed"; reason: "manual" | "resized" | "target-closed" | "tracking-lost" | "native-write-failed" | "toolbar-gone" | "renderer-gone" | "unsupported-dpi" }
+);
+
 export type DesktopCommandMap = {
   meetingScreenSources: { args: [requestId: string]; result: MeetingScreenSource[] };
   meetingScreenChoose: { args: [requestId: string, sourceId: string | null]; result: boolean };
   meetingMediaPermission: { args: [kind: "camera" | "microphone" | "screen", prompt?: boolean]; result: { granted: boolean; status: string; newlyGranted?: boolean } };
   meetingPrivacySettings: { args: [kind: "camera" | "microphone" | "screen"]; result: void };
   meetingMiniReady: { args: []; result: void };
+  meetingSharePresentation: { args: [sharing: boolean]; result: void };
   meetingWindowState: { args: []; result: { compact: boolean } };
   meetingDiagnosticsGet: { args: []; result: { storageAvailable: boolean; records: unknown[] } };
   meetingConfigGet: { args: []; result: { enabled: boolean; appId: number; filePath: string } };
@@ -657,11 +682,19 @@ export type DesktopCommandMap = {
   meetingWhiteboardOpen: { args: [input: { meetingId: string }]; result: { whiteboardId: string; scene: string | null } };
   meetingWhiteboardSave: { args: [input: { meetingId: string; whiteboardId: string; content: string }]; result: void };
   meetingWhiteboardExport: { args: [input: { title?: string; kind: "png" | "excalidraw"; data: string }]; result: { saved: boolean } };
-  meetingAnnotationState: { args: []; result: { available: boolean; active: boolean } };
+  meetingAnnotationState: { args: []; result: { available: boolean; active: boolean; preparing?: boolean; lastExitReason?: string; lastExitDetail?: string } };
   meetingWindowShareTarget: { args: []; result: MeetingWindowShareTarget | null };
-  meetingWindowShareReady: { args: [input: { captureId: string; ready: boolean }]; result: void };
+  meetingWindowShareReady: { args: [input: { captureId: string; ready: boolean; pixelSize?: { width: number; height: number } }]; result: void };
   meetingAnnotationOpen: { args: []; result: void };
   meetingAnnotationClose: { args: [input?: { shareStopped?: boolean }]; result: void };
+  meetingSemanticAnnotationWrite: { args: [input: MeetingSemanticKey & (
+    { command: "mode"; mode: "pointer" } |
+    { command: "mode"; mode: "draw"; style: { tool: "laser" | "pen" | "highlighter" | "rectangle" | "ellipse" | "arrow" | "eraser"; color: string; size: number; highlight: boolean } } |
+    { command: "abort" } |
+    { command: "apply-preview"; previewRevision: number; epoch: number; hiddenElementIds: string[]; scene: MeetingSemanticScene } |
+    { command: "apply-lasers"; laserRevision: number; epoch: number; lasers: MeetingSemanticLaser[] } |
+    { command: "apply-scene"; sceneRevision: number; scene: MeetingSemanticScene; history: { canUndo: boolean; canClear: boolean } }
+  )]; result: { ok: boolean; reason?: string } };
   toonFactoryOpen: { args: [workspaceId: string]; result: ToonFactoryStatus };
   toonFactoryHide: { args: []; result: void };
   toonFactoryClose: { args: []; result: void };

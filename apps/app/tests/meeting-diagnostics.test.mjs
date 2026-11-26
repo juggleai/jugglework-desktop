@@ -5,6 +5,13 @@ import ts from 'typescript';
 const source=await fs.readFile(new URL('../src/react-app/domains/meeting/diagnostics.ts',import.meta.url),'utf8');
 const load=async suffix=>import('data:text/javascript;base64,'+Buffer.from(ts.transpileModule(source+`\nexport const instance=${suffix};`,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64'));
 
+test('meeting window waits for admission and rejected API diagnostics allowlist business reasons', async () => {
+ const room=await fs.readFile(new URL('../src/react-app/domains/meeting/meeting-room.tsx',import.meta.url),'utf8');
+ const api=await fs.readFile(new URL('../src/react-app/domains/meeting/api.ts',import.meta.url),'utf8');
+ assert.match(room,/if \(m && s\.phase === "joined"\) \{ setPanel\(null\); detach\(\); \}/);
+ assert.match(api,/Object\.hasOwn\(messages, code\) \? code : "unclassified"/);
+});
+
 test('bounded diagnostics persist across restart; metrics exclude credentials and retain numeric media counters', async () => {
  const original=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
  const values=new Map();

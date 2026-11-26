@@ -52,6 +52,8 @@ export async function meetingRequest<T>(
       typeof body.error === "string"
         ? body.error
         : (body.error?.code ?? body.code);
+    meetingDiagnostic("http.rejected", { status: res.status,
+      reason: typeof code === "string" && Object.hasOwn(messages, code) ? code : "unclassified" });
     throw new Error(
       messages[code] ||
         body.error?.message ||
@@ -74,11 +76,17 @@ export const meetingAPI = {
     ),
   get: (id: string) =>
     meetingRequest<{ meeting: Meeting }>(`/${encodeURIComponent(id)}`),
-  create: (input: MeetingCreate, key: string) =>
-    meetingRequest<{ meeting: Meeting }>("", {
+  create: async (input: MeetingCreate, key: string) => {
+    meetingDiagnostic("meeting.create.timing", { immediate: input.immediate,
+      startOffsetMs: Date.parse(input.startAt) - Date.now(), durationMs: Date.parse(input.endAt) - Date.parse(input.startAt) });
+    const result = await meetingRequest<{ meeting: Meeting }>("", {
       ...post(input),
       headers: { "Idempotency-Key": key },
-    }),
+    });
+    meetingDiagnostic("meeting.create.result", { status: ["scheduled", "live", "ended", "cancelled", "expired"].includes(result.meeting.status) ? result.meeting.status : "other",
+      endOffsetMs: Date.parse(result.meeting.endAt) - Date.now() });
+    return result;
+  },
   join: (id: string, sessionId = "") =>
     meetingRequest<MeetingJoin>(
       `/${encodeURIComponent(id)}/join`,

@@ -9,6 +9,7 @@ apps/*/node_modules/
 .next/
 out/
 dist/
+/apps/desktop/.dev-helpers/
 packages/*/dist/
 apps/*/dist/
 apps/desktop/release-staging/

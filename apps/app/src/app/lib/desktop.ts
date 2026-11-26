@@ -825,6 +825,9 @@ export function readMeetingWindowState() {
 export function markMeetingMiniReady() {
   return invokeElectronHelper("meetingMiniReady");
 }
+export function setMeetingSharePresentation(sharing: boolean) {
+  return invokeElectronHelper("meetingSharePresentation", sharing);
+}
 
 export function listMeetingScreenSources(requestId: string) {
   return invokeElectronHelper("meetingScreenSources", requestId);
@@ -848,8 +851,16 @@ export function readMeetingAnnotationState() {
 export function readMeetingWindowShareTarget() {
   return invokeElectronHelper("meetingWindowShareTarget");
 }
-export function setMeetingWindowShareReady(input: { captureId: string; ready: boolean }) {
+export function setMeetingWindowShareReady(input: { captureId: string; ready: boolean; pixelSize?: { width: number; height: number } }) {
   return invokeElectronHelper("meetingWindowShareReady", input);
+}
+export function writeMeetingSemanticAnnotation(input: import("@jugglework/types/desktop-ipc").MeetingSemanticKey & (
+  { command: "mode"; mode: "pointer" } | { command: "mode"; mode: "draw"; style: { tool: "laser" | "pen" | "highlighter" | "rectangle" | "ellipse" | "arrow" | "eraser"; color: string; size: number; highlight: boolean } } |
+  { command: "abort" } | { command: "apply-preview"; previewRevision: number; epoch: number; hiddenElementIds: string[];
+    scene: import("@jugglework/types/desktop-ipc").MeetingSemanticScene } | { command: "apply-lasers"; laserRevision: number; epoch: number;
+    lasers: import("@jugglework/types/desktop-ipc").MeetingSemanticLaser[] } | { command: "apply-scene"; sceneRevision: number;
+    scene: import("@jugglework/types/desktop-ipc").MeetingSemanticScene; history: { canUndo: boolean; canClear: boolean } })) {
+  return invokeElectronHelper("meetingSemanticAnnotationWrite", input);
 }
 export function openMeetingAnnotation() {
   return invokeElectronHelper("meetingAnnotationOpen");

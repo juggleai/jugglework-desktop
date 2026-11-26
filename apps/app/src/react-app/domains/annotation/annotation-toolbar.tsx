@@ -27,7 +27,10 @@ const DRAW: ToolButton[] = [
 const ERASER: ToolButton[] = [{ tool: "eraser", label: "橡皮擦", icon: Eraser }];
 const COLOR_NAMES: Record<string, string> = { "#ef4444": "红", "#facc15": "黄", "#22c55e": "绿", "#3b82f6": "蓝", "#a855f7": "紫" };
 
-export function AnnotationToolbar({ state, send }: { state: AnnotationState; send: (command: AnnotationCommand) => void }) {
+type ToolbarCapabilities = AnnotationTool[] | { tools: AnnotationTool[]; history?: ("undo" | "clear")[] };
+
+export function AnnotationToolbar({ state, send }: { state: AnnotationState & { capabilities?: ToolbarCapabilities }; send: (command: AnnotationCommand) => void }) {
+  const supportedTools = Array.isArray(state.capabilities) ? state.capabilities : state.capabilities?.tools;
   const drag = useRef<{ x: number; y: number } | null>(null);
   const setTool = (patch: Partial<AnnotationState["tool"]>) => send({ type: "tool", tool: { ...state.tool, ...patch } });
   const onGripDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -42,7 +45,7 @@ export function AnnotationToolbar({ state, send }: { state: AnnotationState; sen
     drag.current = { x: event.screenX, y: event.screenY };
     send({ type: "move", dx, dy });
   };
-  const tools = (list: ToolButton[]) => list.map(({ tool, label, icon: Icon }) => (
+  const tools = (list: ToolButton[]) => list.filter(({ tool }) => !supportedTools || supportedTools.includes(tool)).map(({ tool, label, icon: Icon }) => (
     <button key={tool} type="button" role="radio" aria-checked={state.tool.tool === tool} aria-label={label} title={label}
       onClick={() => setTool({ tool })}>
       <Icon size={17} strokeWidth={1.8} />
@@ -68,7 +71,7 @@ export function AnnotationToolbar({ state, send }: { state: AnnotationState; sen
         ))}
       </div>
       <span className="sep" />
-      <div className="tools" role="radiogroup" aria-label="橡皮擦">{tools(ERASER)}</div>
+      {(!supportedTools || supportedTools.includes("eraser")) && <div className="tools" role="radiogroup" aria-label="橡皮擦">{tools(ERASER)}</div>}
       <button type="button" aria-label="撤销" title="撤销" disabled={!state.history.canUndo} onClick={() => send({ type: "undo" })}><Undo2 size={17} /></button>
       <button type="button" aria-label="清除" title="清除所有标注" disabled={!state.history.canClear} onClick={() => send({ type: "clear" })}><Trash2 size={17} /></button>
       <span className="sep" />

@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
-// Hosts the whiteboard page in the meeting stage. The page runs in a same-origin
-// iframe so Excalidraw gets its own window/document for pointer and keyboard
-// events; it never loads in a separate native window.
+// Portal this host into a stable, same-origin independent window. Hiding the
+// meeting window must not unmount it: the iframe owns the live canvas stream.
+// Excalidraw gets its own document for pointer and keyboard events.
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import { exportMeetingWhiteboard, saveMeetingWhiteboard } from "@/app/lib/desktop";
 import type { MeetingWhiteboardSession } from "./store";
@@ -10,15 +10,17 @@ import type { WhiteboardBridge } from "./whiteboard/whiteboard-page";
 type WhiteboardFrame = HTMLIFrameElement & { __juggleworkWhiteboard?: WhiteboardBridge };
 
 /** Resolved like the ZEGO loader: BASE_URL is "/" on the dev server and "./" in packaged builds. */
-export function whiteboardPageUrl(baseURI: string, base: string = import.meta.env.BASE_URL) {
+export function whiteboardPageUrl(baseURI: string, base: string = import.meta.env.BASE_URL ?? "./") {
   return new URL(`${base}whiteboard.html`, baseURI).href;
 }
 
-export function MeetingWhiteboardStage({ session, theme, onPublish, onFail }: {
+export function MeetingWhiteboardStage({ session, theme, onPublish, onFail, pageBaseURI }: {
   session: MeetingWhiteboardSession;
   theme: "light" | "dark";
-  onPublish(whiteboardId: string, stream: MediaStream): void;
+  onPublish(whiteboardId: string, stream: MediaStream): void | Promise<void>;
   onFail(message: string): void;
+  /** App entry base URI, not the portal window's about:blank document URI. */
+  pageBaseURI?: string;
 }) {
   const flush = useRef<(() => void) | null>(null);
   const callbacks = useRef({ onPublish, onFail });
@@ -38,7 +40,9 @@ export function MeetingWhiteboardStage({ session, theme, onPublish, onFail }: {
     if (!frame || frame.__juggleworkWhiteboard === bridge) return;
     // The bridge must exist before the page's scripts run, so src is set here.
     frame.__juggleworkWhiteboard = bridge;
-    frame.src = whiteboardPageUrl(window.document.baseURI);
-  }, [bridge]);
-  return <iframe key={session.whiteboardId} ref={attach} className="meeting-whiteboard-frame" title="会议白板" />;
+    frame.src = whiteboardPageUrl(pageBaseURI ?? window.document.baseURI);
+  }, [bridge, pageBaseURI]);
+  // The independent host need not copy meeting.css to size the board correctly.
+  return <iframe key={session.whiteboardId} ref={attach} className="meeting-whiteboard-frame" title="会议白板"
+    style={{ display: "block", width: "100%", height: "100%", minHeight: 0, border: 0 }} />;
 }
