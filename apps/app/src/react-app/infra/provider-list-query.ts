@@ -145,6 +145,36 @@ export function cloudGroupCatalogKey() {
   return ["enabled-cloud-groups", settings.baseUrl, settings.activeOrgId, readDenUserId(), managedProviderEpoch()] as const;
 }
 
+// 上次同步成功后的受管模型目录。启动时 query 缓存为空且 epoch 会变，同步完成前
+// 云模型会一直被过滤；这里按 部署/组织/用户 持久化，启动先用它，同步后覆盖。
+const CLOUD_GROUP_CATALOG_STORAGE_KEY = "jugglework.den.enabledCloudGroups";
+
+function cloudGroupCatalogScope() {
+  const settings = readDenSettings();
+  return JSON.stringify([settings.baseUrl, settings.activeOrgId, readDenUserId()]);
+}
+
+export function readPersistedCloudGroupCatalog(): string[] | undefined {
+  try {
+    // 退出登录后 userId 仍会保留，所以必须同时有登录态才可信。
+    if (!readDenSettings().authToken?.trim()) return undefined;
+    const stored = JSON.parse(window.localStorage.getItem(CLOUD_GROUP_CATALOG_STORAGE_KEY) ?? "null");
+    if (stored?.scope !== cloudGroupCatalogScope() || !Array.isArray(stored.ids)) return undefined;
+    return stored.ids.filter((id: unknown): id is string => typeof id === "string");
+  } catch {
+    return undefined;
+  }
+}
+
+export function writePersistedCloudGroupCatalog(ids: string[] | null) {
+  try {
+    if (ids === null) window.localStorage.removeItem(CLOUD_GROUP_CATALOG_STORAGE_KEY);
+    else window.localStorage.setItem(CLOUD_GROUP_CATALOG_STORAGE_KEY, JSON.stringify({ scope: cloudGroupCatalogScope(), ids }));
+  } catch {
+    // 存储不可用时只是失去启动加速。
+  }
+}
+
 export function usePickerProviderItems(value: ProviderListResponse | null | undefined, options?: { fileWindow?: boolean }) {
   const scopeEpoch = useManagedProviderEpoch();
   const scopeCurrent = scopeEpoch === managedProviderEpoch() && !managedProviderSwitchPending();
@@ -153,7 +183,8 @@ export function usePickerProviderItems(value: ProviderListResponse | null | unde
   // proxy already checks readiness, and Main invalidates its query on changes.
   const fileWindow = options?.fileWindow === true;
   return useMemo(() => {
-    const enabled = catalog.data && new Set(catalog.data);
+    const ids = catalog.data ?? (fileWindow ? undefined : readPersistedCloudGroupCatalog());
+    const enabled = ids && new Set(ids);
     return getConnectedProviderItems(value).filter((provider) => !isManagedProvider(provider.id, provider) || (scopeCurrent && (fileWindow || enabled?.has(provider.id))));
   }, [catalog.data, fileWindow, scopeCurrent, value]);
 }

@@ -98,6 +98,12 @@ Desktop SHALL treat an imported cloud provider as applied only when the engine p
 - **THEN** both session model pickers hide that group immediately and Desktop requests a scoped reload for the difference, including when the last group was removed
 - **AND** locally configured providers remain available during reconciliation
 
+#### Scenario: Startup before the first cloud sync completes
+- **WHEN** Desktop starts with a signed-in session and the organization catalog has not been confirmed yet
+- **THEN** the model pickers use the catalog persisted by the last successful sync for the same deployment, organization, and user
+- **AND** the persisted catalog is ignored without an authentication token or on any scope mismatch, and is cleared when the managed catalog is hidden
+- **AND** the result of the current sync replaces the persisted catalog once it completes
+
 #### Scenario: Engine lacks the provider entirely
 - **WHEN** the baseline records a provider the engine does not list
 - **THEN** the sync re-imports the provider once

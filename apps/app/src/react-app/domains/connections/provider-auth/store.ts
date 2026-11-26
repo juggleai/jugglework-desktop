@@ -38,7 +38,7 @@ import {
   filterProviderList,
 } from "../../../../app/utils/providers";
 import { getReactQueryClient } from "../../../infra/query-client";
-import { cloudGroupCatalogKey, ensureProviderListQuery, removeDeletedProviderFromQueries, restoreRecreatedProvider } from "../../../infra/provider-list-query";
+import { cloudGroupCatalogKey, ensureProviderListQuery, removeDeletedProviderFromQueries, restoreRecreatedProvider, writePersistedCloudGroupCatalog } from "../../../infra/provider-list-query";
 import { confirmManagedProviderScope, isManagedProviderAuthorityRejected, managedProviderConfirmationCurrent, managedProviderEpoch, managedProviderHost, notifyManagedProviderCatalogChanged } from "../../../../app/lib/managed-provider-scope";
 import type { JuggleWorkServerStoreSnapshot } from "../jugglework-server-store";
 import {
@@ -2595,6 +2595,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const hideManagedCatalog = () => {
       if (epoch !== managedProviderEpoch()) return;
       getReactQueryClient().setQueryData(catalogKey, []);
+      writePersistedCloudGroupCatalog(null);
       notifyManagedProviderCatalogChanged();
     };
     const fenceRejectedAuthority = async (revision: string, error: unknown) => {
@@ -2833,7 +2834,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     assertCurrentAuthority();
     if (!await refreshProviders({ force: true })) throw new Error("Managed model catalog refresh failed.");
     assertCurrentAuthority();
-    getReactQueryClient().setQueryData(catalogKey, liveProviders.map(getCloudManagedProviderId));
+    const enabledGroupIds = liveProviders.map(getCloudManagedProviderId);
+    getReactQueryClient().setQueryData(catalogKey, enabledGroupIds);
+    writePersistedCloudGroupCatalog(enabledGroupIds);
     notifyManagedProviderCatalogChanged();
     return true;
   }
