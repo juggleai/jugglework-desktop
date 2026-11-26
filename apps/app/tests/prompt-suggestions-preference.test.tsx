@@ -30,17 +30,30 @@ async function withPreferences(stored: unknown, run: (storage: Map<string, strin
   }
 }
 
-test.each([undefined, {}, { promptSuggestionsEnabled: false }, { promptSuggestionsEnabled: "true" }, { promptSuggestionsEnabled: 1 }, { promptSuggestionsEnabled: null }])("新安装、升级及无效值不会意外开启建议：%j", async (stored) => {
-  await withPreferences(stored, async () => {
+async function readEnabled(stored: unknown, setup?: (storage: Map<string, string>) => void) {
+  let enabled: boolean | undefined;
+  await withPreferences(stored, async (storage) => {
+    setup?.(storage);
     let local!: ReturnType<typeof useLocal>;
     function Probe() { local = useLocal(); return null; }
     let view!: TestRenderer.ReactTestRenderer;
     try {
       await act(async () => { view = TestRenderer.create(<LocalProvider persist={false}><Probe /></LocalProvider>); });
-      expect(DEFAULT_PROMPT_SUGGESTIONS_ENABLED).toBe(false);
-      expect(local.prefs.promptSuggestionsEnabled).toBe(false);
+      enabled = local.prefs.promptSuggestionsEnabled;
     } finally { await act(async () => { view?.unmount(); }); }
   });
+  return enabled;
+}
+
+test.each([undefined, {}, { promptSuggestionsEnabled: false }, { promptSuggestionsEnabled: "true" }, { promptSuggestionsEnabled: null }])("新安装及升级（含旧版默认写入的 false）默认开启建议：%j", async (stored) => {
+  expect(DEFAULT_PROMPT_SUGGESTIONS_ENABLED).toBe(true);
+  expect(await readEnabled(stored)).toBe(true);
+});
+
+test("迁移完成后，用户主动关闭的选择会保留", async () => {
+  const migrated = (storage: Map<string, string>) => storage.set("jugglework.promptSuggestions.defaultOnMigrated", "1");
+  expect(await readEnabled({ promptSuggestionsEnabled: false }, migrated)).toBe(false);
+  expect(await readEnabled({ promptSuggestionsEnabled: "bad" }, migrated)).toBe(true);
 });
 
 test("全局开关说明费用及 Tab 不发送，更新后持久化并在重新挂载时保留", async () => {

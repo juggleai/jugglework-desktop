@@ -79,7 +79,10 @@ const LocalContext = createContext<LocalContextValue | undefined>(undefined);
 
 const UI_STORAGE_KEY = "jugglework.ui";
 export const DEFAULT_SHOW_THINKING = true;
-export const DEFAULT_PROMPT_SUGGESTIONS_ENABLED = false;
+export const DEFAULT_PROMPT_SUGGESTIONS_ENABLED = true;
+// 旧版默认值 false 会和用户的主动选择一起被写入本地存储，无法区分。
+// 默认改为开启时，对已有存档做一次迁移；迁移后用户的选择按原样保留。
+const PROMPT_SUGGESTIONS_DEFAULT_ON_MIGRATION_KEY = "jugglework.promptSuggestions.defaultOnMigrated";
 
 const INITIAL_UI: LocalUIState = { view: "settings", tab: "general" };
 const INITIAL_PREFS: LocalPreferences = {
@@ -110,6 +113,19 @@ function readPersisted<T>(key: string, fallback: T): T {
   }
 }
 
+function resolvePromptSuggestionsEnabled(stored: unknown) {
+  if (typeof window === "undefined") return DEFAULT_PROMPT_SUGGESTIONS_ENABLED;
+  try {
+    if (window.localStorage.getItem(PROMPT_SUGGESTIONS_DEFAULT_ON_MIGRATION_KEY)) {
+      return typeof stored === "boolean" ? stored : DEFAULT_PROMPT_SUGGESTIONS_ENABLED;
+    }
+    window.localStorage.setItem(PROMPT_SUGGESTIONS_DEFAULT_ON_MIGRATION_KEY, "1");
+  } catch {
+    return typeof stored === "boolean" ? stored : DEFAULT_PROMPT_SUGGESTIONS_ENABLED;
+  }
+  return DEFAULT_PROMPT_SUGGESTIONS_ENABLED;
+}
+
 function writePersisted(key: string, value: unknown) {
   if (typeof window === "undefined") return;
   try {
@@ -130,7 +146,7 @@ export function LocalProvider({ children, persist = true }: LocalProviderProps) 
   );
   const [prefs, setPrefsRaw] = useState<LocalPreferences>(() => {
     const persisted = readPersisted(LOCAL_PREFERENCES_KEY, INITIAL_PREFS);
-    persisted.promptSuggestionsEnabled = persisted.promptSuggestionsEnabled === true;
+    persisted.promptSuggestionsEnabled = resolvePromptSuggestionsEnabled(persisted.promptSuggestionsEnabled);
     persisted.desktopNotifications = isDesktopNotificationPreference(persisted.desktopNotifications)
       ? persisted.desktopNotifications
       : DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE;
