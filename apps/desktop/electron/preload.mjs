@@ -355,6 +355,12 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
       ipcRenderer.on("jugglework:file-window:upload-cloud", handler);
       return () => ipcRenderer.removeListener("jugglework:file-window:upload-cloud", handler);
     },
+    /** 仅主窗口接收：文件助手子工作区需要同步云模型。 */
+    onProviderSyncRequest(callback) {
+      const handler = (_event, input) => callback(input);
+      ipcRenderer.on("jugglework:file-window:sync-providers", handler);
+      return () => ipcRenderer.removeListener("jugglework:file-window:sync-providers", handler);
+    },
     /** 监听文件窗口标签变化。 */
     onChanged(callback) {
       const handler = (_event, input) => callback(input);

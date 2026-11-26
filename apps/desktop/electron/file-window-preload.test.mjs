@@ -78,6 +78,14 @@ test("file windows receive catalog invalidation but cannot publish it", () => {
   assert.throws(() => bridge.invokeDesktop("invalidateFileWindowProviderCatalog"), /文件窗口不支持此操作/);
 });
 
+test("文件窗口不能接收或发起云模型同步请求", () => {
+  const exposed = {};
+  const source = readFileSync(new URL("./file-window-preload.mjs", import.meta.url), "utf8").replace(/^import .* from "electron";$/m, "");
+  vm.runInNewContext(source, { process: { platform: "darwin" }, contextBridge: { exposeInMainWorld(_name, value) { exposed.bridge = value; } }, ipcRenderer: new EventEmitter() });
+  assert.equal(exposed.bridge.fileWindow.onProviderSyncRequest, undefined);
+  assert.equal(exposed.bridge.fileWindow.syncProviders, undefined);
+});
+
 test("原生开窗检查早于 React 装配时保留请求，草稿桥就绪后只答复一次", async () => {
   /** @type {any} */
   let bridge;

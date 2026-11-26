@@ -47,6 +47,7 @@ import { WelcomeRoute } from "./welcome-route";
 import { NotificationCenterController } from "./notification-center";
 import { RootJuggleWorkServerProvider } from "../domains/connections/root-jugglework-server-provider";
 import { FileWindowSessionStopCoordinator } from "./file-window-session-stop-coordinator";
+import { FileWindowProviderSyncCoordinator } from "../domains/connections/provider-auth/file-window-provider-sync";
 import { AutomationRunNotificationCoordinator } from "../domains/automations/automation-run-notification-coordinator";
 import { AutomationActivityProvider } from "../domains/automations/automation-activity-provider";
 import { HostMarketplacePluginsProvider } from "../domains/settings/state/host-marketplace-plugins-provider";
@@ -342,6 +343,7 @@ export function AppRoot() {
               <BrandThemeControlActions />
               <RootJuggleWorkServerProvider>
                 <FileWindowSessionStopCoordinator />
+                <FileWindowProviderSyncCoordinator />
                 <CloudDocsCoordinator />
                 <NativeActionsResponder />
                 <DenSigninGate>

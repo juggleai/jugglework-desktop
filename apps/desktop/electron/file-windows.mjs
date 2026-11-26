@@ -45,6 +45,7 @@ export function createFileWindows({
   openSession,
   uploadCloud,
   lookupCloud,
+  syncProviders,
   cloudDocs,
   fetcher = fetch,
 }) {
@@ -583,6 +584,8 @@ export function createFileWindows({
     let context;
     try {
       context = registerSource(entry, origin, local, options);
+      // 文件助手子工作区是按需新建的独立引擎，云模型只能由持有登录态的主窗口导入。
+      if (local) void syncProviders?.({ workspaceId: origin.workspaceId, workspaceRoot: origin.workspaceRoot });
       await refreshConversation(entry, context);
       captured?.verify();
       verifyCloudSource?.();

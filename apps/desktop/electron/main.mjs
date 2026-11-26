@@ -1622,6 +1622,11 @@ const fileWindows = createFileWindows({
   lookupCloud: async (input) => {
     mainWindow?.webContents.send("jugglework:file-window:upload-cloud", { ...input, lookup: true, requestId: crypto.randomUUID() });
   },
+  // 主窗口不存在时不创建：没有登录态可用，子工作区保持未导入，与此前行为一致。
+  syncProviders: async (input) => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+    mainWindow.webContents.send("jugglework:file-window:sync-providers", input);
+  },
   uploadCloud: async (input) => {
     await createMainWindow();
     mainWindow?.show();

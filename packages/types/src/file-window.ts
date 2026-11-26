@@ -139,6 +139,8 @@ export interface FileWindowBridge {
   onSessionStopRequest?(callback: (input: { workspaceId: string; sessionId: string }) => Promise<{ ok: true }>): () => void;
   /** 仅主窗口接收：独立文件窗口请求把当前文件上传为云文档。 */
   onUploadCloud?(callback: (input: { workspaceId: string; path: string; requestId?: string; lookup?: boolean }) => void): () => void;
+  /** 仅主窗口接收：文件助手子工作区已登记，需用主窗口登录态同步云模型。 */
+  onProviderSyncRequest?(callback: (input: { workspaceId: string; workspaceRoot: string }) => void): () => void;
   /** 在主窗口编辑区选择文件后，复用所属聊天的右侧文件标签。 */
   onOpenInPanel?(
     callback: (input: {
