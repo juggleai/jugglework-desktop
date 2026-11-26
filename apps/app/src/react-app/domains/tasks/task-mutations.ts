@@ -31,7 +31,10 @@ export function useCreateProductTask(client: DenClient, scope: ProductTaskScope 
     mutationFn: (input: DenProductTaskCreateInput) => client.createProductTask(scope!.organizationId, input),
     onSuccess: async (result, input, captured) => {
       if (!captured) return;
-      queryClient.setQueryData(productTaskKeys.detail(captured.scope, result.task.id), result);
+      queryClient.setQueryData<DenProductTaskResult>(productTaskKeys.detail(captured.scope, result.task.id), (current) => {
+        // A delayed create receipt must not replace newer detail (e.g. after unfollow).
+        return current && current.task.version >= result.task.version ? undefined : result;
+      });
       await Promise.all([
         refreshTaskListsAndActivity(queryClient, captured.scope),
         input.parentTaskId && queryClient.invalidateQueries({ queryKey: productTaskKeys.detail(captured.scope, input.parentTaskId), exact: true }),

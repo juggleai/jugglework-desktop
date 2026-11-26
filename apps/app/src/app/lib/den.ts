@@ -138,6 +138,8 @@ export type DenProductTaskPermissions = {
   canView: boolean; canEditContent: boolean; canEditTime: boolean; canManageMembers: boolean;
   /** Absent on older servers, where assignment uses canManageMembers. */
   canAssign?: boolean;
+  /** Absent on older servers, where self-follow uses canManageMembers and PATCH. */
+  canFollowSelf?: boolean;
   canUnfollowSelf?: boolean;
   canManageVisibility: boolean; canComplete: boolean; canCompleteWhole?: boolean; canReopen: boolean; canCancel: boolean;
   canComment: boolean; canDelete: boolean; canRestore: boolean;
@@ -1059,7 +1061,7 @@ function normalizeProductTaskResult(value: unknown): DenProductTaskResult {
   if (members.length !== value.members.length) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
   const permissions = value.permissions;
   const permissionNames = ["canView", "canEditContent", "canEditTime", "canManageMembers", "canManageVisibility", "canComplete", "canReopen", "canCancel", "canComment", "canDelete", "canRestore"] as const;
-  if (permissionNames.some((name) => typeof permissions[name] !== "boolean") || ["canAssign", "canCompleteWhole", "canUnfollowSelf"].some(name => name in permissions && typeof permissions[name] !== "boolean")) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
+  if (permissionNames.some((name) => typeof permissions[name] !== "boolean") || ["canAssign", "canCompleteWhole", "canFollowSelf", "canUnfollowSelf"].some(name => name in permissions && typeof permissions[name] !== "boolean")) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
   return { task, members, permissions: permissions as DenProductTaskPermissions, tombstone: value.tombstone === true, replayed: value.replayed === true };
 }
 
@@ -4566,6 +4568,10 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         method: "GET", token, organizationId: orgId, signal: requestOptions.signal,
       });
       return normalizeProductTaskResult(payload);
+    },
+
+    async followProductTask(orgId: string, taskId: string, input: { expectedVersion: number; idempotencyKey: string }): Promise<void> {
+      await requestJson<void>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/follow`, { method: "POST", token, organizationId: orgId, body: input });
     },
 
     async unfollowProductTask(orgId: string, taskId: string, input: { expectedVersion: number; idempotencyKey: string }): Promise<void> {

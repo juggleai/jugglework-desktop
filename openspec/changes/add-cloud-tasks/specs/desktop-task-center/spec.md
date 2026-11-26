@@ -280,10 +280,15 @@ The panel SHALL separate task fields from comments with a divider, render commen
 - **AND** the comment composer starts on one row and its Aa toggle shows or hides formatting tools without losing the draft or selection
 - **AND** both editors display formatting directly and support links, emoji selection, and searchable organization-member mentions without selecting the same member twice in one draft
 
-#### Scenario: Follow and manage task followers
+#### Scenario: Manage other task followers
 - **WHEN** an authorized member adds a follower or changes the bottom follower selection
 - **THEN** the Desktop persists the complete follower relationship set while retaining non-follower task members
 - **AND** refreshes the visible follower avatars and count from the authoritative task result
+
+#### Scenario: Follow without managing task members
+- **WHEN** the signed-in viewer with `canFollowSelf: true` uses Follow
+- **THEN** Desktop sends the versioned self-follow POST and refreshes the authoritative detail after the empty response
+- **AND** only an absent `canFollowSelf` permits the legacy member-manager PATCH; explicit `false` disables self-follow
 
 #### Scenario: Stop following without managing task members
 - **WHEN** the signed-in follower uses the permitted self-unfollow action

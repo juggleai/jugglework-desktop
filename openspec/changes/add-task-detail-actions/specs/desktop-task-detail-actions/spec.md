@@ -50,7 +50,23 @@ Desktop SHALL read `GET /v1/tasks/:taskId/relations` for a readable live detail,
 - **THEN** indicate unavailability or error, suppress relation writes and stale badges, and keep independently permitted history and delete usable
 
 ### Requirement: Follow state reflects independent roles
-Follow state, avatars and count SHALL reflect actual follower roles rather than creator or assignee identity. Creation, including inline subtasks, SHALL rely on the server for creator and assignee defaults. Assignment edits SHALL preserve unrelated roles. Self-unfollow SHALL respect `canUnfollowSelf` and not require permission to manage other members.
+Follow state, avatars and count SHALL reflect actual follower roles rather than creator or assignee identity. Creation, including inline subtasks, SHALL rely on the server for creator and assignee defaults. Desktop SHALL render the returned roles in the detail footer and task list, and a delayed create receipt SHALL NOT overwrite a newer cached detail. Assignment edits SHALL preserve unrelated roles.
+
+#### Scenario: Show the saved followers after creation
+- **WHEN** the server returns the creator and assignees as followers of a newly created task
+- **THEN** Desktop shows those saved follower roles in the task list and detail footer without inferring any additional followers
+
+### Requirement: Self-service follow controls
+Desktop SHALL use the dedicated follow and unfollow POSTs when their respective capability is true, independent of member management. Both send `expectedVersion` and `idempotencyKey` and accept empty `204`.
+
+#### Scenario: Compatibility and scoped follow refresh
+- **WHEN** a member uses the self-follow controls
+- **THEN** explicit false disables the action; only absent `canFollowSelf` allows the legacy member-manager PATCH preserving unrelated roles
+- **AND** Desktop prevents duplicate in-flight changes, refreshes detail, lists and activity in the original scope and does not apply late results to a different account, organization or server
+
+#### Scenario: Read-only viewer follows
+- **WHEN** a viewer with `canFollowSelf: true` uses Follow
+- **THEN** Desktop sends one scoped self-follow POST without PATCHing members, and displays the follower role only after reading it back from the server
 
 #### Scenario: Assignee stops following
 - **WHEN** a signed-in assignee uses Unfollow and still has task access

@@ -142,6 +142,8 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   const liveScopeKey = React.useRef(scopeKey);
   const liveConflict = React.useRef<ProductTaskConflict | null>(conflict);
   const liveSelectedTaskId = React.useRef(selectedTaskId);
+  const selfFollowRequests = React.useRef(new Set<string>());
+  const [selfFollowPendingIds, setSelfFollowPendingIds] = React.useState<ReadonlySet<string>>(() => new Set());
   const discardedDraftTaskIds = React.useRef(new Set<string>());
   const saveAttemptCounter = React.useRef(0);
   const latestSaveAttempts = React.useRef(new Map<string, number>());
@@ -640,46 +642,85 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     return await setTaskMembership(task, created.list.id, true) ? created.list.id : null;
   };
 
-  const unfollowSelf = async (task: DenProductTask) => {
-    if (!scope || !currentMemberId || detailQuery.isError || task.id !== liveSelectedTaskId.current) return;
+  const changeSelfFollow = async (task: DenProductTask, follow: boolean) => {
+    if (!scope || liveScopeKey.current !== scopeKey || !currentMemberId || detailQuery.isError || task.id !== liveSelectedTaskId.current || selfFollowRequests.current.has(task.id)) return;
     const key = productTaskKeys.detail(scope, task.id);
     const detail = queryClient.getQueryData<DenProductTaskResult>(key);
-    if (!detail?.permissions.canUnfollowSelf || detail.tombstone || !detail.permissions.canView) return;
-    const stillSelected = () => liveScopeKey.current === scopeKey && liveSelectedTaskId.current === task.id;
+    if (!detail || detail.tombstone || detail.task.deletedAt || !detail.permissions.canView) return;
+    const isFollowing = detail.members.some((member) => member.memberId === currentMemberId && member.role === "follower");
+    if (isFollowing === follow || !(follow ? detail.permissions.canFollowSelf ?? detail.permissions.canManageMembers : detail.permissions.canUnfollowSelf)) return;
+    const scopeIsCurrent = () => liveScopeKey.current === scopeKey;
+    selfFollowRequests.current.add(task.id);
+    setSelfFollowPendingIds(new Set(selfFollowRequests.current));
     try {
-      await cloud.client.unfollowProductTask(scope.organizationId, task.id, { expectedVersion: task.version, idempotencyKey: mutationKey("desktop-unfollow-task") });
-    } catch (error) {
-      if (stillSelected()) mutationError(error);
-      // Even a failed write may mean access, membership or the version changed.
+      if (follow && detail.permissions.canFollowSelf === undefined) {
+        await updateTaskFollowers(task, currentMemberId);
+        return;
+      }
+      try {
+        const write = follow ? cloud.client.followProductTask : cloud.client.unfollowProductTask;
+        await write(scope.organizationId, task.id, { expectedVersion: detail.task.version, idempotencyKey: mutationKey(follow ? "desktop-follow-task" : "desktop-unfollow-task") });
+      } catch (error) {
+        if (scopeIsCurrent() && liveSelectedTaskId.current === task.id) mutationError(error);
+        // Even a failed write may mean access, membership or the version changed.
+      }
+      // Both endpoints return empty 204s. Re-authorize before displaying any change.
+      await refreshSelfFollow(scope, task.id, scopeIsCurrent);
+    } finally {
+      selfFollowRequests.current.delete(task.id);
+      if (scopeIsCurrent()) setSelfFollowPendingIds(new Set(selfFollowRequests.current));
     }
-    // The 204 intentionally carries no task: re-authorize the detail before
-    // showing a new membership state. Cancel any pre-write detail read first.
-    await queryClient.cancelQueries({ queryKey: key, exact: true });
+  };
+
+  const refreshSelfFollow = async (scope: ProductTaskScope, taskId: string, scopeIsCurrent: () => boolean) => {
+    const key = productTaskKeys.detail(scope, taskId);
+    const scopes = [productTaskKeys.lists(scope), productTaskKeys.activityFeeds(scope), productTaskKeys.details(scope)];
+    if (scopeIsCurrent()) await queryClient.cancelQueries({ queryKey: key, exact: true });
+    if (!scopeIsCurrent()) {
+      // Mark the captured scope stale without starting reads with the old session.
+      await Promise.all(scopes.map(queryKey => queryClient.invalidateQueries({ queryKey, refetchType: "none" })));
+      return;
+    }
     let lostAccess = false;
     try {
-      const latest = await queryClient.fetchQuery({ queryKey: key, staleTime: 0, retry: false, queryFn: ({ signal }) => cloud.client.getProductTask(scope.organizationId, task.id, { signal }) });
+      const latest = await queryClient.fetchQuery({ queryKey: key, staleTime: 0, retry: false, queryFn: async ({ signal }) => {
+        const result = await cloud.client.getProductTask(scope.organizationId, taskId, { signal });
+        if (!scopeIsCurrent()) throw new Error("Task scope changed");
+        return result;
+      } });
       lostAccess = latest.tombstone || !latest.permissions.canView;
     } catch (error) {
       lostAccess = error instanceof DenApiError && (error.status === 403 || error.status === 404);
     }
     if (lostAccess) {
-      if (stillSelected()) closeTask();
+      if (scopeIsCurrent() && liveSelectedTaskId.current === taskId) closeTask();
       queryClient.removeQueries({ queryKey: key });
     }
+    const refetchType = scopeIsCurrent() ? "active" : "none";
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(scope) }),
-      queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeeds(scope) }),
+      queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(scope), refetchType }),
+      queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeeds(scope), refetchType }),
       // Subtasks, ancestor links and related-task projections respect visibility.
-      queryClient.invalidateQueries({ queryKey: productTaskKeys.details(scope), predicate: q => q.queryKey[key.length - 1] !== task.id || (!lostAccess && q.queryKey.length > key.length) }),
+      queryClient.invalidateQueries({ queryKey: productTaskKeys.details(scope), refetchType, predicate: q => q.queryKey[key.length - 1] !== taskId || (!lostAccess && (refetchType === "none" || q.queryKey.length > key.length)) }),
     ]);
   };
 
-  const updateTaskFollowers = async (task: DenProductTask, followerMemberIds: string[]) => {
+  const updateTaskFollowers = async (task: DenProductTask, followers: string[] | string) => {
     if (!scope) return false;
     const capturedScope = scope;
     const detail = await runMutation(() => cloud.client.getProductTask(capturedScope.organizationId, task.id), { isCurrent: () => liveScopeKey.current === productTaskScopeKey(capturedScope) });
     if (!detail) return false;
+    const legacySelfFollow = typeof followers === "string";
+    const currentFollowers = detail.members.filter((member) => member.role === "follower").map((member) => member.memberId);
+    if (legacySelfFollow) {
+      if (liveSelectedTaskId.current !== task.id || detail.tombstone || detail.task.deletedAt || !detail.permissions.canView) return false;
+      if (detail.permissions.canFollowSelf !== undefined || currentFollowers.includes(followers) || !detail.permissions.canManageMembers) {
+        queryClient.setQueryData(productTaskKeys.detail(capturedScope, task.id), detail);
+        return false;
+      }
+    }
     if (!detail.permissions.canManageMembers) { toast.error(t("tasks.follower_edit_not_allowed")); return false; }
+    const followerMemberIds = legacySelfFollow ? [...currentFollowers, followers] : followers;
     const retainedMembers = detail.members.filter((member) => member.role !== "follower").map((member) => ({ memberId: member.memberId, role: member.role }));
     const addsOtherMemberToPrivateTask = detail.task.visibility === "private" && followerMemberIds.some((memberId) => memberId !== detail.task.creatorMemberId);
     if (addsOtherMemberToPrivateTask && !detail.permissions.canManageVisibility) { toast.error(t("tasks.follower_edit_not_allowed")); return false; }
@@ -1027,7 +1068,8 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
       <TaskUploadContext.Provider value={uploads}>
       {selectedTaskId ? <TaskDetail onSaveAttachmentRemoval={saveAttachmentRemoval} key={`${scopeKey}:${selectedTaskId}`} result={detailQuery.data} activity={activityQuery.data} reminders={remindersQuery.data ?? []} members={availableMembers} lists={activeListsQuery.data?.items ?? []} loading={detailQuery.isLoading} error={detailQuery.isError} currentMemberId={currentMemberId} preservedDraft={editDrafts[selectedTaskId] ?? null} onDraftChange={updateBufferedDraft} onClose={closeTask} onSave={saveTask} onComment={addComment} onFollowersChange={updateTaskFollowers} onAssigneesChange={updateWorkbenchAssignees} onCompletionPolicyChange={updateWorkbenchCompletionPolicy} listFilings={{ onMembership: setTaskMembership, onCreate: createListAndAddTask, groupSettings: taskListGroupSettings, onGroupChange: setTaskGroup }} onTimeChange={updateWorkbenchTime} onPriorityChange={updateTaskPriority} onSetReminder={(scheduledAt) => void runMutation(() => reminderMutations.set.mutateAsync({ idempotencyKey: mutationKey("desktop-set-reminder"), mode: "absolute", scheduledAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }))} onCancelReminder={() => void runMutation(() => reminderMutations.cancel.mutateAsync(mutationKey("desktop-cancel-reminder")))} onTransition={(task, operation, anchor) => operation === "restore" ? void submitTransition(task, operation) : void transitionWorkbenchTask(task, operation, anchor)}
         groupPicker={!selectedListId && allowCustomGrouping && workbenchSettings.group === "custom" && detailTask && !detailQuery.data?.tombstone ? <DetailGroupPicker taskId={detailTask.id} settings={workbenchSettings} onChange={(groupId, name) => setTaskGroup(detailTask.id, null, groupId, name)} /> : undefined}
-        onUnfollowSelf={unfollowSelf}
+        onSelfFollowChange={changeSelfFollow}
+        selfFollowPending={selfFollowPendingIds.has(selectedTaskId)}
         actionContext={scope && !detailQuery.isError && detailTask?.id === selectedTaskId && detailQuery.data?.permissions.canView && !detailQuery.data.tombstone && !detailTask.deletedAt ? { client: cloud.client, scope, onSelect: selectTask, onDeleted: () => { if (liveScopeKey.current === scopeKey && liveSelectedTaskId.current === selectedTaskId) closeTask(); } } : undefined}
         ancestorNavigation={scope && detailTask && !detailQuery.data?.tombstone ? <TaskAncestorBreadcrumbs task={detailTask} client={cloud.client} scope={scope} onSelect={selectTask} /> : undefined}
         subtasks={detailQuery.data && !detailQuery.data.tombstone && (detailQuery.data.task.subtaskCount !== undefined || detailQuery.data.permissions.canEditContent) ? <TaskSubtasksSection task={detailQuery.data.task} members={availableMembers} currentMemberId={currentMemberId} canCreate={detailQuery.data.permissions.canEditContent} page={subtaskPage} loading={subtaskQuery.isLoading} loadingMore={subtaskQuery.isFetchingNextPage} error={hasVisibleSubtasks && subtaskQuery.isError} onRetry={() => void subtaskQuery.refetch()} onLoadMore={() => void subtaskQuery.fetchNextPage({ cancelRefetch: false })} onSelect={selectTask} onCreate={createSubtask} onTransition={transitionWorkbenchTask} onReorder={reorderSubtask} editing={subtaskEditing} /> : undefined} /> : null}
@@ -1311,7 +1353,8 @@ function TaskDetailListFilings({ task, lists, actions }: { task: DenProductTask;
 
 function TaskDetail(props: { onSaveAttachmentRemoval: (task: DenProductTask, description: string) => Promise<boolean>; ancestorNavigation?: React.ReactNode; subtasks?: React.ReactNode; groupPicker?: React.ReactNode;
   actionContext?: Pick<React.ComponentProps<typeof TaskDetailActions>, "client" | "scope" | "onSelect" | "onDeleted">;
-  onUnfollowSelf: (task: DenProductTask) => Promise<void>;
+  onSelfFollowChange: (task: DenProductTask, follow: boolean) => Promise<void>;
+  selfFollowPending: boolean;
   result: ReturnType<typeof useProductTask>["data"]; activity: ReturnType<typeof useProductTaskActivity>["data"]; reminders: Array<{ scheduledAt: string; state: string }>; members: DenOrganizationMember[]; lists: DenProductTaskList[]; loading: boolean; error: boolean; currentMemberId: string | null; preservedDraft: ProductTaskEditDraft | null; onDraftChange: (draft: ProductTaskEditDraft) => void; onClose: () => void; onSave: (id: string, patch: { expectedVersion: number; idempotencyKey: string; title: string; description: string }) => Promise<void>; onComment: (taskId: string, body: string) => Promise<boolean>; onFollowersChange: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onAssigneesChange: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onCompletionPolicyChange: NonNullable<React.ComponentProps<typeof AssigneeCell>["onCompletionPolicyChange"]>; listFilings: DetailListFilings; onTimeChange: (task: DenProductTask, field: TaskTimeField, value: string | null) => Promise<boolean>; onPriorityChange: (task: DenProductTask, priority: EditableTaskPriority) => Promise<boolean>; onSetReminder: (scheduledAt: string) => void; onCancelReminder: () => void; onTransition: (task: DenProductTask, operation: "complete" | "cancel" | "reopen" | "restore", anchor?: HTMLElement) => void }) {
   const task = props.result?.task;
   const uploads = React.useContext(TaskUploadContext);
@@ -1377,12 +1420,13 @@ function TaskDetail(props: { onSaveAttachmentRemoval: (task: DenProductTask, des
     if (!nextTitle || (nextTitle === task.title && description === task.description)) return;
     void props.onSave(task.id, { expectedVersion: task.version, idempotencyKey: mutationKey("desktop-auto-save-task"), title: nextTitle, description });
   };
-  const changeFollowers = async (next: string[] | "unfollow-self") => {
-    if (!task || followersBusy.current || (next === "unfollow-self" ? !permissions?.canUnfollowSelf : !permissions?.canManageMembers)) return;
+  const canChangeSelfFollow = isFollowing ? permissions?.canUnfollowSelf : permissions?.canFollowSelf ?? permissions?.canManageMembers;
+  const changeFollowers = async (next: string[] | "self") => {
+    if (!task || props.selfFollowPending || followersBusy.current || (next === "self" ? !canChangeSelfFollow || !props.actionContext : !permissions?.canManageMembers)) return;
     followersBusy.current = true;
     setFollowersPending(true);
     try {
-      if (next === "unfollow-self") await props.onUnfollowSelf(task);
+      if (next === "self") await props.onSelfFollowChange(task, !isFollowing);
       else await props.onFollowersChange(task, next);
     } finally { followersBusy.current = false; setFollowersPending(false); }
   };
@@ -1399,7 +1443,7 @@ function TaskDetail(props: { onSaveAttachmentRemoval: (task: DenProductTask, des
         {t(myPartDone ? "tasks.my_part_done" : showCompletionMenu ? "tasks.complete" : currentAssigneeCompleted ? "tasks.assignee_completed" : requiresOwnCompletion ? "tasks.complete_my_part" : "tasks.complete")}
         {myPartDone && <ChevronDown aria-hidden="true" className="size-3.5" />}
       </Button> : task?.status === "completed" && props.result?.permissions.canReopen ? <Button type="button" variant="outline" size="sm" className="border-green-8 text-green-10" onClick={(event) => props.onTransition(task, "reopen", event?.currentTarget)}><Check className="size-4" />{t("tasks.completed")}</Button> : null;
-  const following = task && currentMemberId && props.actionContext ? <Button type="button" data-testid="task-detail-follow" variant="ghost" size="sm" aria-label={t(isFollowing ? "tasks.unfollow_task" : "tasks.follow_task")} title={t(isFollowing ? "tasks.unfollow_task" : "tasks.follow_task")} disabled={followersPending || (isFollowing ? !permissions?.canUnfollowSelf : !permissions?.canManageMembers)} className={isFollowing ? "text-blue-10" : "text-dls-secondary"} onClick={() => void changeFollowers(isFollowing ? "unfollow-self" : [...followerIds, currentMemberId])}>{isFollowing ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}{isFollowing ? t("tasks.following_task") : t("tasks.follow_task")}</Button> : null;
+  const following = task && currentMemberId && props.actionContext ? <Button type="button" data-testid="task-detail-follow" variant="ghost" size="sm" aria-label={t(isFollowing ? "tasks.unfollow_task" : "tasks.follow_task")} title={t(isFollowing ? "tasks.unfollow_task" : "tasks.follow_task")} disabled={followersPending || props.selfFollowPending || !canChangeSelfFollow} className={isFollowing ? "text-blue-10" : "text-dls-secondary"} onClick={() => void changeFollowers("self")}>{isFollowing ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}{isFollowing ? t("tasks.following_task") : t("tasks.follow_task")}</Button> : null;
   return <><button type="button" data-testid="task-detail-backdrop" aria-label={t("tasks.close_detail")} className="absolute inset-0 z-40 cursor-default bg-transparent" onClick={props.onClose} /><aside data-testid="task-detail-panel" className="absolute inset-y-0 right-0 z-50 isolate flex w-[min(560px,94%)] flex-col overflow-hidden border-l border-dls-border bg-background shadow-2xl" aria-label={t("tasks.detail")}>
     {showHistory && props.actionContext && task && <TaskHistory {...props.actionContext} taskId={task.id} onBack={() => setShowHistory(false)} getActor={id => { const member = memberById.get(id); return member ? { name: memberLabel(member), avatar: member.user.avatar ?? undefined } : undefined; }} />}
     <div hidden={historyOpen} className={historyOpen ? undefined : "flex min-h-0 flex-1 flex-col"}>
@@ -1426,7 +1470,7 @@ function TaskDetail(props: { onSaveAttachmentRemoval: (task: DenProductTask, des
       </section><section className="border-t border-dls-border px-7 py-5"><h3 className="mb-4 text-sm font-semibold text-dls-text">{t("tasks.comments")}</h3><div className="space-y-4">{props.activity?.comments.length ? props.activity.comments.map((item) => { const author = memberById.get(item.authorMemberId); return <div key={item.id} className="flex items-start gap-3"><Avatar size="sm"><AvatarImage src={author?.user.avatar ?? undefined} /><AvatarFallback>{author ? memberLabel(author).slice(0, 1) : "?"}</AvatarFallback></Avatar><div className="min-w-0 flex-1"><div className="flex items-baseline gap-2"><span className="text-sm font-medium">{author ? memberLabel(author) : item.authorMemberId}</span><span className="text-xs text-dls-secondary">{new Date(item.createdAt).toLocaleString()}</span></div><CommentBody body={item.body} /></div></div>; }) : <p className="text-sm text-dls-secondary">{t("tasks.comments_empty")}</p>}</div></section></div>
       <div className="shrink-0 bg-background px-6 pb-4 pt-3">
         {props.result?.permissions.canComment && <TaskCommentEditor upload={upload} value={comment} onChange={setComment} onSend={sendComment} pending={commentPending} members={props.members} />}
-        <div className="mt-3 flex items-center gap-2"><span className="flex -space-x-1">{followerIds.slice(0, 4).map((id) => { const member = memberById.get(id); return <Avatar key={id} size="sm"><AvatarImage src={member?.user.avatar ?? undefined} /><AvatarFallback>{member ? memberLabel(member).slice(0, 1) : "?"}</AvatarFallback></Avatar>; })}</span><span className="text-sm text-dls-text">{t("tasks.followers_count", { count: followerIds.length })}</span>{props.result?.permissions.canManageMembers ? <CreatePeoplePicker testId="task-detail-followers" label={t("tasks.add_follower")} members={props.members} selected={followerIds} onChange={(ids) => void changeFollowers(ids)} triggerContent={<Plus className="size-4" />} triggerClassName="flex size-8 items-center justify-center rounded-md text-dls-secondary hover:bg-dls-hover" /> : null}</div></div>
+        <div data-testid="task-detail-follower-summary" className="mt-3 flex items-center gap-2"><span className="flex -space-x-1">{followerIds.slice(0, 4).map((id) => { const member = memberById.get(id); const name = member ? memberLabel(member) : undefined; return <Avatar key={id} size="sm" title={name}><AvatarImage src={member?.user.avatar ?? undefined} alt={name ?? ""} /><AvatarFallback>{name?.slice(0, 1).toUpperCase() ?? "?"}</AvatarFallback></Avatar>; })}</span><span className="text-sm text-dls-text">{t("tasks.followers_count", { count: followerIds.length })}</span>{props.result?.permissions.canManageMembers ? <CreatePeoplePicker testId="task-detail-followers" label={t("tasks.add_follower")} members={props.members} selected={followerIds} onChange={(ids) => void changeFollowers(ids)} triggerContent={<Plus className="size-4" />} triggerClassName="flex size-8 items-center justify-center rounded-md text-dls-secondary hover:bg-dls-hover" /> : null}</div></div>
     </>}
     </div>
   </aside></>;

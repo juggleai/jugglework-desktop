@@ -133,19 +133,27 @@ test("task relations use the scoped encoded endpoint, CAS body and strict visibl
   }
 });
 
-test("self-unfollow uses the scoped versioned endpoint and accepts an empty 204", async () => {
+test.each(["follow", "unfollow"] as const)("self-%s uses the scoped versioned endpoint and accepts an empty 204", async (action) => {
   const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
-  const input = { expectedVersion: 9, idempotencyKey: "unfollow-one" };
+  const input = { expectedVersion: 9, idempotencyKey: `${action}-one` };
   globalThis.fetch = async (url, init) => {
-    expect(String(url)).toEndWith("/v1/tasks/task%2Fone/unfollow");
+    expect(String(url)).toEndWith(`/v1/tasks/task%2Fone/${action}`);
     expect(init?.method).toBe("POST");
     expect(JSON.parse(String(init?.body))).toEqual(input);
     expect(new Headers(init?.headers).get("x-jugglework-legacy-org-id")).toBe("org_one");
     return new Response(null, { status: 204 });
   };
-  await expect(client.unfollowProductTask("org_one", task.id, input)).resolves.toBeUndefined();
-  globalThis.fetch = async () => Response.json({ ...result, permissions: { ...result.permissions, canUnfollowSelf: "true" } });
-  await expect(client.getProductTask("org_one", task.id)).rejects.toMatchObject({ code: "invalid_task_payload" });
+  await expect(client[action === "follow" ? "followProductTask" : "unfollowProductTask"]("org_one", task.id, input)).resolves.toBeUndefined();
+});
+
+test.each(["canFollowSelf", "canUnfollowSelf"])("task detail validates optional %s without coercion", async (capability) => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  for (const value of [true, false, undefined, "true", null]) {
+    globalThis.fetch = async () => Response.json({ ...result, permissions: { ...result.permissions, [capability]: value } });
+    const read = client.getProductTask("org_one", task.id);
+    if (typeof value === "boolean" || value === undefined) expect((await read).permissions[capability as "canFollowSelf" | "canUnfollowSelf"]).toBe(value);
+    else await expect(read).rejects.toMatchObject({ code: "invalid_task_payload" });
+  }
 });
 
 test("parent candidates use a scoped endpoint and reject invalid or generic list responses", async () => {

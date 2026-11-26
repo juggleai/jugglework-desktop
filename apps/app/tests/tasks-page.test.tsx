@@ -4,7 +4,7 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
-import { DenApiError, type DenClient, type DenProductTask, type DenProductTaskActivityItem, type DenProductTaskList, type DenProductTaskListResult, type DenProductTaskResult } from "../src/app/lib/den";
+import { createDenClient, DenApiError, type DenClient, type DenProductTask, type DenProductTaskActivityItem, type DenProductTaskList, type DenProductTaskListResult, type DenProductTaskResult } from "../src/app/lib/den";
 import { Button } from "../src/components/ui/button";
 import { taskSectionStorageKey } from "../src/react-app/domains/tasks/task-page-state";
 import { productTaskKeys } from "../src/react-app/domains/tasks/task-queries";
@@ -2015,6 +2015,68 @@ test("full task creation keeps the selected start and due dates independent", as
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
+test.each(["new task", "late create receipt"])("create renders authoritative followers in the list and detail footer: %s", async (scenario) => {
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  sessionValues.set(taskSectionStorageKey(scope), "all");
+  localValues.set(taskWorkbenchStorageKey(scope, "all"), JSON.stringify({ fields: ["followers"] }));
+  const members = [
+    { id: "member_self", userId: "user_one", role: "member", user: { id: "user_one", name: "Creator", account: null, email: null, avatar: null } },
+    { id: "member_other", userId: "user_two", role: "member", user: { id: "user_two", name: "Assignee", account: null, email: null, avatar: null } },
+  ];
+  const created = result({ ...task(1, "Follow this launch", "", "new_task"), creatorMemberId: "member_self", visibility: "members" });
+  created.members = [{ memberId: "member_other", role: "assignee" }, { memberId: "member_self", role: "follower" }, { memberId: "member_other", role: "follower" }];
+  const latest = scenario === "late create receipt" ? { ...created, task: { ...created.task, version: 2 }, members: [created.members[0]!] } : created;
+  const receipt = deferred<void>();
+  const queryClient = createQueryClient();
+  const den = createDenClient({ baseUrl: scope.baseUrl, token: "test-token" });
+  const originalFetch = globalThis.fetch;
+  const submitted = mock();
+  let posted = false;
+  globalThis.fetch = async (url, init) => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith("/v1/tasks") && init?.method === "POST") {
+      submitted(JSON.parse(String(init.body)));
+      posted = true;
+      await receipt.promise;
+      return Response.json(created, { status: 201 });
+    }
+    if (path.endsWith("/v1/tasks")) return Response.json({ items: posted ? [latest.task] : [], membersByTaskId: posted ? { [latest.task.id]: latest.members } : {}, nextCursor: "" });
+    if (path.endsWith("/v1/tasks/new_task")) return Response.json(latest);
+    throw new Error(`Unexpected task request: ${path}`);
+  };
+  setCloudSession(connectedClient({ createProductTask: den.createProductTask, listProductTasks: den.listProductTasks, getProductTask: den.getProductTask, listOrganizationMembers: async () => ({ members, total: 2, limit: 200, offset: 0 }) }));
+  let renderer!: TestRenderer.ReactTestRenderer;
+  try {
+    await act(async () => { renderer = TestRenderer.create(taskPage(queryClient)); }); await settle();
+    await act(async () => { renderer.root.findByProps({ "data-testid": "task-create-menu" }).findAllByType("button")[0]!.props.onClick(); });
+    const dialog = renderer.root.findByProps({ role: "dialog" });
+    await act(async () => {
+      dialog.findByProps({ placeholder: "Enter a title and press Enter" }).props.onChange({ target: { value: created.task.title } });
+      dialog.findByProps({ "data-testid": "task-create-assignees-option-member_other" }).props.onClick();
+    });
+    await act(async () => { dialog.findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
+    expect(submitted).toHaveBeenCalledWith(expect.objectContaining({ members: [{ memberId: "member_other", role: "assignee" }] }));
+    if (scenario === "late create receipt") {
+      // A concurrent authoritative detail read has already observed both users unfollowing.
+      await queryClient.fetchQuery({ queryKey: productTaskKeys.detail(scope, latest.task.id), queryFn: () => den.getProductTask(scope.organizationId, latest.task.id) });
+    }
+    await act(async () => receipt.resolve()); await settle();
+    const row = renderer.root.findByProps({ "data-task-id": "new_task" });
+    const footer = renderer.root.findByProps({ "data-testid": "task-detail-follower-summary" });
+    for (const name of ["Creator", "Assignee"]) {
+      const rowName = row.findAllByType("span").filter((node) => node.props.title === name);
+      const footerAvatar = footer.findAllByType("span").filter((node) => node.props["data-slot"] === "avatar" && node.props.title === name);
+      expect(rowName).toHaveLength(scenario === "new task" ? 1 : 0);
+      expect(footerAvatar).toHaveLength(scenario === "new task" ? 1 : 0);
+    }
+    expect(footer.findByProps({ children: scenario === "new task" ? "2 following" : "0 following" })).toBeDefined();
+    expect(queryClient.getQueryData<DenProductTaskResult>(productTaskKeys.detail(scope, latest.task.id))?.task.version).toBe(latest.task.version);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (renderer) await act(async () => renderer.unmount());
+  }
+});
+
 test("full task creation can set a priority and a custom group for the chosen task list", async () => {
   const created = task(1, "Grouped task", "", "grouped_task");
   const list: DenProductTaskList = { id: "list_grouped", creatorMemberId: "member_self", name: "Planning list", description: "", marker: "P", visibility: "private", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
@@ -3958,10 +4020,109 @@ function selfFollowerDetail(): DenProductTaskResult {
   return { ...detail, members: [{ memberId: "member_self", role: "follower" }], permissions: { ...detail.permissions, canManageMembers: false, canUnfollowSelf: true } };
 }
 
+test("a read-only viewer follows with POST once, even after closing and reopening during the request", async () => {
+  let latest = selfFollowerDetail();
+  latest = { ...latest, members: [], permissions: { ...latest.permissions, canEditContent: false, canEditTime: false, canFollowSelf: true, canUnfollowSelf: false } };
+  const receipt = deferred<void>();
+  const followProductTask = mock(async () => {
+    await receipt.promise;
+    latest = { ...latest, task: { ...latest.task, version: 10 }, members: selfFollowerDetail().members, permissions: { ...latest.permissions, canFollowSelf: false, canUnfollowSelf: true } };
+  });
+  const updateProductTask = mock(async () => latest);
+  sessionValues.set(taskSectionStorageKey({ baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" }), "all");
+  const ui = await renderActions({ getProductTask: async () => latest, listProductTasks: async () => ({ items: [latest.task], nextCursor: "" }), followProductTask, updateProductTask });
+  try {
+    expect(ui.detail().findAllByProps({ "data-testid": "task-detail-followers-trigger" })).toHaveLength(0);
+    const follow = ui.buttons("Follow")[0]!;
+    expect(follow.props.disabled).toBe(false);
+    await act(async () => { follow.props.onClick(); follow.props.onClick(); });
+    await act(async () => { ui.renderer.root.findByProps({ "data-testid": "task-detail-backdrop" }).props.onClick(); });
+    await act(async () => { clickTaskRow(ui.renderer.root.findByProps({ "data-task-id": "task_one" })); });
+    expect(ui.buttons("Follow")[0]?.props.disabled).toBe(true);
+    expect(ui.detail().findByProps({ children: "0 following" })).toBeDefined();
+    expect(followProductTask).toHaveBeenCalledTimes(1);
+    expect(followProductTask).toHaveBeenCalledWith("org_one", "task_one", { expectedVersion: 9, idempotencyKey: expect.any(String) });
+    await act(async () => receipt.resolve()); await settle();
+    expect(ui.buttons("Unfollow task")[0]?.props.disabled).toBe(false);
+    expect(ui.detail().findByProps({ children: "1 following" })).toBeDefined();
+    expect(updateProductTask).not.toHaveBeenCalled();
+  } finally { await ui.unmount(); }
+});
+
+test("explicit denial disables self-follow even for a member manager", async () => {
+  const detail = result(task(1));
+  detail.permissions.canFollowSelf = false;
+  const followProductTask = mock(async () => {});
+  const updateProductTask = mock(async () => detail);
+  const ui = await renderActions({ getProductTask: async () => detail, followProductTask, updateProductTask });
+  try {
+    expect(ui.buttons("Follow")[0]?.props.disabled).toBe(true);
+    expect(followProductTask).not.toHaveBeenCalled();
+    expect(updateProductTask).not.toHaveBeenCalled();
+    expect(ui.detail().findByProps({ "data-testid": "task-detail-followers-trigger" })).toBeDefined();
+  } finally { await ui.unmount(); }
+});
+
+test("legacy self-follow does not PATCH if the preflight detail now reports the capability", async () => {
+  const detail = result(task(1));
+  const getProductTask = mock(async () => detail);
+  const followProductTask = mock(async () => {});
+  const updateProductTask = mock(async () => detail);
+  const ui = await renderActions({ getProductTask, followProductTask, updateProductTask });
+  try {
+    getProductTask.mockResolvedValue({ ...detail, permissions: { ...detail.permissions, canFollowSelf: false } });
+    await ui.click("Follow");
+    expect(ui.buttons("Follow")[0]?.props.disabled).toBe(true);
+    expect(updateProductTask).not.toHaveBeenCalled();
+    expect(followProductTask).not.toHaveBeenCalled();
+  } finally { await ui.unmount(); }
+});
+
+test.each(["receipt", "detail read"])("self-follow fences a late %s after switching organizations", async (phase) => {
+  const receipt = deferred<void>();
+  const read = deferred<DenProductTaskResult>();
+  const before = result(task(1, "Original organization"));
+  before.permissions.canFollowSelf = true;
+  const oldGet = mock(async () => before);
+  const client = createQueryClient();
+  const ui = await renderActions({ getProductTask: oldGet, followProductTask: async () => receipt.promise }, client);
+  const original = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  const next = { ...original, organizationId: "org_two" };
+  const other = result(task(17, "New organization"));
+  const newGet = mock(async () => other);
+  try {
+    const reads = oldGet.mock.calls.length;
+    await ui.click("Follow");
+    if (phase === "detail read") {
+      oldGet.mockImplementation(() => read.promise);
+      await act(async () => receipt.resolve()); await settle();
+      expect(oldGet).toHaveBeenCalledTimes(reads + 1);
+    }
+    setCloudSession(connectedClient({ getProductTask: newGet }), next.organizationId);
+    await act(async () => ui.renderer.update(taskPage(client, "task_one"))); await settle();
+    expect(ui.detail().findByProps({ value: "New organization" })).toBeDefined();
+    const newReads = newGet.mock.calls.length;
+    await act(async () => {
+      if (phase === "receipt") receipt.resolve();
+      else read.resolve(selfFollowerDetail());
+    });
+    await settle();
+    expect(oldGet).toHaveBeenCalledTimes(reads + (phase === "detail read" ? 1 : 0));
+    expect(newGet).toHaveBeenCalledTimes(newReads);
+    expect(client.getQueryData(productTaskKeys.detail(original, "task_one"))).toEqual(before);
+    expect(client.getQueryData(productTaskKeys.detail(next, "task_one"))).toEqual(other);
+    expect(ui.detail().findByProps({ value: "New organization" })).toBeDefined();
+    expect(toastErrors).toEqual([]);
+  } finally { await ui.unmount(); }
+});
+
 test("a non-manager unfollows only themselves and keeps detail if they can still see it", async () => {
   let latest = selfFollowerDetail();
+  latest.task.completionPolicy = "all_assignees";
+  const assignment = { memberId: "member_self", role: "assignee" as const, completedAt: latest.task.createdAt };
+  latest.members.push(assignment);
   const receipt = deferred<void>();
-  const unfollowProductTask = mock(async () => { await receipt.promise; latest = { ...latest, task: { ...latest.task, version: 10 }, members: [], permissions: { ...latest.permissions, canUnfollowSelf: false } }; });
+  const unfollowProductTask = mock(async () => { await receipt.promise; latest = { ...latest, task: { ...latest.task, version: 10 }, members: [assignment], permissions: { ...latest.permissions, canUnfollowSelf: false, canFollowSelf: true } }; });
   const updateProductTask = mock(async () => latest);
   const listProductTasks = mock(async () => ({ items: [], membersByTaskId: {}, nextCursor: "" }));
   const listProductTaskActivity = mock(async () => ({ items: [], nextCursor: "", hasMore: false, unreadCount: 0, latestSequence: 0 }));
@@ -3973,7 +4134,9 @@ test("a non-manager unfollows only themselves and keeps detail if they can still
     expect(ui.buttons("Unfollow task")[0]?.props.disabled).toBe(true);
     expect(unfollowProductTask).toHaveBeenCalledWith("org_one", "task_one", { expectedVersion: 9, idempotencyKey: expect.any(String) });
     await act(async () => receipt.resolve()); await settle();
-    expect(ui.buttons("Follow")[0]?.props.disabled).toBe(true);
+    expect(ui.buttons("Follow")[0]?.props.disabled).toBe(false);
+    expect(ui.detail().findByProps({ "data-testid": "task-detail-assignees" }).findByProps({ "data-testid": "task-assignee-completed" })).toBeDefined();
+    expect(ui.detail().findByProps({ children: "0 following" })).toBeDefined();
     expect(listProductTasks.mock.calls.length).toBeGreaterThan(beforeLists);
     expect(listProductTaskActivity.mock.calls.length).toBeGreaterThan(beforeFeed);
     expect(updateProductTask).not.toHaveBeenCalled();
