@@ -48,7 +48,7 @@ Docs 增加受限 POST `/api/jw/session/resume`：用该原生 Session 的 fetch
 - 实现抽取无目录投影的 grant 消费／绑定比较与只读 ACL 检查，不能直接调用会 directory.open 的 bootstrap／authorize。角色投影不一致、缺少 scope 或成员数据时返回 requires_bootstrap，由正常流程修复，不在 resume 中执行目录同步、issueUser、SessionIssuer 或 Set-Cookie。业务源 grant 消费本身仍为一次性写入，不把“只读恢复”描述为完全无服务端状态变化。
 - 通用 AuthGuard 在 resume 路由委托给专用 handler。handler 只用原生 Cookie 解析 Session，随后通过新 grant 和 ACL 校验，保持响应 no-store。Docs 从已授权 context 发布能力声明，旧服务缺少能力时直接走正常交接。
 
-恢复候选带有 Main 已校验的 Docs 来源。Desk 直接向 Work 申请新交接，并核对交接 URL 与保留视图的来源；来源变化时按显式目标走普通交接，旧视图按保存规则清理。无候选和旧 Main 缺少来源的情况仍读取运行配置。Docs 保留原生会话与文档 ACL 复核。
+恢复候选带有 Main 已校验的 Docs 来源。Desk 直接向 Work 申请新交接，并核对交接 URL 与保留视图的来源；来源变化时按显式目标走普通交接，旧视图按保存规则清理。普通打开与恢复均直接调用 Work docs/launch，由该接口校验功能开关、当前会话和组织成员，并从本次 bootstrapUrl 取得 Docs 来源，不再串行读取运行配置。需要只查询功能能力的其他入口仍可读取运行配置。Docs 保留原生会话与文档 ACL 复核。
 
 校验期间若发生退出、组织切换、原生导航、context 变化、deny 或原窗口关闭，结果作废。Main 在单个 await 前后检查同一实例及宿主绑定，不引入新锁。成功后先恢复状态订阅、主题、真实布局及引用来源，再允许可见；不能重放旧 API／上传／编辑请求。
 
@@ -60,11 +60,11 @@ Docs 增加受限 POST `/api/jw/session/resume`：用该原生 Session 的 fetch
 
 ## 6. 重启后的定位、缓存与预热
 
-Main 私有 userData 中仅存一个最近成功展示目标：格式版本、规范化 Work origin、userId、tenantId、已验证 Docs origin、目标 kind／workspaceId／docId 和更新时间。最多 7 天有效；文档 ID 属于私有使用记录，不进 Git／遥测。没有标题、正文、截图、comment 文本、grant、token、Cookie、contextId 或授权指纹；没有真实秘密进入本提案。退出登录／账户移除删除定位；组织切换取消当前预热，记录仅在完整身份匹配时可用。无定位时不预热。
+Main 私有 userData 中仅存一个最近成功展示的主页定位：格式版本、规范化 Work origin、userId、tenantId、已验证 Docs origin、主页 kind／workspaceId／空 docId 和更新时间。历史文档或私有文档定位不再用于启动预热；同进程刷新恢复仍以原生页面的实际文档路由为准。最多 7 天有效；文档 ID 属于私有使用记录，不进 Git／遥测。没有标题、正文、截图、comment 文本、grant、token、Cookie、contextId 或授权指纹；没有真实秘密进入本提案。退出登录／账户移除删除定位；组织切换取消当前预热，记录仅在完整身份匹配时可用。无定位时不预热。
 
-身份与组织加载确认、主窗首屏可交互后，使用带 1 秒 timeout 的 requestIdleCallback 调度最多一个可取消预热，不再固定等待 2 秒，加载最长 30 秒；不阻塞聊天、会议或首屏。按最近目标执行正常 launch／bootstrap，创建可前台接管的“全页宿主预热实例”，与现有 AI background 页隔离。隐藏但给正常布局尺寸，不聚焦、不自动开始导入／导出／AI／写操作；正常协作可能连接和同步，属于现有打开语义。无额外网络探测，离线／权威不可用即停止本次预热，不自动重试风暴。
+身份与组织加载确认、主窗首屏可交互后，使用带 1 秒 timeout 的 requestIdleCallback 调度最多一个可取消预热，不再固定等待 2 秒，加载最长 30 秒；不阻塞聊天、会议或首屏。按已访问主页执行正常 launch／bootstrap，创建可前台接管的“全页宿主预热实例”，与现有 AI background 页隔离。隐藏但给正常布局尺寸，不聚焦、不自动开始导入／导出／AI／写操作；正常协作可能连接和同步，属于现有打开语义。无额外网络探测，离线／权威不可用即停止本次预热，不自动重试风暴。
 
-用户打开与预热共用 Main 的一个全页打开登记：执行调度前检查 pending／attached，任何明确用户打开都取消尚未启动的本次启动预热。若用户先打开相同目标则不补建预热；先打开不同目标也不再预热旧目标。预热先开始且目标相同时，点击复用进行中的 Promise 和实例；尚未成功则继续正常 loading，不能再开第二份。点击不同显式目标、切换组织／账号、会话失效、窗关闭时取消“展示接管”；仅在安全保存后清理实例，不把 Abort 等同于服务器已取消。预热未使用 120 秒后保存确认清理；会话后来恢复正常时由下一次明确用户打开决定重试。
+用户打开与预热共用 Main 的一个全页打开登记：执行调度前检查 pending／attached，任何明确用户打开都取消尚未启动的本次启动预热。若用户先打开相同目标则不补建预热；先打开不同目标也不再预热旧目标。预热先开始且目标相同时，点击在原生实例登记后即可接管进行中的实例，无需等待命令 ready 再尝试接管；授权和 ready 完成前仍隐藏正文，不能再开第二份。接管后，原预热任务的迟到取消不能关闭前台实例。点击不同显式目标、切换组织／账号、会话失效、窗关闭时取消“展示接管”；仅在安全保存后清理实例，不把 Abort 等同于服务器已取消。预热未使用 120 秒后保存确认清理；会话后来恢复正常时由下一次明确用户打开决定重试。
 
 同一原生分区与同一 Docs 来源的后台操作或独立窗口交接先等待未认领预热完成保存清理。不同分区或来源的交接可独立进行。主窗口刷新或关闭全部云文档时，等待清理的旧宿主请求作废。退出与切换组织复用已经发出的预热保存确认。预热打开成功后，宿主同样记录 Work 下发的 Docs 来源，链接判断可复用该来源。
 
@@ -86,7 +86,7 @@ Main 在订阅完成、fresh 打开／claim／预热接管时，经受限 preloa
 
 Desk 分别用宿主与 Main 的单调时钟记录 Work runtime-config、Work launch 和原生启动阶段。Main 记录 command-ready、首次实际可见、内容 presentable 及结果，区分 bootstrap 与 resume。成功样本在实际可见和正文可展示都成立后结算。Workbench 导航可重新观测当前目标，每次启动最多保留一个结果。内存保留最近 128 条匿名样本，性能采集时可设置 `JUGGLEWORK_DOCS_STARTUP_DIAGNOSTICS=1` 输出到本机日志。旧服务缺少能力记 unsupported，声明支持但未响应记 unavailable。样本只包含耗时、路径、结果码和格式类别。
 
-基线还需采集点击、Docs context、脚本／Worker、workspace/root、Office describe/content 与编辑器初始化子阶段，可用本地浏览器网络与 Performance 采集。各进程只计算自己的相对耗时，不直接相减时钟读数。同一终点比较冷启动、磁盘暖缓存、活实例恢复、预热命中／未完成／未命中；无正文终点的样本不可用 command-ready 补位。附记创建实例数、bootstrap 次数与磁盘缓存命中。诊断不包含凭据或业务标识，不上报新增遥测。
+宿主 Performance 仅保留各匿名阶段最新一条 measure，区分预热接管、恢复候选、Work 交接和原生打开，不记录文档或身份字段。基线还需采集点击、Docs context、脚本／Worker、workspace/root、Office describe/content 与编辑器初始化子阶段，可用本地浏览器网络与 Performance 采集。各进程只计算自己的相对耗时，不直接相减时钟读数。同一终点比较冷启动、磁盘暖缓存、活实例恢复、预热命中／未完成／未命中；无正文终点的样本不可用 command-ready 补位。附记创建实例数、bootstrap 次数与磁盘缓存命中。诊断不包含凭据或业务标识，不上报新增遥测。
 
 ## 8. 性能验收与分期
 

@@ -140,7 +140,9 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
 
   function warmupReady(instanceId, scope) {
     const item = find({ instanceId });
-    if (!item?.warmup || !item.ready || item.denied || item.view.webContents.isDestroyed()) return false;
+    if (!item?.warmup || item.denied || item.view.webContents.isDestroyed() || item.origin !== scope.docsOrigin) return false;
+    // TIPS: 点击可接管仍在加载的同目标实例；setBounds 继续在 ready 前隐藏正文，不再等完后回退重建。
+    if (!item.ready) return !item.hasBeenReady;
     const actual = contentTarget(item);
     return actual?.workspaceId === scope.workspaceId && actual?.docId === scope.docId &&
       actual.workspaceId === item.readyWorkspaceId;
@@ -194,7 +196,8 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       item.ownerWindow !== getWindow() || !item.view.getVisible() || !item.ready || item.denied) return;
     const actual = contentTarget(item);
     const shown = item.presented;
-    if (!actual || actual.workspaceId !== shown?.workspaceId || actual.docId !== shown?.docId ||
+    // TIPS: 左侧入口固定打开主页；只记录已授权主页，避免预热上次文档后又因目标不匹配重建。
+    if (!actual || actual.docId !== null || actual.workspaceId !== shown?.workspaceId || actual.docId !== shown?.docId ||
       shown.contextId !== item.contextId) return;
     recent.write({ ...item.input, ...actual, docsOrigin: item.origin });
   }
@@ -443,6 +446,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     // 后台页面仍需有正常视口，供原生导入器和 Workspace 布局完成初始化。
     view.setBounds({ x: 0, y: 0, width: 1024, height: 768 });
     view.setVisible(false);
+    if (prewarming) warmup.opened(input.instanceId);
     view.webContents.setWindowOpenHandler(({ url }) => {
       try {
         if (new URL(url).protocol === "https:") void shell.openExternal(url);
@@ -549,7 +553,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       const instanceId = await warmup.claim(input, valid);
       if (!instanceId) return null;
       const item = find({ instanceId });
-      if (!item?.warmup || !item.ready || item.denied || !valid()) {
+      if (!item?.warmup || item.denied || !valid()) {
         void discardWarmup(instanceId);
         return null;
       }

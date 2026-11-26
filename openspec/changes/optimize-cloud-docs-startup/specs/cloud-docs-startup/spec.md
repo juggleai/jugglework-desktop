@@ -29,12 +29,12 @@ Docs SHALL consume a fresh normal launch grant for each resume attempt and verif
 - **AND** fallback and cleanup preserve existing draft and save barriers without reusing a consumed grant
 
 ### Requirement: Bounded restart warmup
-Desktop SHALL use existing isolated caches and at most one non-sensitive recent target after full restart. Warmup SHALL start only after current identity and the interactive main window are established, SHALL share the same pending instance with a matching user open, and SHALL NOT bypass authorization or start business writes.
+Desktop SHALL use existing isolated caches and at most one recent authorized home locator after full restart. Historical document locators SHALL NOT trigger startup warmup; live restoration SHALL continue to use the actual retained document route. Warmup SHALL start only after current identity and the interactive main window are established, SHALL share the same pending instance with a matching user open, and SHALL NOT bypass authorization or start business writes.
 
 #### Scenario: Immediate click while warmup is pending
 - **WHEN** a user opens the same target while its startup warmup is still pending
-- **THEN** both paths use a single pending operation and native instance
-- **AND** authorization and command-ready govern native visibility, and the visible Docs page shows its own loading state until the content is presentable
+- **THEN** both paths use a single pending operation and native instance, and ownership can transfer once the instance is registered without waiting for command-ready
+- **AND** authorization and command-ready govern native visibility, and late cancellation of the original warmup cannot close the claimed foreground instance
 
 #### Scenario: User open happens before warmup
 - **WHEN** a user explicitly opens any document before the startup warmup begins
@@ -83,3 +83,10 @@ Content presentation signals SHALL be optional, correlated to the current instan
 - **WHEN** a content-state query receives no response within five seconds or a hidden warmup has not yet received a paint opportunity
 - **THEN** authorized native visibility does not wait for content-state and uses the existing presentation path
 - **AND** a query timeout records unavailable timing without fabricating presentable, bootstrapping again or creating another instance
+
+### Requirement: Launch without redundant configuration discovery
+Desktop SHALL obtain the current Docs origin from the Work launch response for both fresh opens and live restoration. Work feature and membership checks SHALL remain authoritative.
+
+#### Scenario: Work rejects launch
+- **WHEN** Work disables Docs or rejects the current identity
+- **THEN** Desktop reports the existing failure without probing another origin or bypassing authorization

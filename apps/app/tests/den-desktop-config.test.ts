@@ -38,7 +38,7 @@ describe("Den desktop config client", () => {
     expect(headers[0]?.get("x-jugglework-legacy-org-id")).toBe("org_test");
   });
 
-  test("云文档恢复只申请新交接并返回 Work 当前指定的 Docs 来源", async () => {
+  test("云文档新开与恢复均只申请交接，使用 Work 当前指定来源而不额外读取配置", async () => {
     const requests: string[] = [];
     const fetchMock: typeof fetch = async (input, init) => {
       requests.push(`${init?.method} ${new URL(String(input)).pathname}`);
@@ -54,14 +54,27 @@ describe("Den desktop config client", () => {
       presentation: { instanceId: "test-instance", mode: "product" },
     } as const;
 
-    const resumed = await client.launchCloudDocs(target, undefined, "https://docs-old.test");
+    const resumed = await client.launchCloudDocs(target);
     expect(resumed.docsOrigin).toBe("https://docs-new.test");
     expect(resumed.startupWorkTiming?.runtimeConfigMs).toBe(0);
     expect(requests.splice(0)).toEqual(["POST /jwork/api/v1/docs/launch"]);
 
     const fresh = await client.launchCloudDocs(target);
-    expect(fresh.docsOrigin).toBe("https://docs-old.test");
-    expect(requests).toEqual(["GET /jwork/api/runtime-config", "POST /jwork/api/v1/docs/launch"]);
+    expect(fresh.docsOrigin).toBe("https://docs-new.test");
+    expect(fresh.startupWorkTiming?.runtimeConfigMs).toBe(0);
+    expect(requests).toEqual(["POST /jwork/api/v1/docs/launch"]);
+  });
+
+  test("Work 拒绝云文档交接时直接报错，不读取其他配置或尝试旁路", async () => {
+    const requests: string[] = [];
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: async (input: RequestInfo | URL) => {
+      requests.push(new URL(String(input)).pathname);
+      return Response.json({ error: 'docs_disabled', message: 'Docs disabled' }, { status: 503 });
+    } });
+    await expect(createDenClient({ baseUrl: 'https://work.test', token: 'token' }).launchCloudDocs({
+      tenantId: 'org', target: { kind: 'home' }, presentation: { instanceId: 'instance', mode: 'product' },
+    })).rejects.toMatchObject({ status: 503, code: 'docs_disabled' });
+    expect(requests).toEqual(['/jwork/api/v1/docs/launch']);
   });
 
   test("creates a short-lived Desktop enrollment grant in the active organization", async () => {

@@ -4110,25 +4110,19 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     /** 卡片只表达定位；打开前按当前组织复核持久事件及原投递目标。 */
     validateDocsCard: (input: { tenantId: string; contractVersion: 1; eventId: string; pageId: string; commentId?: string; kind: string; occurredAt: string; part: "group" | "direct"; conversationId: string }) =>
       requestJson<{ valid: boolean }>(baseUrls, "/api/v1/docs/notifications/validate", { method: "POST", token, organizationId: input.tenantId, body: input }),
-    /** 为当前明确组织申请云文档一次性登录交接。已有原生会话时由新交接响应提供部署地址，调用方须核对它与保留视图的来源。 */
+    /** 为当前明确组织申请交接；Work 同时校验功能开关与成员，部署地址取本次响应，保留视图须核对来源。 */
     launchCloudDocs: async (input: {
       tenantId: string;
       target: { kind: 'home' | 'page' | 'manage'; pageId?: string; workspaceId?: string; commentId?: string };
       presentation: DenDocsLaunch['presentation'];
-    }, signal?: AbortSignal, retainedDocsOrigin?: string): Promise<DenDocsLaunch> => {
+    }, signal?: AbortSignal): Promise<DenDocsLaunch> => {
       const started = performance.now();
-      let docsOrigin: string | undefined;
-      if (!retainedDocsOrigin) {
-        const config = await requestJson<{ docs?: { enabled: boolean; publicOrigin: string | null } }>(baseUrls, '/api/runtime-config', { signal });
-        if (!config.docs?.enabled || !config.docs.publicOrigin) throw new Error('docs_disabled');
-        docsOrigin = new URL(config.docs.publicOrigin).origin;
-      }
-      const configured = performance.now();
+      // TIPS: 交接接口已有权威开关和组织校验；直接使用其部署地址，避免打开前再串行探测一次配置。
       const launch = await requestJson<DenDocsLaunch>(baseUrls, '/api/v1/docs/launch', { method: 'POST', token, body: input, signal });
       return {
         ...launch,
-        docsOrigin: docsOrigin ?? new URL(launch.bootstrapUrl).origin,
-        startupWorkTiming: { runtimeConfigMs: retainedDocsOrigin ? 0 : configured - started, launchRequestMs: performance.now() - configured },
+        docsOrigin: new URL(launch.bootstrapUrl).origin,
+        startupWorkTiming: { runtimeConfigMs: 0, launchRequestMs: performance.now() - started },
       };
     },
     /** 读取已有运行配置中的 Docs 入口，不申请交接凭据。 */

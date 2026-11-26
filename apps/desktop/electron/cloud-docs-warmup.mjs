@@ -104,21 +104,24 @@ export function createCloudDocsWarmup({ discard, ready, loadTimeoutMs = 30_000, 
 
   return {
     reserve(input, scope) {
-      if (used || !scope || typeof input.authFingerprint !== "string" || !/^\d+:\d+$/.test(input.authFingerprint) || input.authFingerprint.length > 30 ||
+      if (used || !scope || scope.docId !== null || typeof input.authFingerprint !== "string" || !/^\d+:\d+$/.test(input.authFingerprint) || input.authFingerprint.length > 30 ||
         !/^[a-f0-9-]{36}$/i.test(input.hostBinding ?? "")) return null;
       used = true;
       const entry = { instanceId: randomUUID(), binding: input.hostBinding, authFingerprint: input.authFingerprint, scope };
       entry.wait = new Promise(resolve => { entry.complete = resolve; });
       pending = entry;
       expire(entry, loadTimeoutMs);
-      return { instanceId: entry.instanceId, docsOrigin: scope.docsOrigin, target: scope.docId
-        ? { kind: "page", workspaceId: scope.workspaceId, pageId: scope.docId }
-        : { kind: "home" } };
+      return { instanceId: entry.instanceId, docsOrigin: scope.docsOrigin, target: { kind: "home" } };
     },
     start(input, origin) {
       if (!pending || pending.instanceId !== input.instanceId || pending.started || !matches(pending, input) || pending.scope.docsOrigin !== origin) return false;
       pending.started = true;
       return true;
+    },
+    /** 原生实例已登记即可交接所有权；页面可见性和授权仍等待原有 ready。 */
+    opened(instanceId) {
+      const entry = pending;
+      if (entry?.instanceId === instanceId && entry.started) entry.complete(true);
     },
     settled(instanceId, success) {
       const entry = pending;
@@ -126,7 +129,6 @@ export function createCloudDocsWarmup({ discard, ready, loadTimeoutMs = 30_000, 
       if (!success) { cancel(); return; }
       if (entry.settled) return;
       entry.settled = true;
-      entry.complete(true);
       expire(entry, idleTimeoutMs);
     },
     async claim(input, isTrusted) {

@@ -222,10 +222,18 @@ export function CloudDocsPage(props: Props) {
           sourceUserId: auth.user!.id,
           tenantId: props.tenantId,
         };
+        // TIPS: 仅记录匿名分段耗时，区分预热等待与真实交接，不采集文档或身份字段。
+        const measure = (stage: string, start: number) => {
+          const name = `jw.desk.docs.${stage}`;
+          performance.clearMeasures(name);
+          performance.measure(name, { start, end: performance.now() });
+        };
         if (bridge.warmupClaim && bridge.status) {
+          const started = performance.now();
           const warmed = await bridge.warmupClaim({
             ...identity, target, authFingerprint: denCredentialFingerprint(settings.authToken ?? ""),
           });
+          measure('warmup-claim', started);
           if (!stillCurrent()) {
             if (warmed) void bridge.close(warmed).catch(() => {});
             return;
@@ -240,7 +248,9 @@ export function CloudDocsPage(props: Props) {
           }
         }
         if (bridge.resumeCandidate && bridge.resume) {
+          const requested = performance.now();
           const candidate = await bridge.resumeCandidate({ ...identity, target });
+          measure('resume-candidate', requested);
           if (!stillCurrent()) return;
           if (candidate) {
             const started = performance.now();
@@ -248,7 +258,7 @@ export function CloudDocsPage(props: Props) {
               tenantId: identity.tenantId,
               target: candidate.target,
               presentation: { instanceId: candidate.instanceId, mode: "product" },
-            }, undefined, candidate.docsOrigin);
+            });
             if (!stillCurrent()) return;
             if (grant.tenantId !== identity.tenantId || grant.presentation.instanceId !== candidate.instanceId)
               throw new Error(t("cloud_docs.connection_failed"));
@@ -288,6 +298,7 @@ export function CloudDocsPage(props: Props) {
           target,
           presentation: { instanceId, mode: "product" },
         });
+        measure('work-launch', launchStarted);
         if (!stillCurrent()) return;
         if (
           launch.tenantId !== props.tenantId ||
@@ -295,6 +306,7 @@ export function CloudDocsPage(props: Props) {
         )
           throw new Error(t("cloud_docs.connection_failed"));
         rememberCloudDocsOrigin(props.tenantId, launch.bootstrapUrl);
+        const opening = performance.now();
         await bridge.open({
           ...launch,
           instanceId,
@@ -303,6 +315,7 @@ export function CloudDocsPage(props: Props) {
           fullPage: true,
           startupLaunchMs: performance.now() - launchStarted,
         });
+        measure('native-open', opening);
         if (!stillCurrent()) {
           void bridge.close(instanceId).catch(() => {});
           return;

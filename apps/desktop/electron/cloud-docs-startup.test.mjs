@@ -54,6 +54,7 @@ test("预热共用单一实例，两个 claim 只能成功接管一次", async (
   const { instanceId, target, docsOrigin } = ticket;
   assert.equal(controller.start({ ...requester, instanceId }, docsOrigin), true);
   assert.equal(controller.start({ ...requester, instanceId }, docsOrigin), false);
+  controller.opened(instanceId);
   const first = controller.claim({ ...requester, target }, () => true);
   const duplicate = controller.claim({ ...requester, target }, () => true);
   controller.settled(instanceId, true);
@@ -85,6 +86,32 @@ test("显式打开先到及身份变化时取消预热，超时释放未使用�
 });
 
 const document = { targetKind: "document", workspaceId: "ws", docId: "doc" };
+
+test("启动只预热已访问主页，历史文档或私有文档定位不能触发错误目标预热", () => {
+  const discarded = [];
+  const controller = createCloudDocsWarmup({ discard: id => discarded.push(id), ready: () => true });
+  const requester = actor();
+  assert.equal(controller.reserve(requester, { ...scope, workspaceId: 'private', docId: 'doc' }), null);
+  const ticket = controller.reserve(requester, scope);
+  assert.deepEqual(ticket?.target, { kind: 'home' });
+  controller.cancel();
+  assert.deepEqual(discarded, [ticket.instanceId]);
+});
+
+test("点击可接管已登记但未就绪的预热，同一实例继续加载且不被迟到取消关闭", async () => {
+  const discarded = [];
+  const controller = createCloudDocsWarmup({ discard: id => discarded.push(id), ready: () => true });
+  const requester = actor();
+  const ticket = controller.reserve(requester, scope);
+  const claim = controller.claim({ ...requester, target: ticket.target }, () => true);
+  controller.start({ ...requester, instanceId: ticket.instanceId }, ticket.docsOrigin);
+  controller.opened(ticket.instanceId);
+  assert.equal(await claim, ticket.instanceId);
+  // 实际文档 ready 尚未发生；原预热 effect 的取消不能释放已接管实例。
+  controller.cancelBinding(requester.hostBinding, ticket.instanceId);
+  controller.settled(ticket.instanceId, true);
+  assert.deepEqual(discarded, []);
+});
 
 test("旧服务和失联观测分别采样", async () => {
   for (const [supported, expected] of [[false, "unsupported"], [true, "unavailable"]]) {

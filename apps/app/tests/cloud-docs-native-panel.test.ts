@@ -228,6 +228,58 @@ test("全页刷新接管原生视图，旧宿主操作及跨租户查询被拒�
   panel.close();
 });
 
+test("未就绪预热可接管，但授权 ready 前保持隐藏且迟到取消不关闭前台", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "jugglework-docs-claim-"));
+  const recentPath = join(dir, "recent.json");
+  const scope = { tenantId: "org", sourceUserId: "user", sourceServerOrigin: "https://work.test" };
+  const docsOrigin = "https://docs.test";
+  writeFileSync(recentPath, JSON.stringify({
+    ...scope, docsOrigin, docId: null, workspaceId: "scope", kind: "home", version: 1, updatedAt: Date.now(),
+  }));
+  const win = {
+    id: 23, webContents: { mainFrame: {}, send: mock(() => {}), getZoomFactor: () => 1 },
+    isDestroyed: () => false, getContentBounds: () => ({ width: 1000, height: 800 }),
+    contentView: { addChildView() {}, removeChildView() {} },
+  };
+  const panel = createCloudDocsPanel({ getWindow: () => win, recentPath });
+  const handlers = new Map<string, Function>(), events = new Map<string, Function>();
+  panel.registerIpc({
+    handle: (channel: string, callback: Function) => handlers.set(channel, callback),
+    on: (channel: string, callback: Function) => events.set(channel, callback),
+  });
+  const host = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
+  const binding = { ...scope, authFingerprint: "1:1", hostBinding: randomUUID() };
+  try {
+    const ticket = handlers.get("jugglework:docs:warmup-reserve")!(host, binding);
+    const count = views.length;
+    await panel.open({
+      ...binding, ...ticket, bootstrapUrl: `${docsOrigin}/api/jw/session/bootstrap`, launchGrant: "warmup",
+      fullPage: true, retain: true, presentation: { mode: "product" }, warmup: true,
+    }, win);
+    const view = views.at(-1)!;
+    expect(await handlers.get("jugglework:docs:warmup-claim")!(host, { ...binding, target: ticket.target })).toBe(ticket.instanceId);
+    const show = () => events.get("jugglework:docs:bounds")!(host, {
+      instanceId: ticket.instanceId, hostBinding: binding.hostBinding,
+      x: 0, y: 0, width: 800, height: 600, visible: true,
+    });
+    show();
+    expect(view.visible).toBe(false);
+    handlers.get("jugglework:docs:warmup-cancel")!(host, { ...binding, instanceId: ticket.instanceId });
+    expect(view.webContents.closed).toBe(false);
+    view.webContents.url = `${docsOrigin}/workspace/scope/all`;
+    events.get("jugglework:docs:message")!({ sender: view.webContents, senderFrame: view.webContents.mainFrame }, {
+      contractVersion: 1, type: "docs.ready", instanceId: ticket.instanceId, tenantId: scope.tenantId,
+      workspaceId: "scope", contextId: "claim-context",
+    });
+    show();
+    expect(view.visible).toBe(true);
+    expect(views).toHaveLength(count + 1);
+  } finally {
+    panel.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test.each(["主窗口刷新", "刷新期间的后台交接", "切换组织期间的后台交接"])("未认领预热的保存屏障：%s", async (reason) => {
   const dir = mkdtempSync(join(tmpdir(), "jugglework-docs-prewarm-"));
   const recentPath = join(dir, "recent.json");
