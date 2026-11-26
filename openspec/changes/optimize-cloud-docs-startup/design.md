@@ -62,7 +62,7 @@ Docs 增加受限 POST `/api/jw/session/resume`：用该原生 Session 的 fetch
 
 Main 私有 userData 中仅存一个最近成功展示目标：格式版本、规范化 Work origin、userId、tenantId、已验证 Docs origin、目标 kind／workspaceId／docId 和更新时间。最多 7 天有效；文档 ID 属于私有使用记录，不进 Git／遥测。没有标题、正文、截图、comment 文本、grant、token、Cookie、contextId 或授权指纹；没有真实秘密进入本提案。退出登录／账户移除删除定位；组织切换取消当前预热，记录仅在完整身份匹配时可用。无定位时不预热。
 
-身份与组织加载确认、主窗首屏可交互后至少空闲 2 秒，调度最多一个可取消预热，最长 30 秒；不阻塞聊天、会议或首屏。按最近目标执行正常 launch／bootstrap，创建可前台接管的“全页宿主预热实例”，与现有 AI background 页隔离。隐藏但给正常布局尺寸，不聚焦、不自动开始导入／导出／AI／写操作；正常协作可能连接和同步，属于现有打开语义。无额外网络探测，离线／权威不可用即停止本次预热，不自动重试风暴。
+身份与组织加载确认、主窗首屏可交互后，使用带 1 秒 timeout 的 requestIdleCallback 调度最多一个可取消预热，不再固定等待 2 秒，加载最长 30 秒；不阻塞聊天、会议或首屏。按最近目标执行正常 launch／bootstrap，创建可前台接管的“全页宿主预热实例”，与现有 AI background 页隔离。隐藏但给正常布局尺寸，不聚焦、不自动开始导入／导出／AI／写操作；正常协作可能连接和同步，属于现有打开语义。无额外网络探测，离线／权威不可用即停止本次预热，不自动重试风暴。
 
 用户打开与预热共用 Main 的一个全页打开登记：执行调度前检查 pending／attached，任何明确用户打开都取消尚未启动的本次启动预热。若用户先打开相同目标则不补建预热；先打开不同目标也不再预热旧目标。预热先开始且目标相同时，点击复用进行中的 Promise 和实例；尚未成功则继续正常 loading，不能再开第二份。点击不同显式目标、切换组织／账号、会话失效、窗关闭时取消“展示接管”；仅在安全保存后清理实例，不把 Abort 等同于服务器已取消。预热未使用 120 秒后保存确认清理；会话后来恢复正常时由下一次明确用户打开决定重试。
 
@@ -80,7 +80,7 @@ Main 私有 userData 中仅存一个最近成功展示目标：格式版本、�
 
 开发版热更新时，新 preload 可与旧 Main 共存。可选 IPC 通道未注册时沿用正常打开。已注册通道报告的权限、保存和请求失败继续按既有语义处理。
 
-Main 在订阅完成、fresh 打开／claim／预热接管时，经受限 preload 发送 `request-content-state {instanceId,contextId,observationId,targetKind,workspaceId,docId}`。Docs 核对当前实际路由和 context 后重新评估现有编辑器／列表，不重挂载；立即返回当前状态，之后状态变化继续携带该观测号。已就绪编辑器重新请求仍返回 presentable。每个宿主仅保留当前一个观测，目标不匹配的请求直接忽略，由 Main 的诊断超时处理。home 仅指实际 `/workspace/{workspaceId}/all` 路由，已授权的活动列表挂载且工作区文档列表完成初次同步才算 presentable。辅助页面与非活动编辑器不参与观测。
+Main 在订阅完成、fresh 打开／claim／预热接管时，经受限 preload 发送 `request-content-state {instanceId,contextId,observationId,targetKind,workspaceId,docId}`。Docs 核对当前实际路由和 context 后重新评估现有编辑器／列表，不重挂载；立即返回当前状态，之后状态变化继续携带该观测号。已就绪编辑器重新请求仍返回 presentable。每个宿主仅保留当前一个观测，目标不匹配的请求直接忽略，由 Main 的诊断超时处理。home 仅指实际 `/workspace/{workspaceId}/all` 路由，已授权的活动列表挂载且工作区根目录数据已加载才算 presentable；目录尚有待确认写入不阻塞展示，但保存确认仍使用原生 synced 状态。辅助页面与非活动编辑器不参与观测。
 
 普通文档：当前目标权限通过、root 可用、当前 BlockSuite 容器已绑定并经历绘制机会；表格／幻灯片：当前读取能力和资源就绪、首个有效活动表／页已挂载并经历绘制机会。presentable 仅是“可呈现并进入交互”，不是全部资产加载完成或持久化 ACK；无业务内容的合法空文档可成立。重试／导航／目标变化重置观测号，旧目标迟到消息不移除当前占位；dirty 编辑／远端 revision 更新不重入初始 loading。
 

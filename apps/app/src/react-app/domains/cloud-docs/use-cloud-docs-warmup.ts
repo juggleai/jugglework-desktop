@@ -69,12 +69,10 @@ export function useCloudDocsWarmup(eligible: boolean) {
         cancel();
       }
     };
-    const timer = window.setTimeout(() => {
-      idle = window.requestIdleCallback(() => void start());
-    }, 2000);
+    // TIPS: 身份与工作台已就绪即可利用空闲时间；设置上限，避免繁忙首页一直推迟预热。
+    idle = window.requestIdleCallback(() => void start(), { timeout: 1000 });
     window.addEventListener(denSettingsChangedEvent, authorityChanged);
     return () => {
-      window.clearTimeout(timer);
       if (idle !== undefined) window.cancelIdleCallback(idle);
       unsubscribe?.();
       window.removeEventListener(denSettingsChangedEvent, authorityChanged);
