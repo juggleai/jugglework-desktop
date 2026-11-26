@@ -40,3 +40,10 @@ An internally created child session with no direct language preference SHALL inh
 
 ## Verification boundaries
 Route tests use a mock engine and plugin tests exercise the system-transform boundary. They do not establish that a real engine ran compaction or that every model will comply. Unmarked internal text cannot reliably be distinguished from genuine prose by content alone; producers must preserve provenance. No fixed continuation-text blacklist is used. Language lookup remains best effort, and no historical session state is migrated automatically.
+
+### Requirement: Agent output stays economical
+The default JuggleWork agent prompt SHALL instruct the agent to omit narration between tool calls and placeholder text, to send only changes and open decisions when iterating on a plan, and to keep long-lived plans in one workspace Markdown file updated in place, with chat holding the file path, a change list, and pending questions.
+
+#### Scenario: Runtime config is written
+- **WHEN** the JuggleWork runtime config file is generated
+- **THEN** the agent prompt contains an "Output economy" section with these rules

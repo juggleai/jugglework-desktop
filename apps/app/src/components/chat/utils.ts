@@ -24,8 +24,8 @@ type MessageListItem = MessageGroup | UIMessageWithIndex
 
 function getMessageText(message: UIMessage): string {
   return message.parts
-    .filter((part) => part.type === "text")
-    .map((part) => part.text)
+    .filter(isMeaningfulTextPart)
+    .map((part) => (part.type === "text" ? part.text : ""))
     .join("")
     .trim()
 }
@@ -38,9 +38,23 @@ export function getMessagesText(messages: UIMessage[]): string {
 }
 
 export function getLastTextPart(message: UIMessage): UIMessage | null {
-  const lastTextPart = message.parts.findLast((part) => part.type === "text")
+  const lastTextPart = message.parts.findLast(isMeaningfulTextPart)
 
   return lastTextPart ? { ...message, parts: [lastTextPart] } : null
+}
+
+// Some models emit a text part that only contains a placeholder such as "..."
+// before a tool call. It carries no information, so it must neither render nor
+// be picked as the final summary of a task.
+const PLACEHOLDER_TEXT = /^(?:\.{2,}|\u2026+)$/
+
+export function isPlaceholderText(text: string) {
+  const trimmed = text.trim()
+  return trimmed.length === 0 || PLACEHOLDER_TEXT.test(trimmed)
+}
+
+function isMeaningfulTextPart(part: UIMessage["parts"][number]) {
+  return part.type === "text" && !isPlaceholderText(part.text)
 }
 
 export function splitAssistantTaskMessages(items: UIMessageWithIndex[], isLive = false) {
@@ -55,7 +69,7 @@ export function splitAssistantTaskMessages(items: UIMessageWithIndex[], isLive =
   }
 
   const finalItemIndex = outputItems.findLastIndex((item) =>
-    item.message.parts.some((part) => part.type === "text" && part.text.trim().length > 0),
+    item.message.parts.some(isMeaningfulTextPart),
   )
   if (finalItemIndex === -1) {
     return { processItems: outputItems, summaryItems: [] as UIMessageWithIndex[], errorItems }
@@ -70,15 +84,13 @@ export function splitAssistantTaskMessages(items: UIMessageWithIndex[], isLive =
       return
     }
 
-    const lastTextPartIndex = item.message.parts.findLastIndex(
-      (part) => part.type === "text" && part.text.trim().length > 0,
-    )
+    const lastTextPartIndex = item.message.parts.findLastIndex(isMeaningfulTextPart)
     const lastProcessPartIndex = item.message.parts.findLastIndex(
       (part) => isSessionCompactionUIPart(part) || (part.type !== "text" && part.type !== "file"),
     )
     const summaryTextIndexes = new Set(
       item.message.parts.flatMap((part, partIndex) =>
-        part.type === "text" && part.text.trim().length > 0 && partIndex > lastProcessPartIndex
+        isMeaningfulTextPart(part) && partIndex > lastProcessPartIndex
           ? [partIndex]
           : [],
       ),
@@ -415,7 +427,16 @@ export function getAssistantRenderGroups(
   parts: UIMessage["parts"],
   showThinking: boolean
 ): AssistantRenderGroup[] {
-  const filteredParts = parts.filter((part) => showThinking || !isReasoningUIPart(part))
+  const filteredParts = parts.filter((part) => {
+    if (isReasoningUIPart(part)) return showThinking && part.text.trim().length > 0
+    // Streaming text may still be empty or a partial "." run, so only drop
+    // finished placeholders.
+    // Compaction rows are empty text parts identified by metadata; keep them.
+    if (part.type === "text" && !getSessionCompactionFromPart(part)) {
+      return part.state === "streaming" ? part.text.trim().length > 0 : !isPlaceholderText(part.text)
+    }
+    return true
+  })
   const groups: AssistantRenderGroup[] = []
 
   const appendText = (text: string) => {

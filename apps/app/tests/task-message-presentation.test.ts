@@ -368,6 +368,62 @@ describe("task message presentation", () => {
     expect(groups[1]?.kind === "tools" ? groups[1].parts : []).toEqual([firstTool, secondTool])
   })
 
+  test("drops placeholder text and empty reasoning from render groups", () => {
+    const tool: DynamicToolUIPart = {
+      type: "dynamic-tool",
+      toolName: "bash",
+      toolCallId: "call-1",
+      state: "output-available",
+      input: { command: "git status", description: "" },
+      output: "clean",
+    }
+
+    const groups = getAssistantRenderGroups([
+      { type: "reasoning", text: "\n", state: "done" },
+      { type: "text", text: "...", state: "done" },
+      { type: "text", text: "\u2026", state: "done" },
+      tool,
+      { type: "text", text: "Done", state: "done" },
+    ], true)
+
+    expect(groups.map((group) => group.kind)).toEqual(["tools", "text"])
+    expect(groups[1]?.kind === "text" ? groups[1].text : "").toBe("Done")
+  })
+
+  test("keeps in-flight text and legitimate ellipsis prose visible", () => {
+    const groups = getAssistantRenderGroups([
+      { type: "text", text: "...", state: "streaming" },
+    ], false)
+    expect(groups.map((group) => group.kind)).toEqual(["text"])
+
+    const prose = getAssistantRenderGroups([
+      { type: "text", text: "Wait... it finished", state: "done" },
+    ], false)
+    expect(prose.map((group) => group.kind)).toEqual(["text"])
+  })
+
+  test("never picks a placeholder as the task summary", () => {
+    const split = splitAssistantTaskMessages([
+      {
+        index: 1,
+        message: message("assistant-1", "assistant", 1_700_000_001_000, [
+          { type: "text", text: "Final summary", state: "done" },
+        ]),
+      },
+      {
+        index: 2,
+        message: message("assistant-2", "assistant", 1_700_000_002_000, [
+          { type: "text", text: "...", state: "done" },
+        ]),
+      },
+    ])
+
+    expect(split.summaryItems).toHaveLength(1)
+    expect(split.summaryItems[0]?.message.id).toBe("assistant-1")
+    expect(getMessagesText(split.summaryItems.map((item) => item.message))).toBe("Final summary")
+    expect(getMessagesText([message("a", "assistant", 1, [{ type: "text", text: "..." }])])).toBe("")
+  })
+
   test("merges streamed process messages so tool runs can collapse across message boundaries", () => {
     const tool: DynamicToolUIPart = {
       type: "dynamic-tool",

@@ -138,6 +138,21 @@ describe("jugglework runtime config file", () => {
     expect(prompt).toMatch(/secret|credential|API key|token|PII/i);
   });
 
+  test("jugglework prompt limits narration and repeated plan output", async () => {
+    const { config } = await setup();
+    await writeJuggleWorkRuntimeConfigFile(config, "ws_1");
+
+    const parsed = await readConfigFile(config);
+    const agent = parsed.agent as Record<string, { prompt?: string }>;
+    const prompt = agent.jugglework?.prompt ?? "";
+
+    expect(prompt).toContain("## Output economy");
+    expect(prompt).toContain("Do not write narration between tool calls");
+    expect(prompt).toContain('placeholder such as "..."');
+    expect(prompt).toContain("send only what changed since your last version");
+    expect(prompt).toContain("Update that file in place on each iteration");
+  });
+
   test("jugglework prompt requires structured questions for blocking decisions", async () => {
     const { config } = await setup();
     await writeJuggleWorkRuntimeConfigFile(config, "ws_1");

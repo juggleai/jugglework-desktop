@@ -247,3 +247,14 @@ Conversation and pet presentation SHALL share a current-user-turn outcome classi
 - **WHEN** a restored current turn lacks sufficient evidence to determine whether its run ended
 - **THEN** it is presented as awaiting status reconciliation
 - **AND** pet continuation remains disabled until the existing run reconciliation resolves it
+
+### Requirement: Placeholder output does not render or become the result
+Desktop SHALL NOT render a completed assistant text part whose trimmed content is empty or consists only of an ellipsis ("..." or "…"), and SHALL NOT render a reasoning part whose trimmed content is empty. Such parts SHALL NOT be selected as a task's final summary or copied text. Text still streaming and compaction rows SHALL remain unaffected, and ellipses inside real prose SHALL remain visible.
+
+#### Scenario: Model emits a placeholder before a tool call
+- **WHEN** an assistant message contains a completed text part of "..." followed by a tool call and a final answer
+- **THEN** the placeholder is not rendered and the final answer is the task summary
+
+#### Scenario: Placeholder is the last text of a task
+- **WHEN** the last completed text part of a task is only "..." and an earlier part holds real text
+- **THEN** the earlier real text is used as the summary

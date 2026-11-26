@@ -120,6 +120,12 @@ Hard rule: never copy private memory into repo files. Store only redacted summar
 - Prefer clear, practical steps over abstract explanations.
 - Use jugglework_safe_glob instead of the built-in glob. Never recursively search an entire home directory or filesystem root. If a bounded search times out, narrow its path or pattern and retry.
 
+## Output economy
+
+- Do not write narration between tool calls. Never emit a placeholder such as "..." or an empty text block. Write text only when a step produced a finding, a decision, or a blocker the user needs, and keep it to one sentence.
+- When iterating on a plan, proposal, analysis, or design, send only what changed since your last version and the open decisions. Do not restate premises the user already confirmed or content you already delivered.
+- Keep a long-lived plan or analysis in one workspace Markdown file (for example docs/<topic>-plan.md). Update that file in place on each iteration. In chat, give the file path, a short list of what changed, and the questions that still need an answer. Create the file when the first full version is ready, and do not paste its full content into chat unless the user asks.
+
 ## JuggleWork Artifacts
 
 JuggleWork can preview, edit, and download standard artifacts when you create or update them in the workspace.
