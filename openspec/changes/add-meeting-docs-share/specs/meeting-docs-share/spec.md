@@ -9,16 +9,16 @@ The meeting share picker SHALL offer the JuggleWork main window as a dedicated s
 - **AND** it asks the user to choose from desktops and windows instead
 
 ### Requirement: Choose a cloud document to share
-The share dialog SHALL offer "Desktop and windows" and "Cloud documents" tabs. The cloud documents tab SHALL list recent readable documents of the meeting organization, search them by title, and disable spreadsheet and presentation items as unsupported. Switching to the cloud documents tab SHALL cancel any pending capture request without reporting an error.
+The share dialog SHALL offer "Desktop and windows" and "Cloud documents" tabs. The cloud documents tab SHALL list recent readable documents of the meeting organization, search them by title, and allow documents, whiteboards, spreadsheets and presentations to be selected. The client SHALL start and hold the organization background page while the user is in a meeting, and SHALL show the last list of the meeting immediately while refreshing it. Switching to the cloud documents tab SHALL cancel any pending capture request without reporting an error.
 
 #### Scenario: Switch from capture to documents
 - **WHEN** the user opens the dialog on "Desktop and windows" and switches to "Cloud documents"
 - **THEN** the pending capture request is cancelled and no stream is published
 - **AND** returning to "Desktop and windows" starts a new capture request from that click
 
-#### Scenario: Unsupported format
+#### Scenario: Spreadsheet and presentation
 - **WHEN** a listed item is a spreadsheet or presentation
-- **THEN** it cannot be selected and is labelled as unsupported
+- **THEN** it can be selected and shared like a document
 
 ### Requirement: Single server-owned share slot
 The meeting service SHALL hold at most one share slot per meeting, of kind screen or doc. Only a joined participant with its current session SHALL claim the slot, and claiming SHALL replace any existing slot with a new share id. Only the sharer or the host SHALL release it. The slot SHALL be cleared when the sharer leaves, its session expires, it is removed, or the meeting ends. The service SHALL NOT store the shared document or viewport.
@@ -33,7 +33,7 @@ The meeting service SHALL hold at most one share slot per meeting, of kind scree
 - **THEN** the service leaves the current slot unchanged and returns the current snapshot
 
 ### Requirement: Doc share state message
-The sharer's client SHALL publish `jw:meeting-share-docs` to the meeting chatroom as a JuggleIM status message (`isStatus`, not stored, not counted). Each message SHALL carry the sharer's complete current document and viewport state with a sequence number that increases within the share id, and SHALL NOT carry actions, document content, titles or URLs. The sharer SHALL resend the current state while idle. Receivers SHALL apply only the newest state from the sender, session and share id in the current snapshot, and SHALL NOT request retransmission.
+The sharer's client SHALL publish `jw:meeting-share-docs` to the meeting chatroom as a JuggleIM status message (`isStatus`, not stored, not counted). Each message SHALL carry the sharer's complete current document and viewport state with a sequence number that increases within the share id, and SHALL NOT carry actions, document content, titles or URLs. The viewport SHALL be a block anchor for pages, canvas coordinates for whiteboards, a slide id for presentations, and a sheet id with the top-left visible cell for spreadsheets. The sharer SHALL resend the current state while idle. Receivers SHALL apply only the newest state from the sender, session and share id in the current snapshot, and SHALL NOT request retransmission.
 
 #### Scenario: Out-of-order or stale state
 - **WHEN** a receiver gets a state whose sequence is not greater than the last applied one, or whose share id, session or sender does not match the snapshot

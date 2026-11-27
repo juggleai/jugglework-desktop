@@ -3,8 +3,8 @@ import { MeetingIcon as Icon } from "./meeting-icons";
 import { withProductView } from "../cloud-docs/product-view";
 import { readDenSettings } from "@/app/lib/den";
 
-type DocItem = { workspaceId: string; docId: string; title: string; updatedAt: string; scope?: string; contentKind?: string };
-const SUPPORTED = new Set(["document", "whiteboard"]);
+import { docPickerCache, type DocPickerItem as DocItem } from "./doc-picker-cache";
+const SUPPORTED = new Set(["document", "whiteboard", "spreadsheet", "presentation"]);
 
 function formatTime(value: string) {
   const at = new Date(value);
@@ -28,7 +28,9 @@ export function MeetingDocPicker({ onClose, onConfirm }: { onClose: () => void; 
     const tenantId = readDenSettings().activeOrgId;
     if (!bridge || !tenantId) { setState("unavailable"); return; }
     const run = ++sequence.current;
-    setState("loading");
+    const q0 = query.trim();
+    const cached = docPickerCache.get(q0);
+    if (cached) { setItems(cached); setState("ready"); } else setState("loading");
     const timer = setTimeout(() => {
       const q = query.trim();
       void withProductView(bridge, tenantId, instanceId => bridge.api({
@@ -36,9 +38,11 @@ export function MeetingDocPicker({ onClose, onConfirm }: { onClose: () => void; 
       })).then(result => {
         if (run !== sequence.current) return;
         if (result.status !== 200) throw new Error("docs_unavailable");
-        setItems(((result.body as { items?: DocItem[] }).items ?? []).slice(0, 20));
+        const fresh = ((result.body as { items?: DocItem[] }).items ?? []).slice(0, 20);
+        docPickerCache.set(q, fresh);
+        setItems(fresh);
         setState("ready");
-      }).catch(() => { if (run === sequence.current) { setItems([]); setState("error"); } });
+      }).catch(() => { if (run === sequence.current && !docPickerCache.get(q)) { setItems([]); setState("error"); } });
     }, query ? 300 : 0);
     return () => clearTimeout(timer);
   }, [query]);

@@ -69,6 +69,19 @@ export async function withProductView<T>(bridge: CloudDocsBridge, tenantId: stri
   return pool.run(cloudDocsScope(tenantId), run);
 }
 
+/** 会议期间占住后台产品页，云文档列表不必等重新启动；返回释放函数。 */
+export async function holdProductView(tenantId: string): Promise<() => void> {
+  const bridge = window.__JUGGLEWORK_ELECTRON__?.cloudDocs;
+  if (!bridge) return () => {};
+  let release = () => {};
+  const ready = new Promise<void>(resolve => {
+    void withProductView(bridge, tenantId, async () => { resolve(); await new Promise<void>(done => { release = done; }); })
+      .catch(() => undefined).finally(resolve);
+  });
+  await ready;
+  return () => release();
+}
+
 /** 固定域名从当前权威 Work 读取；仅缓存来源，绝不为链接申请 grant。 */
 export async function configuredCloudDocsOrigin(tenantId: string) {
   const fileView = fileCloudDocView();

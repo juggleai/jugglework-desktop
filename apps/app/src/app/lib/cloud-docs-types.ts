@@ -154,13 +154,15 @@ export interface CloudDocsBridge {
   onAiReference(callback: (value: CloudDocsAiReference) => void): () => void;
 }
 
-/** 共享人视口：页面模式用块锚点，白板模式用画布坐标；不含正文或标题。 */
+/** 共享人视口：页面模式用块锚点，白板模式用画布坐标，幻灯片用页 id，表格用工作表与左上角单元格；不含正文或标题。 */
 export type CloudDocsMeetingViewport = {
   workspaceId: string;
   docId: string;
-  mode: "page" | "edgeless";
+  mode: "page" | "edgeless" | "slides" | "sheet";
   anchor?: { blockId: string; offset: number };
   edgeless?: { centerX: number; centerY: number; zoom: number };
+  slides?: { slideId: string };
+  sheet?: { sheetId: string; row: number; column: number };
 };
 export type CloudDocsMeetingEvent =
   | { instanceId: string; type: "docs.viewport"; meeting: CloudDocsMeetingViewport & { userInput: boolean } }

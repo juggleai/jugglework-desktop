@@ -94,3 +94,13 @@ test('sender throttles bursts, delivers the last state and resends while idle', 
   s.tick(4300);
   assert.deepEqual(sent.at(-1), [3, 0.3], 'idle resend carries a higher seq');
 });
+
+test('slides and sheet positions round-trip and reject malformed values', () => {
+  const slides = parseShareState(buildShareState(identity, 1, { workspaceId: 'w1', docId: 'd1', mode: 'slides', slides: { slideId: 'slide_1' } }));
+  assert.deepEqual(slides.viewport.slides, { slideId: 'slide_1' });
+  const sheet = parseShareState(buildShareState(identity, 2, { workspaceId: 'w1', docId: 'd1', mode: 'sheet', sheet: { sheetId: 'Sheet1', row: 12, column: 3 } }));
+  assert.deepEqual(sheet.viewport.sheet, { sheetId: 'Sheet1', row: 12, column: 3 });
+  assert.equal(parseShareState(state(3, { doc: { workspaceId: 'w1', pageId: 'd1', mode: 'slides' }, viewport: { slides: { slideId: '../x' } } })), null);
+  assert.equal(parseShareState(state(4, { doc: { workspaceId: 'w1', pageId: 'd1', mode: 'sheet' }, viewport: { sheet: { sheetId: 's', row: -1, column: 0 } } })), null);
+  assert.equal(parseShareState(state(5, { doc: { workspaceId: 'w1', pageId: 'd1', mode: 'sheet' }, viewport: { sheet: { sheetId: 's', row: 1.5, column: 0 } } })), null);
+});

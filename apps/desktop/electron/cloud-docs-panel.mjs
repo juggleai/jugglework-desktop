@@ -764,7 +764,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       let payload;
       if (input.action === "apply-viewport") {
         const v = input.payload?.viewport;
-        if (!id.test(v?.workspaceId ?? "") || !id.test(v?.docId ?? "") || !["page", "edgeless"].includes(v?.mode)) return;
+        if (!id.test(v?.workspaceId ?? "") || !id.test(v?.docId ?? "") || !["page", "edgeless", "slides", "sheet"].includes(v?.mode)) return;
         payload = { follow: input.payload.follow === true, sharerName: typeof input.payload.sharerName === "string" ? input.payload.sharerName.slice(0, 20) : "", viewport: v };
       } else if (input.action === "open-page") {
         if (!id.test(input.payload?.docId ?? "")) return;

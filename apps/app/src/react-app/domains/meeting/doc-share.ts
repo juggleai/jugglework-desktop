@@ -18,7 +18,7 @@ const ID = /^[A-Za-z0-9_-]{1,64}$/;
  * @param seq           同一 shareId 内单调递增，只用于排序
  * @param state         sharing 或 ended；ended 时没有 doc 与 viewport
  * @param doc           共享人当前路由中的文档
- * @param viewport      页面模式的块锚点或白板模式的画布坐标
+ * @param viewport      页面模式的块锚点、白板模式的画布坐标、幻灯片的页 id 或表格的工作表与单元格
  */
 export type MeetingShareDocsState = {
   schemaVersion: 1;
@@ -27,9 +27,16 @@ export type MeetingShareDocsState = {
   sessionId: string;
   seq: number;
   state: "sharing" | "ended";
-  doc?: { workspaceId: string; pageId: string; mode: "page" | "edgeless" };
-  viewport?: { anchor?: { blockId: string; offset: number }; edgeless?: { centerX: number; centerY: number; zoom: number } };
+  doc?: { workspaceId: string; pageId: string; mode: ShareDocMode };
+  viewport?: {
+    anchor?: { blockId: string; offset: number };
+    edgeless?: { centerX: number; centerY: number; zoom: number };
+    slides?: { slideId: string };
+    sheet?: { sheetId: string; row: number; column: number };
+  };
 };
+export type ShareDocMode = "page" | "edgeless" | "slides" | "sheet";
+const MODES: readonly string[] = ["page", "edgeless", "slides", "sheet"];
 
 export function buildShareState(
   identity: { meetingId: string; shareId: string; sessionId: string },
@@ -42,7 +49,12 @@ export function buildShareState(
     ...base,
     state: "sharing",
     doc: { workspaceId: view.workspaceId, pageId: view.docId, mode: view.mode },
-    viewport: { ...(view.anchor ? { anchor: view.anchor } : {}), ...(view.edgeless ? { edgeless: view.edgeless } : {}) },
+    viewport: {
+      ...(view.anchor ? { anchor: view.anchor } : {}),
+      ...(view.edgeless ? { edgeless: view.edgeless } : {}),
+      ...(view.slides ? { slides: view.slides } : {}),
+      ...(view.sheet ? { sheet: view.sheet } : {}),
+    },
   };
 }
 
@@ -56,14 +68,19 @@ export function parseShareState(value: unknown): MeetingShareDocsState | null {
   const parsed = { schemaVersion: 1 as const, meetingId: v.meetingId, shareId: v.shareId, sessionId: v.sessionId, seq: v.seq as number, state: v.state };
   if (v.state === "ended") return parsed;
   const doc = v.doc;
-  if (!doc || !ID.test(doc.workspaceId ?? "") || !ID.test(doc.pageId ?? "") || (doc.mode !== "page" && doc.mode !== "edgeless")) return null;
-  const a = v.viewport?.anchor, e = v.viewport?.edgeless;
+  if (!doc || !ID.test(doc.workspaceId ?? "") || !ID.test(doc.pageId ?? "") || !MODES.includes(doc.mode)) return null;
+  const a = v.viewport?.anchor, e = v.viewport?.edgeless, sl = v.viewport?.slides, sh = v.viewport?.sheet;
   if (a && (typeof a.blockId !== "string" || a.blockId.length > 128 || !Number.isFinite(a.offset))) return null;
   if (e && ![e.centerX, e.centerY, e.zoom].every(Number.isFinite)) return null;
+  if (sl && !ID.test(sl.slideId ?? "")) return null;
+  if (sh && (typeof sh.sheetId !== "string" || sh.sheetId.length > 128 || ![sh.row, sh.column].every((n) => Number.isInteger(n) && n >= 0))) return null;
   return {
     ...parsed,
     doc: { workspaceId: doc.workspaceId, pageId: doc.pageId, mode: doc.mode },
-    viewport: { ...(a ? { anchor: { blockId: a.blockId, offset: Math.min(1, Math.max(-20, a.offset)) } } : {}), ...(e ? { edgeless: e } : {}) },
+    viewport: { ...(a ? { anchor: { blockId: a.blockId, offset: Math.min(1, Math.max(-20, a.offset)) } } : {}), ...(e ? { edgeless: e } : {}),
+      ...(sl ? { slides: { slideId: sl.slideId } } : {}),
+      ...(sh ? { sheet: { sheetId: sh.sheetId, row: sh.row, column: sh.column } } : {}),
+    },
   };
 }
 

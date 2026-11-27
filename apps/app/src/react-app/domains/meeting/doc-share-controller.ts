@@ -4,6 +4,8 @@ import type { CloudDocsMeetingEvent, CloudDocsMeetingViewport } from "@/app/lib/
 import { MEETING_SHARE_DOCS_MESSAGE, SHARE_RESEND_MS, SHARE_STALE_MS, ShareFollower, ShareSender, buildShareState, parseShareState, type FollowMode } from "./doc-share";
 import type { Meeting, MeetingShare } from "./types";
 import { meetingDiagnostic, meetingDiagnosticError } from "./diagnostics";
+import { holdProductView } from "../cloud-docs/product-view";
+import { docPickerCache } from "./doc-picker-cache";
 
 /** 文档共享在界面上的状态；与会议快照里的共享槽配合使用。 */
 type ShareDocsView =
@@ -45,6 +47,7 @@ let host: DocShareHost | null = null;
 let sender: ShareSender | null = null;
 let ticker: ReturnType<typeof setInterval> | undefined;
 let stopEvents: (() => void) | undefined;
+let releaseProductView: () => void = () => {};
 let lastLocal: CloudDocsMeetingViewport | null = null;
 let openToken = 0;
 /** 正在进行的打开请求；相同文档的重复请求共用同一个，避免状态消息密集时反复重开。 */
@@ -220,7 +223,7 @@ export function receiveShareDocs(message: { sender?: { id?: string }; content?: 
   if (!accepted) return;
   set({ interrupted: false });
   if (accepted.state === "ended") { void hide(); return; }
-  if (accepted.doc?.mode === "page" || accepted.doc?.mode === "edgeless") applyLatest();
+  if (accepted.doc) applyLatest();
 }
 
 /** 由本机用户主动选择文档时打开；之前失败过的文档允许重试。 */
@@ -272,12 +275,20 @@ export function setDocZoom(factor: number) {
 export function installDocShare(next: DocShareHost) {
   uninstallDocShare();
   host = next;
+  // 入会即启动并占住后台产品页，选择云文档时不必等待冷启动，会议期间也不会被空闲回收。
+  const tenantId = readDenSettings().activeOrgId;
+  if (tenantId && bridge()) {
+    const mine = host;
+    void holdProductView(tenantId).then(release => { if (host === mine) releaseProductView = release; else release(); }).catch(() => {});
+  }
   stopEvents = bridge()?.onMeetingEvent?.(onEvent);
   ticker = setInterval(tick, Math.min(SHARE_RESEND_MS, 1000));
 }
 
 export function uninstallDocShare() {
   stopEvents?.(); stopEvents = undefined;
+  releaseProductView(); releaseProductView = () => {};
+  docPickerCache.clear();
   clearInterval(ticker); ticker = undefined;
   host = null; sender = null; lastLocal = null;
   follower.reset();
