@@ -177,6 +177,74 @@ describe("run completion diagnostics", () => {
   });
 });
 
+describe("benign finish reasons with a completed summary", () => {
+  const summary = (finish: string, extra: Partial<UIMessage> = {}): UIMessage => ({
+    ...textMessage("assistant-final", "assistant", "All done, here is the summary.", finish), ...extra,
+  });
+
+  test("a written summary after tool-calls, unknown or other counts as completed", () => {
+    for (const finish of ["tool-calls", "unknown", "other"]) {
+      expect(analyzeRunCompletion([textMessage("user-1", "user", "Go"), summary(finish)], [])).toBeNull();
+    }
+  });
+
+  test("the summary also counts when file edits were not verified", () => {
+    expect(analyzeRunCompletion([
+      textMessage("user-1", "user", "Go"),
+      toolMessage("assistant-tools", "apply_patch", { patchText: "*** Begin Patch" }),
+      summary("tool-calls"),
+    ], [])).toBeNull();
+  });
+
+  test("truncated or filtered output is still abnormal even with text", () => {
+    for (const finish of ["length", "content-filter", "error"]) {
+      expect(analyzeRunCompletion([textMessage("user-1", "user", "Go"), summary(finish)], []))
+        .toMatchObject({ incomplete: true, finishReason: finish });
+    }
+  });
+
+  test("an empty or whitespace-only message is still abnormal", () => {
+    for (const finish of ["tool-calls", "unknown"]) {
+      expect(analyzeRunCompletion([textMessage("user-1", "user", "Go"), textMessage("a", "assistant", "  ", finish)], []))
+        .toMatchObject({ incomplete: true, finishReason: finish });
+    }
+  });
+
+  test("text that is still streaming is not a completed summary", () => {
+    const streaming: UIMessage = {
+      id: "assistant-stream", role: "assistant", metadata: { opencode: { finish: "tool-calls" } },
+      parts: [{ type: "text", text: "partial", state: "streaming" }],
+    };
+    expect(analyzeRunCompletion([textMessage("user-1", "user", "Go"), streaming], [])).toMatchObject({ incomplete: true });
+  });
+
+  test("a pending tool call after the text is not a completed summary", () => {
+    const pending: UIMessage = {
+      id: "assistant-pending", role: "assistant", metadata: { opencode: { finish: "tool-calls" } },
+      parts: [
+        { type: "text", text: "Running the check", state: "done" },
+        { type: "dynamic-tool", toolName: "bash", toolCallId: "c1", state: "input-available", input: { command: "ls" } },
+      ],
+    };
+    expect(analyzeRunCompletion([textMessage("user-1", "user", "Go"), pending], [])).toMatchObject({ incomplete: true });
+  });
+
+  test("other incomplete signals still win over a written summary", () => {
+    const base = [textMessage("user-1", "user", "Go"), summary("tool-calls")];
+    expect(analyzeRunCompletion(base, openTodo)).toMatchObject({ incomplete: true });
+    expect(analyzeRunCompletion([textMessage("user-1", "user", "Go"), interruptedToolMessage("t"), summary("tool-calls")], []))
+      .toMatchObject({ incomplete: true, finishReason: "child_session_orphaned" });
+    expect(analyzeRunCompletion(base, [], { finishReason: "provider_disconnected" }))
+      .toMatchObject({ incomplete: true, finishReason: "provider_disconnected" });
+  });
+
+  test("a user stop is never softened", () => {
+    const stopped = summary("tool-calls", { metadata: { opencode: { finish: "tool-calls", stopped: true } } });
+    expect(analyzeRunCompletion([textMessage("user-1", "user", "Go"), stopped], []))
+      .toMatchObject({ incomplete: true, finishReason: "user_cancelled" });
+  });
+});
+
 test("a persisted stopped assistant is resumable even without todos", () => {
   const stopped = textMessage("assistant-stop", "assistant", "", "stop");
   stopped.metadata = { opencode: { finish: "stop", stopped: true } };

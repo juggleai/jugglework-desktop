@@ -66,6 +66,27 @@ function isInterruptedTool(part: UIMessage["parts"][number]) {
     part.errorText === "Execution ended before this tool returned a result.";
 }
 
+// 这些结束原因只说明模型这一轮以什么方式交棒，本身不代表文字被截断或被拦截。
+// length（被截断）、content-filter（被拦截）、error 等仍按异常处理。
+const BENIGN_FINISH_REASONS = new Set(["tool-calls", "unknown", "other"]);
+
+function isPendingTool(part: UIMessage["parts"][number]) {
+  return part.type === "dynamic-tool" && part.state !== "output-available" && part.state !== "output-error";
+}
+
+/**
+ * 最后一条助手消息是否已经以一段写完的文字收尾：
+ * 有非空文字、该文字不在流式输出中、其后没有别的有效片段、且没有悬空的工具调用。
+ * 这是用户能直接读到的总结，此时 finish 不是 stop 也不应提示「未完成」。
+ */
+function endsWithCompletedSummary(message: UIMessage) {
+  if (message.parts.some(isPendingTool)) return false;
+  const meaningful = message.parts.filter((part) => part.type !== "step-start" && part.type !== "reasoning");
+  const last = meaningful[meaningful.length - 1];
+  if (!last || last.type !== "text" || !last.text.trim()) return false;
+  return last.state !== "streaming";
+}
+
 function currentTurn(messages: UIMessage[]) {
   let latestUserIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -118,7 +139,11 @@ export function analyzeRunCompletion(
   const effectiveFinishReason = explicitFinishReason ?? (metadata.stopped === true ? "user_cancelled" : providerFinish);
   // TIPS: 部分 Provider/网关在工具调用后的下一轮推理失败时不会返回结构化 error，
   // 只会留下 finish=unknown 的零 token 空消息。该状态必须作为异常终态，而不能静默当成 stop。
-  const abnormalFinish = effectiveFinishReason !== "stop";
+  // TIPS: 只放宽「良性」结束原因，且仅在用户没有主动停止、也没有断线等显式原因时：
+  // 最后一条助手消息已有完整文字总结，就按正常完成处理，避免成功的会话一直挂着橙点。
+  const finishIsBenign = explicitFinishReason === null && metadata.stopped !== true &&
+    BENIGN_FINISH_REASONS.has(effectiveFinishReason) && endsWithCompletedSummary(turn.terminalAssistant);
+  const abnormalFinish = effectiveFinishReason !== "stop" && !finishIsBenign;
   // A missing verification command is useful context when a run already ended
   // abnormally, but it is not by itself proof that a completed task needs user
   // attention. Deployment/documentation flows often finish with a final write
