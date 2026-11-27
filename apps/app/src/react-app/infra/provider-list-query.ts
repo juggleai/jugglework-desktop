@@ -287,6 +287,28 @@ export function getConnectedProviderSnapshotChange(input: {
   return connectedProviderSnapshotChanges.get(connectedProviderSnapshotKey(input)) ?? null;
 }
 
+/**
+ * 与键顺序、`undefined` 字段无关的稳定序列化。
+ * 引擎重载前后返回同样的模型，内部对象的键顺序却可能不同；
+ * 直接 JSON.stringify 会把这种情况当成「模型变更」并弹出通知。
+ */
+export function stableSnapshotValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableSnapshotValue);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.keys(value as Record<string, unknown>)
+      .sort()
+      .flatMap((key) => {
+        const entry = (value as Record<string, unknown>)[key];
+        return entry === undefined ? [] : [[key, stableSnapshotValue(entry)] as const];
+      }),
+  );
+}
+
+function sameSnapshotValue(left: unknown, right: unknown) {
+  return JSON.stringify(stableSnapshotValue(left)) === JSON.stringify(stableSnapshotValue(right));
+}
+
 function recordConnectedProviderSnapshot(
   input: {
     baseUrl?: string | null;
@@ -298,7 +320,7 @@ function recordConnectedProviderSnapshot(
   const key = connectedProviderSnapshotKey(input);
   const previous = connectedProviderSnapshots.get(key) ?? null;
   const next = getConnectedProviderSnapshot(value);
-  const changed = previous !== null && JSON.stringify(previous) !== JSON.stringify(next);
+  const changed = previous !== null && !sameSnapshotValue(previous, next);
   connectedProviderSnapshots.set(key, next);
   connectedProviderSnapshotChanges.set(key, { changed, previous, next });
   if (changed) {
@@ -332,7 +354,7 @@ function dispatchConnectedProviderChanges(
       continue;
     }
     for (const [id, model] of Object.entries(provider.models)) {
-      if (JSON.stringify(before.models[id]) !== JSON.stringify(model)) {
+      if (!sameSnapshotValue(before.models[id], model)) {
         newModelCount += 1;
         changedProviders.set(provider.id, provider);
       }
