@@ -31,7 +31,7 @@ export type MeetingShareDocsState = {
   viewport?: {
     anchor?: { blockId: string; offset: number };
     edgeless?: { centerX: number; centerY: number; zoom: number };
-    slides?: { slideId: string };
+    slides?: { slideId: string; playing?: boolean };
     sheet?: { sheetId: string; row: number; column: number };
   };
 };
@@ -78,7 +78,7 @@ export function parseShareState(value: unknown): MeetingShareDocsState | null {
     ...parsed,
     doc: { workspaceId: doc.workspaceId, pageId: doc.pageId, mode: doc.mode },
     viewport: { ...(a ? { anchor: { blockId: a.blockId, offset: Math.min(1, Math.max(-20, a.offset)) } } : {}), ...(e ? { edgeless: e } : {}),
-      ...(sl ? { slides: { slideId: sl.slideId } } : {}),
+      ...(sl ? { slides: { slideId: sl.slideId, ...(sl.playing === true ? { playing: true } : {}) } } : {}),
       ...(sh ? { sheet: { sheetId: sh.sheetId, row: sh.row, column: sh.column } } : {}),
     },
   };

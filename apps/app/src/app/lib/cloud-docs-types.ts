@@ -161,7 +161,7 @@ export type CloudDocsMeetingViewport = {
   mode: "page" | "edgeless" | "slides" | "sheet";
   anchor?: { blockId: string; offset: number };
   edgeless?: { centerX: number; centerY: number; zoom: number };
-  slides?: { slideId: string };
+  slides?: { slideId: string; playing?: boolean };
   sheet?: { sheetId: string; row: number; column: number };
 };
 export type CloudDocsMeetingEvent =

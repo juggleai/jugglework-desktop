@@ -104,3 +104,10 @@ test('slides and sheet positions round-trip and reject malformed values', () => 
   assert.equal(parseShareState(state(4, { doc: { workspaceId: 'w1', pageId: 'd1', mode: 'sheet' }, viewport: { sheet: { sheetId: 's', row: -1, column: 0 } } })), null);
   assert.equal(parseShareState(state(5, { doc: { workspaceId: 'w1', pageId: 'd1', mode: 'sheet' }, viewport: { sheet: { sheetId: 's', row: 1.5, column: 0 } } })), null);
 });
+
+test('slides playing flag survives build and parse, and defaults to absent', () => {
+  const playing = parseShareState(buildShareState(identity, 1, { workspaceId: 'w1', docId: 'd1', mode: 'slides', slides: { slideId: 's1', playing: true } }));
+  assert.deepEqual(playing.viewport.slides, { slideId: 's1', playing: true });
+  const editing = parseShareState(buildShareState(identity, 2, { workspaceId: 'w1', docId: 'd1', mode: 'slides', slides: { slideId: 's1', playing: false } }));
+  assert.deepEqual(editing.viewport.slides, { slideId: 's1' });
+});

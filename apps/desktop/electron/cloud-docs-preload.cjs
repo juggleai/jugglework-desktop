@@ -152,7 +152,7 @@ function safeMeeting(type, value) {
   if (e && num(e.centerX) !== null && num(e.centerY) !== null && num(e.zoom) !== null)
     out.edgeless = { centerX: e.centerX, centerY: e.centerY, zoom: e.zoom };
   const sl = value.slides;
-  if (sl && MEETING_ID.test(sl.slideId ?? "")) out.slides = { slideId: sl.slideId };
+  if (sl && MEETING_ID.test(sl.slideId ?? "")) out.slides = { slideId: sl.slideId, ...(sl.playing === true ? { playing: true } : {}) };
   const sh = value.sheet;
   if (sh && typeof sh.sheetId === "string" && sh.sheetId.length <= 128 && Number.isInteger(sh.row) && sh.row >= 0 && Number.isInteger(sh.column) && sh.column >= 0)
     out.sheet = { sheetId: sh.sheetId, row: sh.row, column: sh.column };
