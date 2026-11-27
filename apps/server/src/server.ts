@@ -98,6 +98,7 @@ import {
 } from "./workspace-export-safety.js";
 import { serve, type ServeResult } from "./serve-node.js";
 import { externalFetch, loopbackFetch } from "./server-fetch.js";
+import { createWorkspaceEngineWarmup } from "./workspace-engine-warmup.js";
 import { registerCoreRoutes } from "./routes/core.js";
 import { registerFileRoutes, resolveWorkspaceArtifactTargets, normalizeWorkspaceRelativePath } from "./routes/files.js";
 import { OfficeEngine } from "./office/engine.js";
@@ -3302,6 +3303,7 @@ function createRoutes(
     ensureWritable,
     resolveWorkspaceWithoutBootstrap,
     serializeWorkspace,
+    warmWorkspaceEngine: (workspace) => { void workspaceEngineWarmup.warm(config, workspace); },
     prepareWorkspaceRemoval: async (workspace) => {
       await reconcileWorkspaceActiveRunsForMutation(workspace, AbortSignal.timeout(5_000));
       const activeRuns = sessionMutations.listActive(workspace.id);
@@ -5555,6 +5557,38 @@ async function writeJuggleWorkConfigForWorkspace(
   );
 }
 
+// 单进程多目录的引擎：首次请求某目录才会初始化它的实例。创建/激活本地工作区后
+// 后台发一次只读 GET /config 先把该目录实例拉起来，避免云同步、MCP 注册、
+// provider.list 同时打到一个还在初始化的目录上互相拖慢。只处理受信任的托管引擎。
+const workspaceEngineWarmup = createWorkspaceEngineWarmup({
+  fetchImpl: (url, init) => loopbackFetch(url, init),
+  resolveTarget: (config, workspace) => {
+    if (workspace.workspaceType !== "local") return null;
+    if (!trustedOpencodeProcessIdentity(config, workspace)) return null;
+    const connection = resolveWorkspaceOpencodeConnection(config, workspace);
+    const baseUrl = connection.baseUrl?.trim() ?? "";
+    const directory = resolveOpencodeDirectory(workspace);
+    if (!baseUrl || !directory) return null;
+    return {
+      baseUrl,
+      directory,
+      headers: connection.authHeader ? { Authorization: connection.authHeader } : ({} as Record<string, string>),
+    };
+  },
+});
+
+/**
+ * 引擎进程启动后立即对它的启动目录做一次后台预热（不等待、不抛错）。
+ *
+ * 实测引擎进程启动后第一次初始化任何目录要 10 到 16 秒（单线程 JS 在 CPU 上忙），
+ * 与登录、云、MCP 无关；同一进程里第二个目录只要几毫秒到 3 秒。这个一次性成本
+ * 之前要等用户创建第一个会话时才触发。应用启动时就开始，可以与用户登录、选择
+ * 工作区的时间重叠。
+ */
+export function warmManagedOpencodeEngine(config: ServerConfig, workspace: WorkspaceInfo): Promise<"warmed" | "skipped" | "failed"> {
+  return workspaceEngineWarmup.warm(config, workspace);
+}
+
 function resolveOpencodeDirectory(workspace: WorkspaceInfo): string | null {
   const explicit = workspace.directory?.trim() ?? "";
   if (explicit) return normalizeOpencodeDirectory(explicit);
@@ -5685,6 +5719,8 @@ async function reloadOpencodeEngine(
   }
 
   markJuggleWorkCloudMcpStale(workspace, directory);
+  // dispose 之后目录实例需要重建，之前的预热不再代表就绪。
+  workspaceEngineWarmup.forget(config, workspace);
   // Re-register runtime-DB MCPs: dispose rebuilds engine state from disk
   // configs (including the server-managed runtime config file for the
   // primary workspace), but other workspaces' runtime MCPs only reach the

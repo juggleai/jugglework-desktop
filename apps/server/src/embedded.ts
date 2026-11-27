@@ -12,6 +12,7 @@ import { createManagedOpencodeServer, type ManagedOpencodeServer, type OpencodeE
 import {
   clearTrustedOpencodeProcess,
   registerTrustedOpencodeProcess,
+  warmManagedOpencodeEngine,
   startServer,
   syncAllWorkspacesRuntimeMcpToEngine,
   type JuggleWorkServerHandle,
@@ -245,6 +246,10 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   // workspace's runtime-DB MCPs into the engine so they aren't invisible
   // until a manual reload. Best-effort.
   if (managedOpencode) {
+    // 先预热引擎启动目录，再做 MCP 同步：两者都会打到同一个还在初始化的目录，
+    // 单飞预热让后续请求命中就绪的实例，而不是各自等待并互相拖慢。
+    const warmTarget = findManagedEngineWorkspace(config.workspaces) ?? fileAssistantBootstrapWorkspace;
+    if (warmTarget) void warmManagedOpencodeEngine(config, warmTarget);
     void syncAllWorkspacesRuntimeMcpToEngine(config);
   }
 

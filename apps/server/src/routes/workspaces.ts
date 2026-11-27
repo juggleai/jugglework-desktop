@@ -26,6 +26,8 @@ interface RegisterWorkspaceRoutesOptions {
   ensureWritable: (config: ServerConfig) => void;
   resolveWorkspaceWithoutBootstrap: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   serializeWorkspace: (workspace: ServerConfig["workspaces"][number]) => unknown;
+  /** 后台预热该工作区在引擎中的目录实例；不得抛错、不得阻塞响应。 */
+  warmWorkspaceEngine?: (workspace: WorkspaceInfo) => void;
   prepareWorkspaceRemoval?: (workspace: WorkspaceInfo) => Promise<void>;
 }
 
@@ -254,6 +256,7 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     ensureWritable,
     resolveWorkspaceWithoutBootstrap,
     serializeWorkspace,
+    warmWorkspaceEngine,
     prepareWorkspaceRemoval,
   } = options;
 
@@ -314,6 +317,8 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     }
     const persisted = await persistServerWorkspaceState(config);
     onWorkspacesChanged();
+    // 后台预热新目录的引擎实例，不等待、不影响响应。
+    warmWorkspaceEngine?.(workspace);
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -474,6 +479,8 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     ];
     const persisted = persist ? await persistServerWorkspaceState(config) : false;
     if (persist) onWorkspacesChanged();
+    // 只预热被激活的这一个工作区；其余工作区保持按需初始化。
+    warmWorkspaceEngine?.(workspace);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,

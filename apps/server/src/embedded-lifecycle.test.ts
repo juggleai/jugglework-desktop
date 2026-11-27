@@ -205,6 +205,63 @@ describe("embedded server lifecycle", () => {
     }
   });
 
+  test.serial("starting the managed engine warms its boot directory once, in the background", async () => {
+    const fixture = await createFixture();
+    try {
+      const handle = await startManaged(fixture, "startup-warmup");
+      const bootDirectory = handle.config.workspaces[0]!.path;
+      // 预热在后台发起：等假引擎记录到 /config，而不是要求启动流程等它。
+      const deadline = Date.now() + 5_000;
+      let lines = await logLines(fixture.logPath);
+      while (!lines.includes("/config") && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        lines = await logLines(fixture.logPath);
+      }
+      expect(lines.filter((line) => line === "/config")).toHaveLength(1);
+      expect(bootDirectory).toContain("startup-warmup-workspace");
+    } finally {
+      await fixture.restore();
+    }
+  }, 30_000);
+
+  test.serial("an external engine is never warmed", async () => {
+    const fixture = await createFixture();
+    try {
+      // 假引擎当作"用户自己配置的外部 OpenCode"：不由 JuggleWork 托管，也没有受信任身份。
+      const external = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch(request) {
+          void writeFile(fixture.logPath, `${new URL(request.url).pathname}\n`, { flag: "a" });
+          return Response.json({});
+        },
+      });
+      try {
+        process.env.JUGGLEWORK_OPENCODE_BASE_URL = `http://127.0.0.1:${external.port}`;
+        const workspace = join(fixture.root, "external-workspace");
+        await mkdir(workspace, { recursive: true });
+        const handle = await startEmbeddedServer({
+          configPath: join(fixture.root, "external-server.json"),
+          host: "127.0.0.1",
+          port: 0,
+          token: "server-token",
+          hostToken: "host-token",
+          workspaces: [workspace],
+          manageOpencode: true,
+          opencodeBin: fixture.opencodeBin,
+          opencodeCwd: workspace,
+        });
+        fixture.handles.push(handle);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect((await logLines(fixture.logPath)).filter((line) => line === "/config")).toHaveLength(0);
+      } finally {
+        external.stop(true);
+      }
+    } finally {
+      await fixture.restore();
+    }
+  }, 30_000);
+
   test.serial("stop is shared, releases each resource once, and unregisters a non-secret identity", async () => {
     const fixture = await createFixture();
     const originalStartServer = serverModule.startServer;
