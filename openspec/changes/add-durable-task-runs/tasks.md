@@ -13,6 +13,7 @@
 - [ ] 2.3 Project managed active-run reads from durable Task Run/Attempt state while preserving the existing compatibility path for unmanaged pre-upgrade OpenCode sessions.
 - [ ] 2.4 Integrate terminal observations, authoritative idle reconciliation, abort, and replacement generation handling with durable state, ensuring delayed coordinator and SSE events cannot mutate a newer Attempt.
 - [ ] 2.5 Add end-to-end tests for accepted, fast-completing, dispatch-failed, aborted, terminal-error, stale-observation, double-start, and pre-upgrade unmanaged sessions.
+- [x] 2.6 Settle runs whose engine is idle without terminal evidence after a 60 second window, make Stop idempotent when the engine is already idle, and show a pending stop control that refetches runs and snapshot after 5 seconds.
 
 ## 3. Operation Ledger
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -78,6 +78,7 @@ function startMockOpencode() {
   const messageReads: string[] = [];
   const heldMessageIds = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldAborts = new Map<string, ReturnType<typeof deferred<void>>>();
+  const refusedAborts = new Set<string>();
   const heldCommands = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldShells = new Map<string, ReturnType<typeof deferred<void>>>();
   const failedPrompts = new Set<string>();
@@ -224,7 +225,7 @@ function startMockOpencode() {
         const sessionId = decodeURIComponent(abortMatch[1]!);
         aborts.push(sessionId);
         await heldAborts.get(sessionId)?.promise;
-        return Response.json(true);
+        return Response.json(!refusedAborts.has(sessionId));
       }
 
       const commandMatch = url.pathname.match(/^\/session\/([^/]+)\/command$/);
@@ -272,6 +273,7 @@ function startMockOpencode() {
     messageReads,
     heldMessageIds,
     heldAborts,
+    refusedAborts,
     heldCommands,
     heldShells,
     failedPrompts,
@@ -1901,6 +1903,100 @@ describe("authoritative session mutation APIs", () => {
     harness.config.workspaces = registered;
     engine.statuses.set(sessionId, { type: "busy" });
     expect(await harness.server.reconcileActiveSessionRuns!()).toMatchObject([{ sessionId }]);
+  });
+
+  test("an idle engine with no terminal evidence settles the run as failed only after 60 seconds", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_no_terminal_evidence";
+    const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_no_terminal_evidence",
+        prompt: { parts: [{ type: "text", text: "Run" }] },
+      }),
+    });
+    expect(started.status).toBe(202);
+    const { run } = await started.json();
+    engine.statuses.set(sessionId, { type: "busy" });
+    await harness.server.reconcileActiveSessionRuns!();
+    // The last assistant message never records a terminal state.
+    engine.statuses.set(sessionId, { type: "idle" });
+    engine.messages.set(sessionId, [{ info: { id: "msg_unfinished", role: "assistant", time: { created: Date.now() + 1 } }, parts: [] } as never]);
+
+    const realNow = Date.now.bind(Date);
+    let offset = 0;
+    const clock = spyOn(Date, "now").mockImplementation(() => realNow() + offset);
+    const sample = async () => (await harness.server.reconcileActiveSessionRuns!()).length;
+    try {
+      // Window math is covered by the coordinator tests; this proves the route
+      // reaches it: no terminal evidence keeps the run inside the window ...
+      expect(await sample()).toBe(1);
+      offset += 30_000;
+      expect(await sample()).toBe(1);
+      // ... and once the window has elapsed the run is settled as failed.
+      offset += 120_000;
+      expect(await sample()).toBe(0);
+    } finally { clock.mockRestore(); }
+    const terminals = await fetch(`${harness.base}/workspace/ws_1/session-run-terminals`, { headers: harness.collaboratorHeaders });
+    expect((await terminals.json()).items).toMatchObject([{ runId: run.runId, terminalReason: "failed" }]);
+  });
+
+  test("Stop succeeds idempotently when the engine refuses because it is already idle", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_stop_idle_engine";
+    const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_stop_idle_engine",
+        prompt: { parts: [{ type: "text", text: "Run" }] },
+      }),
+    });
+    expect(started.status).toBe(202);
+    const { run } = await started.json();
+    engine.statuses.set(sessionId, { type: "idle" });
+    engine.refusedAborts.add(sessionId);
+
+    const stopped = await fetch(`${runPath(harness.base, sessionId)}/${run.runId}/abort`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ abortCommandCorrelationId: "cmd_stop_idle_engine_abort" }),
+    });
+    expect(stopped.status).toBe(202);
+    // Accepted abort no longer needs terminal evidence, so the next reconcile clears it.
+    await harness.server.reconcileActiveSessionRuns!();
+    await harness.server.reconcileActiveSessionRuns!();
+    expect(harness.server.hasActiveSessionRuns!()).toBe(false);
+  });
+
+  test("Stop is still refused while the engine reports a busy session it will not abort", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_stop_busy_refused";
+    const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_stop_busy_refused",
+        prompt: { parts: [{ type: "text", text: "Run" }] },
+      }),
+    });
+    const { run } = await started.json();
+    engine.statuses.set(sessionId, { type: "busy" });
+    engine.refusedAborts.add(sessionId);
+    const stopped = await fetch(`${runPath(harness.base, sessionId)}/${run.runId}/abort`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ abortCommandCorrelationId: "cmd_stop_busy_refused_abort" }),
+    });
+    expect(stopped.status).toBe(502);
+    expect(harness.server.hasActiveSessionRuns!()).toBe(true);
   });
 
   test("workspace removal is blocked while its authoritative run is active", async () => {

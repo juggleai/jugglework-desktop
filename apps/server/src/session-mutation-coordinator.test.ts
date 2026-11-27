@@ -11,6 +11,61 @@ function harness() {
   });
 }
 
+describe("inconclusive idle settlement", () => {
+  function clocked() {
+    let id = 0;
+    let timestamp = 1_000;
+    const coordinator = createSessionMutationCoordinator({
+      randomUUID: () => `00000000-0000-4000-8000-${String(++id).padStart(12, "0")}`,
+      now: () => timestamp,
+    });
+    return { coordinator, advance: (ms: number) => { timestamp += ms; } };
+  }
+  const key = { workspaceId: "ws", sessionId: "ses" };
+  function startRunning(coordinator: ReturnType<typeof clocked>["coordinator"]) {
+    const run = coordinator.reserveStart({ ...key, origin: "local-renderer", startCommandCorrelationId: null });
+    coordinator.acceptStart({ ...key, runId: run.runId });
+    return run;
+  }
+
+  test("keeps a run until the engine has stayed idle for the full window, then settles it as failed", () => {
+    const { coordinator, advance } = clocked();
+    const run = startRunning(coordinator);
+    const settle = () => coordinator.settleInconclusiveIdle({ ...key, runId: run.runId, settleAfterMs: 60_000 });
+
+    expect(settle()).toMatchObject({ cleared: false, retryAfterMs: 60_000 });
+    advance(59_999);
+    expect(settle()).toMatchObject({ cleared: false, retryAfterMs: 1 });
+    expect(coordinator.getActive(key.workspaceId, key.sessionId)).not.toBeNull();
+    advance(1);
+    expect(settle()).toMatchObject({ cleared: true, terminalStatus: "failed" });
+    expect(coordinator.getActive(key.workspaceId, key.sessionId)).toBeNull();
+  });
+
+  test("engine activity restarts the window so a working run is never settled", () => {
+    const { coordinator, advance } = clocked();
+    const run = startRunning(coordinator);
+    const settle = () => coordinator.settleInconclusiveIdle({ ...key, runId: run.runId, settleAfterMs: 60_000 });
+
+    settle();
+    advance(59_000);
+    coordinator.observe({ ...key, runId: run.runId, status: "running" });
+    advance(59_000);
+    expect(settle()).toMatchObject({ cleared: false });
+    advance(59_999);
+    expect(settle()).toMatchObject({ cleared: false });
+    expect(coordinator.getActive(key.workspaceId, key.sessionId)).not.toBeNull();
+  });
+
+  test("never settles a starting or aborting run and rejects a stale run id", () => {
+    const { coordinator, advance } = clocked();
+    const reserved = coordinator.reserveStart({ ...key, origin: "local-renderer", startCommandCorrelationId: null });
+    advance(120_000);
+    expect(coordinator.settleInconclusiveIdle({ ...key, runId: reserved.runId, settleAfterMs: 0 })).toMatchObject({ cleared: false });
+    expect(() => coordinator.settleInconclusiveIdle({ ...key, runId: "other", settleAfterMs: 0 })).toThrow("run_mismatch");
+  });
+});
+
 describe("session mutation coordinator", () => {
   test("reserves synchronously, separates command correlation from run identity, and increments generations", () => {
     const coordinator = harness();

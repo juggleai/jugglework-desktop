@@ -48,6 +48,13 @@ import {
 } from "../session-pending-operation-pump.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 
+/**
+ * How long the engine may stay idle with no terminal evidence before the
+ * durable run is settled as failed. Must stay far above the start/idle race
+ * windows so a slow-starting or resuming run is never cut short.
+ */
+export const SESSION_RUN_INCONCLUSIVE_IDLE_SETTLE_MS = 60_000;
+
 type JsonResponse = (data: unknown, status?: number) => Response;
 type ParseOptionalBoolean = (value: string | null, name: string) => boolean | undefined;
 type ParseOptionalPositiveInteger = (value: string | null, name: string) => number | undefined;
@@ -567,7 +574,19 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
           }
           const restored = sessionMutations.isRestored(workspace.id, active.sessionId, active.runId);
           const interruptedAfterRestart = active.status !== "aborting" && !terminal && restored;
-          if (active.status !== "aborting" && !terminal && !interruptedAfterRestart) continue;
+          if (active.status !== "aborting" && !terminal && !interruptedAfterRestart) {
+            // No terminal evidence while the engine is idle. Keep the run for a
+            // bounded window, then settle it so renderers cannot stay busy and
+            // Stop cannot be refused forever.
+            const settled = sessionMutations.settleInconclusiveIdle({
+              workspaceId: workspace.id,
+              sessionId: active.sessionId,
+              runId: active.runId,
+              settleAfterMs: SESSION_RUN_INCONCLUSIVE_IDLE_SETTLE_MS,
+            });
+            if (settled.cleared) finalizeClearedRun(workspace.id, active.sessionId, active.runId);
+            continue;
+          }
           const reconciliation = sessionMutations.reconcileAuthoritativeIdle({
             workspaceId: workspace.id,
             sessionId: active.sessionId,
@@ -1452,7 +1471,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     try {
       const abortRequested = await dispatchSessionAbort(config, workspace, input.sessionId);
       if (!abortRequested) {
-        throw new ApiError(502, "opencode_abort_not_accepted", "OpenCode did not accept the abort request");
+        // The engine may refuse because nothing is running. Stop is then an
+        // idempotent success: settle the run instead of rolling back a 502 that
+        // leaves the stale run (and its Stop button) alive forever.
+        const engineStatus = await readEngineSessionStatus(workspace, input.sessionId).catch(() => null);
+        if (engineStatus !== "idle") {
+          throw new ApiError(502, "opencode_abort_not_accepted", "OpenCode did not accept the abort request");
+        }
       }
       const run = sessionMutations.acceptAbort({
         workspaceId: workspace.id,

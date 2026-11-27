@@ -87,7 +87,7 @@ export function createSessionMutationCoordinator(options: {
   initialRuns?: ActiveSessionMutation[];
 } = {}) {
   const randomUUID = options.randomUUID ?? cryptoRandomUUID;
-  const now = options.now ?? Date.now;
+  const now = options.now ?? (() => Date.now());
   const runs = new Map<string, StoredSessionMutation>();
   const generations = new Map<string, number>();
   const emit = (event: SessionMutationLifecycleEvent) => options.onLifecycleEvent?.(event);
@@ -374,6 +374,55 @@ export function createSessionMutationCoordinator(options: {
     return { cleared: true, run: null, terminalStatus, retryAfterMs: null };
   }
 
+  /**
+   * Bound how long an engine-idle run may stay active without terminal
+   * evidence. The first sample only records when idleness began. Any later
+   * engine activity resets it through `observe`, so a run that is still
+   * working (including via delegated children) is never settled. Once the
+   * engine has stayed idle for `settleAfterMs`, the run is settled as failed
+   * rather than completed, because nothing proves it finished.
+   */
+  function settleInconclusiveIdle(input: {
+    workspaceId: string;
+    sessionId: string;
+    runId: string;
+    settleAfterMs: number;
+  }): SessionMutationIdleReconciliation {
+    const key = sessionKey(input.workspaceId, input.sessionId);
+    const run = runs.get(key);
+    if (!run || run.runId !== input.runId) {
+      throw new SessionMutationError("run_mismatch", run?.runId ?? null);
+    }
+    if (!Number.isFinite(input.settleAfterMs) || input.settleAfterMs < 0) {
+      throw new TypeError("settleAfterMs must be a non-negative finite number");
+    }
+    // A starting run keeps its admission fence; an aborting run has its own path.
+    if (run.status === "starting" || run.status === "aborting") {
+      return { cleared: false, run: publicRun(run), terminalStatus: null, retryAfterMs: null };
+    }
+
+    const timestamp = now();
+    if (run.authoritativeIdleObservedAt === null) {
+      const previous = { ...run };
+      run.authoritativeIdleObservedAt = timestamp;
+      run.revision += 1;
+      run.updatedAt = timestamp;
+      try { emit({ event: "idle_suspected", run: publicRun(run) }); } catch (error) {
+        Object.assign(run, previous);
+        throw error;
+      }
+      return { cleared: false, run: publicRun(run), terminalStatus: null, retryAfterMs: input.settleAfterMs };
+    }
+
+    const elapsed = Math.max(0, timestamp - run.authoritativeIdleObservedAt);
+    if (elapsed < input.settleAfterMs) {
+      return { cleared: false, run: publicRun(run), terminalStatus: null, retryAfterMs: input.settleAfterMs - elapsed };
+    }
+    emit({ event: "run_terminal", run: publicRun(run), terminalReason: "failed" });
+    runs.delete(key);
+    return { cleared: true, run: null, terminalStatus: "failed", retryAfterMs: null };
+  }
+
   function listActive(workspaceId?: string): ActiveSessionMutation[] {
     return [...runs.values()]
       .filter((run) => workspaceId === undefined || run.workspaceId === workspaceId)
@@ -416,6 +465,7 @@ export function createSessionMutationCoordinator(options: {
     rollbackAbort,
     observe,
     reconcileAuthoritativeIdle,
+    settleInconclusiveIdle,
     listActive,
     getActive,
     isRestored,

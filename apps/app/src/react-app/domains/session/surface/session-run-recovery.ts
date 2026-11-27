@@ -96,3 +96,63 @@ export function shouldReportAbortFailure(input: {
   if (input.abortRequested) return false;
   return !input.activeRunsRefreshSucceeded || input.coordinatorActive;
 }
+
+/** How long Stop may stay pending before the renderer re-reads authoritative state. */
+export const STOP_RECONCILE_TIMEOUT_MS = 5_000;
+
+/**
+ * Decide what a Stop that has been pending too long should do. The renderer
+ * must not trust a busy projection that the server and the latest snapshot no
+ * longer back: it drops the pending state and lets the normal recovery effect
+ * run against fresh reads.
+ *
+ * @param input.pendingForMs how long the abort request has been outstanding
+ * @returns `wait` while still inside the window, otherwise `reconcile`
+ */
+export function stopReconcileAction(input: { pendingForMs: number }): "wait" | "reconcile" {
+  return input.pendingForMs >= STOP_RECONCILE_TIMEOUT_MS ? "reconcile" : "wait";
+}
+
+/**
+ * Whether a Stop click should start a new abort. A second click while one is
+ * outstanding would only stack identical requests, so it is ignored.
+ */
+export function canStartStop(input: { chatStreaming: boolean; stopPending: boolean }): boolean {
+  return input.chatStreaming && !input.stopPending;
+}
+
+/**
+ * Run one Stop at a time. Repeat calls while one is outstanding are dropped,
+ * and if it is still unresolved after `timeoutMs` the `onTimeout` reconcile
+ * fires once so the caller can re-read authoritative state.
+ *
+ * @returns `false` when the call was dropped because a Stop was already running
+ */
+export function createStopGuard(options: {
+  timeoutMs?: number;
+  onPendingChange?: (pending: boolean) => void;
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+}) {
+  const timeoutMs = options.timeoutMs ?? STOP_RECONCILE_TIMEOUT_MS;
+  const setTimer = options.setTimer ?? ((fn, ms) => globalThis.setTimeout(fn, ms));
+  const clearTimer = options.clearTimer ?? ((handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>));
+  let pending = false;
+  return {
+    isPending: () => pending,
+    async run(input: { chatStreaming: boolean; abort: () => Promise<void>; onTimeout: () => void }): Promise<boolean> {
+      if (!canStartStop({ chatStreaming: input.chatStreaming, stopPending: pending })) return false;
+      pending = true;
+      options.onPendingChange?.(true);
+      const timer = setTimer(input.onTimeout, timeoutMs);
+      try {
+        await input.abort();
+      } finally {
+        clearTimer(timer);
+        pending = false;
+        options.onPendingChange?.(false);
+      }
+      return true;
+    },
+  };
+}

@@ -173,6 +173,8 @@ export type ComposerProps = {
   onSteer: () => void | Promise<void>;
   onQueue: () => void | Promise<void>;
   onStop: () => void | Promise<void>;
+  /** A Stop request is in flight; the button shows progress and ignores clicks. */
+  stopPending?: boolean;
   busy: boolean;
   steering: boolean;
   submissionPreparing: boolean;
@@ -2122,11 +2124,13 @@ export function ReactSessionComposer(props: ComposerProps) {
                     ) : null}
                     <button
                       type="button"
-                      onClick={props.onStop}
-                      className="relative inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-full bg-black text-white transition-colors hover:bg-black/90 dark:bg-white dark:text-black dark:hover:bg-white/90"
+                      onClick={props.stopPending ? undefined : props.onStop}
+                      aria-disabled={props.stopPending ? true : undefined}
+                      data-stop-pending={props.stopPending ? "true" : undefined}
+                      className={`relative inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-full bg-black text-white transition-colors hover:bg-black/90 dark:bg-white dark:text-black dark:hover:bg-white/90 ${props.stopPending ? "cursor-wait opacity-70" : ""}`}
                       title={props.queuedCount > 0 ? t("composer.queued_count", { count: props.queuedCount }) : t("composer.stop")}
                     >
-                      <Square size={12} fill="currentColor" />
+                      {props.stopPending ? <LoaderCircle size={14} className="animate-spin" /> : <Square size={12} fill="currentColor" />}
                       {props.queuedCount > 0 ? (
                         <span className="absolute -right-1.5 -top-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--dls-accent)] px-1 text-[9px] font-semibold tabular-nums text-[var(--dls-accent-fg)]">
                           {props.queuedCount}

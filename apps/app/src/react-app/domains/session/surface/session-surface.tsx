@@ -71,7 +71,7 @@ import {
   VIDEO_DURATION_DEFAULT_SECONDS,
   type ComposerVideoModelOption,
 } from "./composer/video-generation";
-import { effectiveSessionRunning, effectiveThreadStatus, isSessionBusyError, shouldReconcileAfterCoordinatorEnded, shouldReportAbortFailure, shouldSettleStaleRunProjection } from "./session-run-recovery";
+import { createStopGuard, effectiveSessionRunning, effectiveThreadStatus, isSessionBusyError, shouldReconcileAfterCoordinatorEnded, shouldReportAbortFailure, shouldSettleStaleRunProjection } from "./session-run-recovery";
 import { useActiveSnapshotReconciliation } from "./active-snapshot-reconciliation";
 import { generationDraftAvailableInCache, imageModelsQueryOptions, isManagedMediaModel, managedMediaScope, mediaModelQueryScope, videoModelsQueryOptions } from "@/react-app/domains/connections/media-model-queries";
 import { useManagedProviderCatalogRevision, useManagedProviderEpoch } from "@/app/lib/managed-provider-scope";
@@ -664,6 +664,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [imageGenerationBySession, setImageGenerationBySession] = useState<Record<string, ComposerImageGenerationOptions | null>>({});
   const [videoGenerationBySession, setVideoGenerationBySession] = useState<Record<string, ComposerVideoGenerationOptions | null>>({});
   const [steering, setSteering] = useState(false);
+  const [stopPending, setStopPending] = useState(false);
   const [steeringQueuedDraftId, setSteeringQueuedDraftId] = useState<string | null>(null);
   const [submissionPendingIdentity, setSubmissionPendingIdentity] = useState<string | null>(null);
   const imageGeneration = imageGenerationBySession[props.sessionId] ?? null;
@@ -1746,7 +1747,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
   }, [fileHost, chatStreaming, props.sessionId, props.taskSubmissionDisabled, removeQueuedDraftFromStore, restoreQueuedDraft, sendDraft]);
 
-  const handleAbort = useCallback(async () => {
+  const runAbort = useCallback(async () => {
     if (!chatStreaming) return;
     setError(null);
     // Stop means stop: drop queued follow-ups before aborting, otherwise the
@@ -1787,6 +1788,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
     captureAnalyticsEvent("task_run_stopped", {});
     await snapshotQuery.refetch();
   }, [activeRunsQuery.refetch, chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceId, props.workspaceRoot, queryClient, queuedDrafts, snapshotQuery.refetch, statusQueryKey]);
+
+  const stopGuard = useMemo(() => createStopGuard({ onPendingChange: setStopPending }), []);
+  const handleAbort = useCallback(async () => {
+    // One Stop at a time; if it is unresolved after the window, re-read the
+    // server's run list and the snapshot so stale-projection recovery can act.
+    await stopGuard.run({
+      chatStreaming,
+      abort: runAbort,
+      onTimeout: () => {
+        void activeRunsQuery.refetch();
+        void snapshotQuery.refetch();
+      },
+    });
+  }, [activeRunsQuery.refetch, chatStreaming, runAbort, snapshotQuery.refetch, stopGuard]);
 
   const handleDismissError = useCallback(() => {
     setError(null);
@@ -2838,6 +2853,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onSteer={handleSteer}
         onQueue={handleQueue}
         onStop={handleAbort}
+        stopPending={stopPending}
         busy={chatStreaming}
         steering={steering}
         submissionPreparing={submissionPreparing}
