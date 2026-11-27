@@ -1,0 +1,255 @@
+{
+  "schema": "com.juggleai.jugglework.desktop-release-result",
+  "schemaVersion": 1,
+  "version": "1.2.44",
+  "channel": "stable",
+  "platform": "mac",
+  "architecture": "arm64",
+  "sourceCommit": "3bf03c124f12a2f0ded882cb4a2aba42206c5c08",
+  "evidence": {
+    "root": "release-evidence/jugglework-desktop/1.2.44",
+    "promotion": {
+      "path": "native-build.cTSC8P/qiniu-release-evidence.json",
+      "sha256": "fb379451dcbff6aff57fb036dea822cd4f7ac9673f2ea3134816245dd83bbfe2"
+    },
+    "qiniuVerifyFirstFailure": {
+      "path": "native-build.cTSC8P/qiniu-upload-stop-1795778580464.json",
+      "sha256": "3d61bdbe497a8bf7a9c451faf1e4c7c399fb58c8523c61ad53bd21fdde6928e1"
+    },
+    "qiniuVerifyReadOnlyRerunIntent": {
+      "path": "native-build.cTSC8P/qiniu-verify-h1-intent.json",
+      "sha256": "68d1d7582b6c09b885a2c25cde8c45157e8fe28500fcee874d9f59e5e512c31d"
+    },
+    "qiniuVerifyReadOnlyRerunObservations": {
+      "path": "native-build.cTSC8P/qiniu-verify-h1-observations.json",
+      "sha256": "5ffa0b2f26fd18d967ba1a524e9de7d8dbc6db226d568a4e48ee8e68866c456d"
+    },
+    "denOverseas": {
+      "path": "den-1.2.44-overseas-result-20261127T112920815003Z.json",
+      "sha256": "a4122347776576316c8181bd8b24a06e07683e59cea3560a0a511197ca14574d"
+    },
+    "denOverseasApplyIntent": {
+      "path": "den-1.2.44-overseas-apply-intent.json",
+      "sha256": "5efb7a98c2eb19b13fbd733aa918f8f7d3cf0697c828f1570da3e1057d12192d"
+    },
+    "denOverseasReadOnlyAddendum": {
+      "path": "den-1.2.44-overseas-readonly-addendum-20261127T113403327550Z.json",
+      "sha256": "360e8967f0f055e7aa22b6a1fff2afc0d8f56f5e70b6175a441e1ac45f3e8e9d"
+    },
+    "denOverseasFailedAttemptResult": {
+      "path": "failed-attempts/den-1.2.43-overseas-result-20261127T112813034473Z.json",
+      "sha256": "6965bd78bb6b949facada9e5e414964f9acde3f90356e208432749ed8a250a88"
+    },
+    "denOverseasFailedAttemptReport": {
+      "path": "failed-attempts/DEN-CONFIG-ROLLOUT-REPORT-20261127T112813034473Z.md",
+      "sha256": "fa5a3e8a197813d06ab93f42153c6538bf71805376a74aa3ddbf6c8de3eb3c0e"
+    },
+    "logSegmentReaderSource": {
+      "path": "den-1.2.44-log-segments.py",
+      "sha256": "d9e425273fa1eac4cd83fe55445fc1bbebd1b549aef954460b5ebaf6701d8677"
+    },
+    "logSegmentReaderSyntheticTests": {
+      "path": "den-1.2.44-log-segments-test.py",
+      "sha256": "ff7fa3826dd27a2b13076e9ee16fcd375b0dc631caf1bdbcdc8949e4e3ba9c6e"
+    }
+  },
+  "promotion": {
+    "source": "actual local CLI",
+    "status": "verified",
+    "promotedAt": "2026-11-27T11:27:22.994Z",
+    "bucket": "jugglework",
+    "origin": "https://downloads.jugglework.cn",
+    "previousVersion": "1.2.43",
+    "expectedPreviousManifestSha256": "4a5f220bd2eee3448ac79133e687c99291f9d6e4695f6ced45a3fc9ceb20ddf6",
+    "lockKey": "jugglework/releases/locks/stable-mac.lock",
+    "lockAcquiredAt": "2026-11-27T11:27:11.963Z",
+    "lockReleased": true,
+    "cdnRefresh": "succeeded",
+    "verifiedImmutableObjects": 5,
+    "immutableVerification": "Qiniu size/ETag and public HTTPS MIME, length, Range/Content-Range, full GET SHA-256/SHA-512 and long-lived caching verified before and after promotion.",
+    "immutableManifestUrl": "https://downloads.jugglework.cn/jugglework/releases/v1.2.44/mac/latest-mac.yml",
+    "stableManifestUrl": "https://downloads.jugglework.cn/jugglework/releases/stable/mac/latest-mac.yml",
+    "manifestBytes": 706,
+    "manifestSha256": "14518c743204121b3f7f444be3426920759d6bc69a6b039b343509a922644399",
+    "manifestETag": "Fr2LMpyFoSwpAOBml13L4oGs963q",
+    "stableReadBackAt": "2026-11-27T11:27:22.038Z",
+    "stableReadBackAttempts": 7,
+    "stableAndImmutableBytesEqual": true,
+    "manifestFullGetStatus": 200,
+    "manifestRangeStatus": 206,
+    "manifestContentRange": "bytes 0-0/706",
+    "observedMutableCacheControl": "public, max-age=31536000",
+    "olderVersionCacheRisk": true,
+    "publicVerificationTransport": {
+      "firstAttempt": {
+        "transport": "curl HTTPS forced to HTTP/1.1",
+        "outcome": "failed",
+        "failedCheck": "full public GET of the immutable ZIP",
+        "curlExitCode": 18,
+        "bytesReceivedBeforeFailure": 20971520,
+        "effect": "The publication stage stopped with a stop record; no promotion followed from that attempt."
+      },
+      "recheck": {
+        "transport": "curl HTTPS forced to HTTP/1.1",
+        "mode": "read-only; upload not allowed; no re-upload",
+        "observations": 18,
+        "allExitCodesZero": true,
+        "fullGetBytesMatchSize": true,
+        "predecessorBytesAndAbsentLockRechecked": true
+      },
+      "note": "The curl exit 18 (partial transfer) was not hidden or relabelled. Verification passed on the separate read-only recheck, which does not diagnose the cause of the first failure. The five immutable objects were uploaded once and not re-uploaded. The promotion-phase observations (30) all exited 0."
+    }
+  },
+  "trust": {
+    "bundleIdentifier": "com.juggleai.jugglework",
+    "teamIdentifier": "H7PDHSK3C7",
+    "deepStrictCodesign": "accepted",
+    "hardenedRuntime": "enabled",
+    "appSubmissionId": "b47e3ab2-58c7-4293-bda1-bfa4bfe16384",
+    "dmgSubmissionId": "7fe560af-3e5c-497e-83d6-514940001e1e",
+    "appAndDmgNotarization": "accepted",
+    "appAndDmgStaples": "validated",
+    "appAndDmgGatekeeper": "accepted",
+    "notarizationException": null,
+    "independentPackagedMediaChecksPassed": 26,
+    "packagedMediaOrphans": false,
+    "packagedMediaNullDocumentDiagnostics": 7,
+    "productMainAcceptance": "not_performed",
+    "installedStateVerification": "not_performed"
+  },
+  "releasePolicy": {
+    "scope": "stable-mac-arm64-standing-policy",
+    "policyVersion": 1,
+    "minVersion": "1.2.35",
+    "currentCoordinates": {
+      "version": "1.2.44",
+      "channel": "stable",
+      "platform": "mac",
+      "architecture": "arm64",
+      "commit": "3bf03c124f12a2f0ded882cb4a2aba42206c5c08",
+      "immutableManifestDigest": "14518c743204121b3f7f444be3426920759d6bc69a6b039b343509a922644399",
+      "mutableManifestKey": "jugglework/releases/stable/mac/latest-mac.yml"
+    },
+    "reasons": {
+      "canary": "User standing authorization: skip only the absent lower-version real-client upgrade canary.",
+      "mutableCacheControl": "User standing authorization: skip only mutable Qiniu Cache-Control mutation and required-value validation."
+    }
+  },
+  "workflow": {
+    "authorization": "standing_policy",
+    "explicit": true,
+    "canary": "skipped_by_standing_policy",
+    "mutableCacheControlMutation": "skipped_by_standing_policy",
+    "mutableCacheControlValidation": "skipped_by_standing_policy"
+  },
+  "den": {
+    "overseas": {
+      "firstAttemptBeforeAnyProductionChange": {
+        "status": "stopped",
+        "reason": "public 1.2.42 predecessor gate failed",
+        "cause": "Per the operator: leftover 1.2.43 release literals in the orchestration script adapted from 1.2.43. The recorded stop reason is the text above. The earlier script version was not retained, so the exact literal cannot be confirmed from the evidence. The predecessor gate refused to proceed, as intended.",
+        "applySubmitted": false,
+        "productionChange": false,
+        "chinaSSH": false,
+        "remoteSSHPreflightRecorded": false,
+        "startedAtUTC": "2026-11-27T11:28:13.034646+00:00",
+        "finishedAtUTC": "2026-11-27T11:28:18.537091+00:00",
+        "evidence": "failed-attempts/ (result and report kept unchanged; the result file keeps its 1.2.43-era name)",
+        "guardAdded": "The current script fails closed on stale previous-release literals in its orchestration code (only 1.2.43 and 1.2.44 are accepted) and gates on the public 1.2.43 predecessor contract."
+      },
+      "scriptResult": {
+        "status": "verified",
+        "phase": "complete",
+        "startedAtUTC": "2026-11-27T11:29:20.815163+00:00",
+        "finishedAtUTC": "2026-11-27T11:33:25.437921+00:00",
+        "applySubmitted": true,
+        "atomicConfigReplacements": 1,
+        "supervisorRestarts": 1,
+        "restartInvokedAt": "2026-11-27T11:30:29.171486+00:00",
+        "previousPid": 391525,
+        "restartedPid": 393326,
+        "observationSeconds": 120.4,
+        "observationSampleCount": 9,
+        "observationSamplesAllHttp200": true,
+        "observationSamplesAllSamePid": true,
+        "binaryAndNonVersionConfigBytesUnchanged": true,
+        "backupPrivate": true,
+        "loopback8021": true,
+        "chinaUnchanged": true
+      },
+      "logReader": {
+        "change": "The 1.2.44 script reads the application log with an anchored, bounded-segment reader, replacing the 1.2.43 whole-window read that hit a 12 MiB cap.",
+        "inProduction": {
+          "worked": true,
+          "filesRead": 1,
+          "rotationsFollowed": 0,
+          "segments": 1,
+          "bytesRead": 293921,
+          "forcedLineCuts": 0,
+          "attempts": 1
+        },
+        "limit": "No log rotation occurred in the 120.4 s observation window, and the window fit in a single segment. The rotation-following path and multi-segment cutting were therefore exercised only by synthetic tests (14 checks, including a replay of the 1.2.43 failure offset and a window over 12 MiB), not in production. The synthetic tests are not production evidence."
+      },
+      "readOnlyAddendum": {
+        "verdict": "passed",
+        "passedChecks": 14,
+        "totalChecks": 14,
+        "finishedAtUTC": "2026-11-27T11:34:14.379928+00:00",
+        "independent": true,
+        "writes": { "remote": false, "restart": false, "git": false, "site": false, "bucket": false, "chinaSSH": false },
+        "confirmed": {
+          "targetOnceInPublishedAndAllowed": true,
+          "listsAreBackupPlusTargetOnly": true,
+          "publishedAndAllowedCount": 31,
+          "nonVersionConfigBytesUnchanged": true,
+          "binaryUnchanged": true,
+          "minimumUnchanged": "0.1.0",
+          "backupPrivateAndChecksumsMatch": true,
+          "samePidAsRecordedRestart": true,
+          "sameProcessStartAsRecordedRestart": true,
+          "supervisorUptime": "0:03:38",
+          "loopback8021": true,
+          "publicOverseasContractMatchesLocal": true,
+          "chinaPublicContractUnchanged": true
+        },
+        "restartCount": {
+          "anchorLogLocatedByInode": true,
+          "anchorRotationIndex": 0,
+          "activeLogRotatedSinceRestart": false,
+          "filesScanned": 1,
+          "bytesScannedSinceAnchor": 342028,
+          "controlListeningLines": 1,
+          "streamingListeningLines": 1
+        },
+        "note": "Supports exactly one restart after the recorded anchor. The addendum also saw no log rotation, so it does not exercise rotation following either."
+      },
+      "previousLatest": "1.2.43",
+      "latest": "1.2.44",
+      "minimum": "0.1.0",
+      "publishedCount": 31,
+      "allowedCount": 31,
+      "priorPublishedAndAllowedCount": 30,
+      "logHttp5xxException": {
+        "authorization": "User standing authorization: overseas Desktop version releases, current and subsequent, record logged HTTP 5xx and do not block on those counts alone. Counts are reported as observed. China, other systems, health, config, panic, fatal, unknown-column, migration and restart gates are not exempt.",
+        "riskResolved": false,
+        "preApplyStrictSample": { "total": 0, "knownWorkerToken503": 0, "newOrUnclassified5xx": 0 },
+        "restartObservation": { "total": 0, "knownWorkerToken503": 0, "newOrUnclassified5xx": 0 },
+        "rollingBeforeApply": {
+          "throughUTC": "2026-11-27T11:29:29.222682+00:00",
+          "24h": { "workerToken503": 16, "other5xxLogLines": 22, "other5xxByStatus": { "500": 9, "502": 13 } },
+          "2h": { "workerToken503": 3, "other5xxLogLines": 9, "other5xxByStatus": { "500": 6, "502": 3 } }
+        },
+        "rollingAfterApply": {
+          "throughUTC": "2026-11-27T11:32:34.167649+00:00",
+          "24h": { "workerToken503": 15, "other5xxLogLines": 22, "other5xxByStatus": { "500": 9, "502": 13 } },
+          "2h": { "workerToken503": 3, "other5xxLogLines": 8, "other5xxByStatus": { "500": 6, "502": 2 } }
+        },
+        "criticalConfigFailureAndUnexpectedRestartCounts": 0,
+        "note": "Rolling windows overlap and are not additive. The windows slide with time, so their counts can fall as older lines leave them. The evidence does not attribute any logged 5xx to this release."
+      }
+    },
+    "china": { "latest": "1.2.37", "publicContractUnchanged": true, "readOnly": true }
+  },
+  "outOfScope": ["legacy origin writes", "website changes", "other platforms and channels", "new Den binary"],
+  "gitCompletion": "Final commit and remote ref verification are reported separately."
+}
