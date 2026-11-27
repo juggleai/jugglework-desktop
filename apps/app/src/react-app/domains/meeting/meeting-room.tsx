@@ -556,7 +556,7 @@ export function MeetingRoomHost() {
           </div>} />
         </MeetingDialog>
       ) : null}
-      {shareDialog && !leaving ? <MeetingScreenPicker key={shareDialog === "docs" ? "docs" : screenRequest ?? "capture"}
+      {shareDialog && !leaving ? <MeetingScreenPicker key={screenRequest ?? "share"}
         requestId={screenRequest} tab={shareDialog === "docs" ? "docs" : "capture"} ownerDocument={popup?.document} onClose={closeScreenPicker}
         onTabChange={(tab, devices) => {
           lastShareTab.current = tab;

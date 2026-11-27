@@ -82,12 +82,10 @@ export function MeetingScreenPicker({ requestId, ownerDocument, onClose, onShare
     <button aria-pressed={tab === "capture"} onClick={event => { if (tab !== "capture") onTabChange?.("capture", event.currentTarget.ownerDocument.defaultView?.navigator.mediaDevices); }}>桌面与窗口</button>
     <button aria-pressed={tab === "docs"} onClick={() => { if (tab !== "docs") onTabChange?.("docs"); }}>云文档</button>
   </div>;
-  if (tab === "docs") return <MeetingDialog title="共享" className="meeting-screen-dialog" ownerDocument={ownerDocument} onClose={onClose}>
-    {tabs}
-    <MeetingDocPicker onClose={onClose} onConfirm={onShareDoc} />
-  </MeetingDialog>;
+  // 两个标签共用同一个对话框，切换只替换内容；重新挂载会重放进场动画和背景模糊，看起来像闪烁。
   return <MeetingDialog title="共享" className="meeting-screen-dialog" ownerDocument={ownerDocument} onClose={onClose}>
     {tabs}
+    {tab === "docs" ? <MeetingDocPicker onClose={onClose} onConfirm={onShareDoc} /> : <>
     <p className="screen-picker-hint">选择要共享的画面，其他参会者将只能看到你选择的内容</p>
     <div className="screen-filter-row">
       <button className="ghost icon-button screen-filter-nav" aria-label="向左浏览应用" disabled={!scrollable.left} onClick={() => scrollFilters(-1)}><Icon name="chevronLeft" /></button>
@@ -128,5 +126,6 @@ export function MeetingScreenPicker({ requestId, ownerDocument, onClose, onShare
     <div className="modal-foot screen-picker-foot"><span title={selection?.name}>{selection ? `已选择：${selection.name}` : "请选择一个桌面或窗口"}</span>
       <button onClick={onClose}>取消</button><button className="primary" disabled={!selection || loading || submitting} onClick={() => void confirm()}>{submitting ? "正在共享…" : "开始共享"}</button>
     </div>
+    </>}
   </MeetingDialog>;
 }
