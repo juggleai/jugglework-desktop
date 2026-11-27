@@ -1,6 +1,6 @@
 "use client"
 
-import { SquareTerminalIcon } from "lucide-react"
+import { LoaderCircle, SquareTerminalIcon } from "lucide-react"
 import {
   CollapsibleTool,
   CollapsibleToolContent,
@@ -12,12 +12,14 @@ import {
   redactSensitiveReasoning,
 } from "@/components/chat/reasoning-redaction"
 import type { BashToolPart } from "@/lib/build-in-tools"
+import { isToolPartInFlight } from "@/lib/tool-activity"
 
 interface BashToolProps {
   part: BashToolPart
 }
 
 export function BashTool({ part }: BashToolProps) {
+  const inFlight = isToolPartInFlight(part)
   const displayCommand = redactSensitiveCommand(part.input?.command)
   const displayDescription = redactSensitiveCommand(part.input?.description)
   const displayOutput = typeof part.output === "string"
@@ -27,7 +29,11 @@ export function BashTool({ part }: BashToolProps) {
   return (
     <CollapsibleTool>
       <CollapsibleToolStep className="flex flex-col gap-2">
-        <CollapsibleToolTrigger leftIcon={<SquareTerminalIcon className="size-4" />}>
+        <CollapsibleToolTrigger
+          leftIcon={inFlight
+            ? <LoaderCircle className="size-4 animate-spin" />
+            : <SquareTerminalIcon className="size-4" />}
+        >
           <span className="flex gap-2">
             <span className="shrink-0">
               {displayDescription}

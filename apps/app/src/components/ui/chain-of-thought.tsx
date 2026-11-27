@@ -6,7 +6,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
 import { cn } from "@/lib/utils"
-import { ChevronDown, Circle } from "lucide-react"
+import { ChevronRight, Circle } from "lucide-react"
 import React from "react"
 
 export type ChainOfThoughtItemProps = React.ComponentProps<"div">
@@ -25,37 +25,25 @@ export type ChainOfThoughtTriggerProps = React.ComponentProps<
   typeof CollapsibleTrigger
 > & {
   leftIcon?: React.ReactNode
-  swapIconOnHover?: boolean
 }
 
 export const ChainOfThoughtTrigger = ({
   children,
   className,
   leftIcon,
-  swapIconOnHover = true,
   ...props
 }: ChainOfThoughtTriggerProps) => (
   <CollapsibleTrigger
     className={cn(
-      "group text-muted-foreground hover:text-foreground flex w-full min-w-0 cursor-pointer items-center justify-start gap-1 overflow-hidden text-start text-sm transition-colors",
+      "group/trigger text-muted-foreground hover:text-foreground flex w-full min-w-0 cursor-pointer items-center justify-start gap-1 overflow-hidden text-start text-sm transition-colors",
       className
     )}
     {...props}
   >
     <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
       {leftIcon ? (
-        <span className="relative inline-flex size-4 items-center justify-center">
-          <span
-            className={cn(
-              "transition-opacity",
-              swapIconOnHover && "group-hover:opacity-0"
-            )}
-          >
-            {leftIcon}
-          </span>
-          {swapIconOnHover && (
-            <ChevronDown className="absolute size-4 opacity-0 transition-opacity group-hover:opacity-100 group-data-panel-open:rotate-180" />
-          )}
+        <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
+          {leftIcon}
         </span>
       ) : (
         <span className="relative inline-flex size-4 items-center justify-center">
@@ -64,9 +52,7 @@ export const ChainOfThoughtTrigger = ({
       )}
       <span className="min-w-0">{children}</span>
     </div>
-    {!leftIcon && (
-      <ChevronDown className="size-4 transition-transform group-data-panel-open:rotate-180" />
-    )}
+    <ChevronRight className="size-4 shrink-0 opacity-0 transition-[opacity,transform] group-hover/trigger:opacity-100 group-focus-visible/trigger:opacity-100 group-data-panel-open/trigger:opacity-100 group-data-panel-open/trigger:rotate-90" />
   </CollapsibleTrigger>
 )
 

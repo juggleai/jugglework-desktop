@@ -48,6 +48,19 @@ function isUnconfirmedSubmissionError(error: unknown) {
     /timeout|timed out|network|fetch failed|failed to fetch|load failed|AbortError|ECONN|EPIPE|ENET|EHOST|UND_ERR_|net::ERR_|status[ :=]+5\d\d/i.test(details);
 }
 
+/** 提取状态码与原因供「待确认」提示附带，便于定位；单行截断，避免长响应体撑满提示。 */
+function describeUnconfirmedCause(error: unknown) {
+  const value = error && typeof error === "object" ? error as { name?: unknown; message?: unknown; code?: unknown; status?: unknown; cause?: unknown } : undefined;
+  const cause = value?.cause && typeof value.cause === "object" ? value.cause as { message?: unknown; code?: unknown } : undefined;
+  const pick = (part: unknown) => typeof part === "string" && part.trim() ? part.trim() : undefined;
+  const parts = [
+    typeof value?.status === "number" ? `HTTP ${value.status}` : undefined,
+    pick(value?.code), pick(typeof error === "string" ? error : value?.message), pick(cause?.code), pick(cause?.message),
+  ].filter((part, index, all): part is string => Boolean(part) && all.indexOf(part) === index);
+  const text = parts.join(" ").replace(/\s+/g, " ");
+  return text.length > 160 ? `${text.slice(0, 160)}…` : text;
+}
+
 /** 主输入栏与后台队列共用完整提交链路；异步准备期间目标项目和原会话固定。 */
 export async function submitSessionDraft(input: SessionDraftSubmissionInput) {
   const { draft, sessionId, workspaceId, client, host } = input;
@@ -135,9 +148,14 @@ export async function submitSessionDraft(input: SessionDraftSubmissionInput) {
           if (result.error) throw result.error;
         } catch (error) {
           const message = error instanceof Error ? error.message : typeof error === "string" ? error : JSON.stringify(error);
-          if (isUnconfirmedSubmissionError(error)) throw new Error(input.hostKind === "file"
-            ? t("file_window.submission_unconfirmed")
-            : "发送结果待确认，请先打开原任务核对，再决定是否重试");
+          if (isUnconfirmedSubmissionError(error)) {
+            // TIPS: 保留固定前缀，桌面宠物主进程按「结果待确认」识别未知状态；原始原因仅追加在末尾。
+            const base = input.hostKind === "file"
+              ? t("file_window.submission_unconfirmed")
+              : "发送结果待确认，请先打开原任务核对，再决定是否重试";
+            const cause = describeUnconfirmedCause(error);
+            throw new Error(cause ? `${base}（${cause}）` : base);
+          }
           throw error instanceof Error ? error : new Error(message);
         }
       },

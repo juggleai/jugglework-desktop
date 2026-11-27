@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils"
 import { toolIcon } from "@/components/tools/tool-icon"
 import {
   Check,
-  ChevronDown,
+  ChevronRight,
   CircleAlert,
   Copy,
   ExternalLink,
@@ -240,19 +240,16 @@ const Tool = ({
     <Collapsible className={className} defaultOpen={defaultOpen}>
       <div className="flex min-w-0 items-center gap-2" aria-live="polite">
         <CollapsibleTrigger
-          className="group text-muted-foreground hover:text-foreground flex min-w-0 flex-1 cursor-pointer items-center justify-start gap-2 overflow-hidden text-start text-sm transition-colors"
+          className="group/trigger text-muted-foreground hover:text-foreground flex min-w-0 flex-1 cursor-pointer items-center justify-start gap-2 overflow-hidden text-start text-sm transition-colors"
         >
           <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
-            <span className="transition-opacity group-hover:opacity-0">
-              {inFlight ? (
-                <LoaderCircle className="size-4 animate-spin" />
-              ) : isError ? (
-                <CircleAlert className="text-destructive size-4" />
-              ) : (
-                <Icon className="size-3.5" />
-              )}
-            </span>
-            <ChevronDown className="absolute size-4 opacity-0 transition-opacity group-hover:opacity-100 group-data-panel-open:rotate-180" />
+            {inFlight ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : isError ? (
+              <CircleAlert className="text-destructive size-4" />
+            ) : (
+              <Icon className="size-3.5" />
+            )}
           </span>
           <span className="min-w-0 truncate">{label}</span>
           {isError && !errorAttribution ? (
@@ -276,6 +273,7 @@ const Tool = ({
               {errorAttribution.label}
             </span>
           ) : null}
+          <ChevronRight className="ml-auto size-4 shrink-0 opacity-0 transition-[opacity,transform] group-hover/trigger:opacity-100 group-focus-visible/trigger:opacity-100 group-data-panel-open/trigger:opacity-100 group-data-panel-open/trigger:rotate-90" />
         </CollapsibleTrigger>
         {reconnectAction && onReconnect ? (
           <Button
