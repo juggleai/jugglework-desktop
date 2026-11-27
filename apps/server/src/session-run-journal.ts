@@ -252,8 +252,16 @@ export async function createSessionRunJournal(options: {
         run.revision, run.status, run.observedActive ? 1 : 0, run.abortCommandCorrelationId, run.title,
         run.updatedAt, run.activeObservedAt, run.abortRequestedAt, run.workspaceId, run.sessionId, run.runId) as { changes?: number };
       if (Number(result.changes ?? 0) !== 1) {
-        const known = statement(sqlite, "SELECT 1 FROM session_runs WHERE run_id=?").all(run.runId);
-        if (input.event !== "progress" || !Array.isArray(known) || known.length === 0) throw new Error("session_run_update_conflict");
+        const known = statement(sqlite, "SELECT terminal_reason FROM session_runs WHERE run_id=?").all(run.runId) as Array<{
+          terminal_reason?: string | null;
+        }>;
+        if (input.event === "progress" && known[0]?.terminal_reason) {
+          // A second/older runtime must never append activity after another
+          // authority has durably closed this generation. Surface the split
+          // brain instead of preserving a contradictory diagnostic history.
+          throw new Error("session_run_progress_after_terminal");
+        }
+        throw new Error("session_run_update_conflict");
       }
       if (input.event === "run_started") appendFeed(run, "running", timestamp);
       if (input.event === "title_updated" && run.status !== "starting") appendFeed(run, "running", timestamp);

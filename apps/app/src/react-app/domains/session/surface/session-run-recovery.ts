@@ -59,6 +59,28 @@ export function shouldReconcileAfterCoordinatorEnded(input: {
 }
 
 /**
+ * Recover a renderer that retained busy/retry after the durable coordinator
+ * had already disappeared. The snapshot must have completed no earlier than
+ * the active-run read so an old pre-dispatch idle snapshot cannot cancel a new
+ * run that has not reached the coordinator response yet.
+ */
+export function shouldSettleStaleRunProjection(input: {
+  activeRunsSucceeded: boolean;
+  coordinatorActive: boolean;
+  snapshotStatus: string | null;
+  snapshotUpdatedAt: number;
+  activeRunsUpdatedAt: number;
+  sending: boolean;
+  liveStatus: string;
+  activityRunActive: boolean;
+}): boolean {
+  if (!input.activeRunsSucceeded || input.coordinatorActive || input.sending) return false;
+  if (input.snapshotStatus !== "idle") return false;
+  if (input.snapshotUpdatedAt < input.activeRunsUpdatedAt) return false;
+  return input.activityRunActive || input.liveStatus === "busy" || input.liveStatus === "retry";
+}
+
+/**
  * 判断中止请求失败后是否应向用户报告错误。
  *
  * @param input.abortRequested 引擎是否已接受中止请求

@@ -116,7 +116,7 @@ describe("session run journal", () => {
     expect(journal.listTerminals("w").cursor).toBeGreaterThan(cursor);
     journal.close();
   });
-  test("terminal outbox survives diagnostic capacity and restart with monotonic cursor", async () => {
+  test("terminal outbox rejects later progress and survives restart with monotonic cursor", async () => {
     const root = await mkdtemp(join(tmpdir(), "terminal-outbox-"));
     roots.push(root);
     const path = join(root, "runtime.sqlite");
@@ -126,7 +126,7 @@ describe("session run journal", () => {
     const run = coordinator.reserveStart(input);
     coordinator.observe({ ...run, status: "failed" });
     const cursor = journal.listTerminals("w").cursor;
-    for (let i = 0; i < 5; i++) journal.record({ event: "progress", run });
+    expect(() => journal.record({ event: "progress", run })).toThrow("session_run_progress_after_terminal");
     expect(journal.list("w", "s")).toHaveLength(2);
     expect(journal.terminalStatus("w", "s", run.runId)).toBe("failed");
     expect(journal.listTerminals("w").items).toHaveLength(1);

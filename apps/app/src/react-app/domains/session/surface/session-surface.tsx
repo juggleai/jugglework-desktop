@@ -71,7 +71,7 @@ import {
   VIDEO_DURATION_DEFAULT_SECONDS,
   type ComposerVideoModelOption,
 } from "./composer/video-generation";
-import { effectiveSessionRunning, effectiveThreadStatus, isSessionBusyError, shouldReconcileAfterCoordinatorEnded, shouldReportAbortFailure } from "./session-run-recovery";
+import { effectiveSessionRunning, effectiveThreadStatus, isSessionBusyError, shouldReconcileAfterCoordinatorEnded, shouldReportAbortFailure, shouldSettleStaleRunProjection } from "./session-run-recovery";
 import { useActiveSnapshotReconciliation } from "./active-snapshot-reconciliation";
 import { generationDraftAvailableInCache, imageModelsQueryOptions, isManagedMediaModel, managedMediaScope, mediaModelQueryScope, videoModelsQueryOptions } from "@/react-app/domains/connections/media-model-queries";
 import { useManagedProviderCatalogRevision, useManagedProviderEpoch } from "@/app/lib/managed-provider-scope";
@@ -1064,9 +1064,37 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [activeRunsQuery.isSuccess, coordinatorRun, props.sessionId, props.workspaceId, sessionActivityRunActive, sessionActivityStatus]);
 
   useEffect(() => {
-    if (!activeRunsQuery.isSuccess || coordinatorRun || liveStatus.type !== "idle" || !sessionActivityRunActive) return;
+    if (!shouldSettleStaleRunProjection({
+      activeRunsSucceeded: activeRunsQuery.isSuccess,
+      coordinatorActive: coordinatorRun !== null,
+      snapshotStatus: currentSnapshot?.status.type ?? null,
+      snapshotUpdatedAt: snapshotQuery.dataUpdatedAt,
+      activeRunsUpdatedAt: activeRunsQuery.dataUpdatedAt,
+      sending: sending || submissionPreparing,
+      liveStatus: liveStatus.type,
+      activityRunActive: sessionActivityRunActive,
+    })) return;
+    // The snapshot and durable run list are the recovery authorities. Settle
+    // both local projections together; clearing only Zustand leaves the stop
+    // button alive through the independent React Query status cache.
     useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "idle" });
-  }, [activeRunsQuery.isSuccess, coordinatorRun, liveStatus.type, props.sessionId, props.workspaceId, sessionActivityRunActive]);
+    queryClient.setQueryData(statusQueryKey, IDLE_STATUS);
+    setAwaitingAssistantBaseline(null);
+  }, [
+    activeRunsQuery.dataUpdatedAt,
+    activeRunsQuery.isSuccess,
+    coordinatorRun,
+    currentSnapshot?.status.type,
+    liveStatus.type,
+    props.sessionId,
+    props.workspaceId,
+    queryClient,
+    sending,
+    sessionActivityRunActive,
+    snapshotQuery.dataUpdatedAt,
+    statusQueryKey,
+    submissionPreparing,
+  ]);
 
   // When the server-owned run list drops this session while the local
   // projection still says busy, `session.idle` was probably lost. Re-read the

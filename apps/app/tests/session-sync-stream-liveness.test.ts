@@ -9,7 +9,7 @@ import {
   snapshotKey,
   trackWorkspaceSessionSync,
 } from "../src/react-app/domains/session/sync/session-sync";
-import { shouldReconcileAfterCoordinatorEnded } from "../src/react-app/domains/session/surface/session-run-recovery";
+import { shouldReconcileAfterCoordinatorEnded, shouldSettleStaleRunProjection } from "../src/react-app/domains/session/surface/session-run-recovery";
 
 // Run with --isolate: sibling UI tests mock createClient and session-sync.
 afterEach(() => getReactQueryClient().clear());
@@ -136,5 +136,31 @@ describe("coordinator-ended reconciliation", () => {
     expect(shouldReconcileAfterCoordinatorEnded({ ...base, coordinatorActive: true })).toBe(false);
     expect(shouldReconcileAfterCoordinatorEnded({ ...base, activeRunsSucceeded: false })).toBe(false);
     expect(shouldReconcileAfterCoordinatorEnded({ ...base, liveStatus: "idle" })).toBe(false);
+  });
+});
+
+describe("stale run projection settlement", () => {
+  const base = {
+    activeRunsSucceeded: true,
+    coordinatorActive: false,
+    snapshotStatus: "idle",
+    snapshotUpdatedAt: 200,
+    activeRunsUpdatedAt: 100,
+    sending: false,
+    liveStatus: "busy",
+    activityRunActive: true,
+  };
+
+  test("settles cached busy without requiring an observed coordinator transition", () => {
+    expect(shouldSettleStaleRunProjection(base)).toBe(true);
+    expect(shouldSettleStaleRunProjection({ ...base, liveStatus: "retry", activityRunActive: false })).toBe(true);
+  });
+
+  test("keeps a new or insufficiently confirmed run active", () => {
+    expect(shouldSettleStaleRunProjection({ ...base, coordinatorActive: true })).toBe(false);
+    expect(shouldSettleStaleRunProjection({ ...base, sending: true })).toBe(false);
+    expect(shouldSettleStaleRunProjection({ ...base, snapshotStatus: "busy" })).toBe(false);
+    expect(shouldSettleStaleRunProjection({ ...base, snapshotUpdatedAt: 99 })).toBe(false);
+    expect(shouldSettleStaleRunProjection({ ...base, activeRunsSucceeded: false })).toBe(false);
   });
 });

@@ -72,3 +72,4 @@
 - [x] 9.A.1 Expose content-free active session-run ownership from the embedded Server to Electron and block ordinary Runtime stop/restart while a run remains active.
 - [x] 9.A.2 Preserve the current-process `starting` admission fence while allowing restart-restored `starting` runs to converge from authoritative engine state; require explicit interrupted/completed classification and two separated idle samples before terminalization.
 - [x] 9.A.3 Add coordinator, restart, Runtime stop, replacement-generation, and pre-admission regression coverage without treating these compatibility safeguards as completion of the durable Task Run model above.
+- [x] 9.A.4 Preserve active runs across transient workspace-registry gaps, reject progress after a durable terminal, and reconcile stale renderer busy projections from a newer idle snapshot plus the authoritative active-run list.

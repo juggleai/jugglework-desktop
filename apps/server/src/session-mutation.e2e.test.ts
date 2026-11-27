@@ -1881,6 +1881,28 @@ describe("authoritative session mutation APIs", () => {
     } finally { db.close(); }
   });
 
+  test("runtime reconciliation preserves a live run across a transient workspace registry gap", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_transient_workspace_gap";
+    const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_transient_workspace_gap",
+        prompt: { parts: [{ type: "text", text: "Keep running" }] },
+      }),
+    });
+    expect(started.status).toBe(202);
+    const registered = harness.config.workspaces;
+    harness.config.workspaces = [];
+    expect(await harness.server.reconcileActiveSessionRuns!()).toHaveLength(1);
+    harness.config.workspaces = registered;
+    engine.statuses.set(sessionId, { type: "busy" });
+    expect(await harness.server.reconcileActiveSessionRuns!()).toMatchObject([{ sessionId }]);
+  });
+
   test("workspace removal is blocked while its authoritative run is active", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);

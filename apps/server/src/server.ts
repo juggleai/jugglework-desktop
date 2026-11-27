@@ -1073,12 +1073,24 @@ export async function startServer(config: ServerConfig, options: {
     initialRuns: sessionRunJournal.listActive(),
     onLifecycleEvent: (event) => {
       const timestamp = Date.now();
+      try {
+        sessionRunJournal.record({ ...event, occurredAt: timestamp });
+      } catch (error) {
+        logger.log("error", "session_run_lifecycle_persist_failed", {
+          workspaceId: event.run.workspaceId,
+          sessionId: event.run.sessionId,
+          runId: event.run.runId,
+          generation: event.run.generation,
+          lifecycleEvent: event.event,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
       if (event.event === "progress") {
         lastJournalProgressAtByRun.set(event.run.runId, timestamp);
       } else if (event.event === "run_terminal" || event.event === "start_rolled_back") {
         lastJournalProgressAtByRun.delete(event.run.runId);
       }
-      sessionRunJournal.record({ ...event, occurredAt: timestamp });
       if (event.event === "abort_accepted") {
         // Persist user cancellation as soon as the engine accepts Stop. Idle
         // may arrive before the aborted assistant message has been saved.
@@ -1097,8 +1109,11 @@ export async function startServer(config: ServerConfig, options: {
       }
     },
   });
-  const terminateOrphanedSessionRuns = (): number => {
-    const registeredWorkspaceIds = new Set(config.workspaces.map((workspace) => workspace.id));
+  const terminateStartupOrphanedSessionRuns = (): number => {
+    const registeredWorkspaceIds = new Set([
+      ...config.workspaces,
+      ...(config.quarantinedWorkspaces ?? []),
+    ].map((workspace) => workspace.id));
     let terminated = 0;
     for (const active of sessionMutations.listActive()) {
       if (registeredWorkspaceIds.has(active.workspaceId)) continue;
@@ -1128,7 +1143,7 @@ export async function startServer(config: ServerConfig, options: {
   };
   // Older builds could remove a workspace without settling its durable run.
   // Repair those records before Electron asks whether shutdown is safe.
-  terminateOrphanedSessionRuns();
+  terminateStartupOrphanedSessionRuns();
   fileDeliveries = new FileDeliveryService({
     workspace(workspaceId) {
       const workspace = config.workspaces.find((item) => item.id === workspaceId && item.workspaceType !== "remote");
@@ -1958,7 +1973,12 @@ export async function startServer(config: ServerConfig, options: {
   }
   mediaGenerationWorker.start();
   const reconcileActiveSessionRuns = async (): Promise<ActiveSessionMutation[]> => {
-    terminateOrphanedSessionRuns();
+    // Workspace registry updates are not an engine terminal signal. A reload
+    // can temporarily remove an entry while the old engine is still running;
+    // terminalizing here used to orphan the live engine and leave renderers
+    // permanently projecting `busy`. Explicit workspace removal is already
+    // fenced by prepareWorkspaceRemoval, while genuinely stale durable rows
+    // are repaired once, after the registry has stabilized, during startup.
     const workspaceIds = new Set(sessionMutations.listActive().map((active) => active.workspaceId));
     for (const workspaceId of workspaceIds) {
       try {
