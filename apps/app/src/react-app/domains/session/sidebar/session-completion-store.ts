@@ -43,6 +43,10 @@ export const useSessionCompletionStore = create<SessionCompletionState>((set) =>
       // when an older warning was already opened and acknowledged.
       if (active || !isNeedsAttentionSessionStatus(status)) {
         acknowledgedAttention.delete(sessionId);
+      } else if (visibleSessionIds.has(sessionId)) {
+        // 用户正看着这个会话：它进入「需要关注」状态时，用户已经亲眼看到，
+        // 不需要再切走切回来才能清除橙点。仅在可见时确认，后台会话仍保留提示。
+        acknowledgedAttention.add(sessionId);
       }
       if (active || status === "error" || status === "incomplete" || visibleSessionIds.has(sessionId)) {
         unseen.delete(sessionId);

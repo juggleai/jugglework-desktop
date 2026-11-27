@@ -75,4 +75,32 @@ describe("session completion store", () => {
     store.reconcile({ "session-a": "idle" }, new Set(["session-a"]), new Set());
     expect(useSessionCompletionStore.getState().acknowledgedAttentionSessionIds).toEqual([]);
   });
+
+  it("acknowledges attention at once for the session the user is looking at", () => {
+    const store = useSessionCompletionStore.getState();
+    for (const status of ["error", "incomplete", "waiting"]) {
+      useSessionCompletionStore.setState({ unseenSessionIds: [], acknowledgedAttentionSessionIds: [], previousStatusBySessionId: {} });
+      store.reconcile({ "session-a": "running" }, accessible, new Set(["session-a"]));
+      store.reconcile({ "session-a": status }, accessible, new Set(["session-a"]));
+      expect(useSessionCompletionStore.getState().acknowledgedAttentionSessionIds).toEqual(["session-a"]);
+    }
+  });
+
+  it("keeps attention visible for a session that is not on screen", () => {
+    const store = useSessionCompletionStore.getState();
+    store.reconcile({ "session-a": "running", "session-b": "running" }, accessible, new Set(["session-a"]));
+    store.reconcile({ "session-a": "error", "session-b": "error" }, accessible, new Set(["session-a"]));
+    expect(useSessionCompletionStore.getState().acknowledgedAttentionSessionIds).toEqual(["session-a"]);
+  });
+
+  it("rearms attention for a visible session when it runs again and fails again", () => {
+    const store = useSessionCompletionStore.getState();
+    const visible = new Set(["session-a"]);
+    store.reconcile({ "session-a": "error" }, accessible, visible);
+    expect(useSessionCompletionStore.getState().acknowledgedAttentionSessionIds).toEqual(["session-a"]);
+    store.reconcile({ "session-a": "running" }, accessible, visible);
+    expect(useSessionCompletionStore.getState().acknowledgedAttentionSessionIds).toEqual([]);
+    store.reconcile({ "session-a": "error" }, accessible, visible);
+    expect(useSessionCompletionStore.getState().acknowledgedAttentionSessionIds).toEqual(["session-a"]);
+  });
 });
