@@ -3,6 +3,7 @@ import { createDenClient, readDenSettings, readDenUserId } from "@/app/lib/den";
 import type { CloudDocsMeetingEvent, CloudDocsMeetingViewport } from "@/app/lib/cloud-docs-types";
 import { MEETING_SHARE_DOCS_MESSAGE, SHARE_RESEND_MS, SHARE_STALE_MS, ShareFollower, ShareSender, buildShareState, parseShareState, type FollowMode } from "./doc-share";
 import type { Meeting, MeetingShare } from "./types";
+import { meetingDiagnostic, meetingDiagnosticError } from "./diagnostics";
 
 /** 文档共享在界面上的状态；与会议快照里的共享槽配合使用。 */
 type ShareDocsView =
@@ -22,6 +23,8 @@ type DocShareState = {
   zoom: number;
   /** 共享人是否已切换到本地没有打开的文档。 */
   sharerElsewhere: boolean;
+  /** 最近一次打开失败的原因，供界面提示与诊断使用。 */
+  error?: string;
 };
 
 export const useDocShareStore = create<DocShareState>(() => ({
@@ -48,6 +51,8 @@ let openToken = 0;
 let inflight: { key: string; promise: Promise<void> } | null = null;
 /** 已被判定无权限的文档；同一文档不再重试，换文档后才会重新尝试。 */
 let deniedKey = "";
+/** 本机正在发起共享（视图已打开、共享槽尚未占用）；期间不能因为槽为空而关闭视图。 */
+let starting = false;
 
 const bridge = () => window.__JUGGLEWORK_ELECTRON__?.cloudDocs;
 const set = (patch: Partial<DocShareState>) => useDocShareStore.setState(patch);
@@ -107,8 +112,12 @@ async function openView(workspaceId: string, docId: string) {
     if (token !== openToken) { void b.close(instanceId).catch(() => {}); return; }
     if (outcome !== "ready") deniedKey = key;
     set({ view: outcome === "ready" ? { phase: "ready", instanceId, docId, workspaceId } : { phase: "denied" } });
-  } catch {
-    if (token === openToken) { deniedKey = key; set({ view: { phase: "denied" } }); }
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    // 只记录机器码，避免错误消息里的地址或凭据进入诊断。
+    const code = /^[a-z_]{3,48}$/.exec(reason)?.[0];
+    meetingDiagnostic("docs.open.failed", { ...meetingDiagnosticError(cause), ...(code ? { reason: code } : {}) });
+    if (token === openToken) { deniedKey = key; set({ view: { phase: "denied" }, error: reason }); }
   } finally { off(); }
 }
 
@@ -175,7 +184,7 @@ export function reconcileDocShare(meeting: Meeting) {
   const view = useDocShareStore.getState().view;
   if (!slot || slot.kind !== "doc") {
     sender = null;
-    if (view.phase !== "idle") void hide();
+    if (view.phase !== "idle" && !starting) void hide();
     return;
   }
   if (slot.userId === self?.userId && slot.sessionId === self.sessionId) {
@@ -207,9 +216,13 @@ export function receiveShareDocs(message: { sender?: { id?: string }; content?: 
 /** 共享人选择文档：占用共享槽，在会议窗口中打开，并开始发布状态。 */
 export async function startDocShare(workspaceId: string, docId: string) {
   if (!host) throw new Error("会议尚未就绪。");
-  await show(workspaceId, docId);
-  if (useDocShareStore.getState().view.phase !== "ready") throw new Error("无法打开所选文档。");
-  await host.claim();
+  starting = true;
+  try {
+    await show(workspaceId, docId);
+    const { view, error } = useDocShareStore.getState();
+    if (view.phase !== "ready") throw new Error(view.phase === "denied" ? `无法打开所选文档${error ? `（${error}）` : ""}。` : "无法打开所选文档。");
+    await host.claim();
+  } finally { starting = false; }
 }
 
 /** 共享人更换文档：同一共享槽内切换，状态消息自然携带新文档。 */
