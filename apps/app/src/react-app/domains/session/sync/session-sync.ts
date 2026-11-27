@@ -15,6 +15,7 @@ import {
   createSessionErrorUIMessage,
   describeOpencodeSessionError,
   isCompactionContinuePart,
+  isGoalContinuationPart,
   isMessageAbortedError,
   sessionErrorMessageId,
   snapshotToUIMessages,
@@ -42,6 +43,7 @@ import {
 } from "../status/session-activity-store";
 import { notifyDesktopEvent as notifyMainDesktopEvent, type DesktopNotificationEvent } from "../../../shell/desktop-notifications";
 import { reconcileRunCompletionDiagnostic } from "./run-completion-diagnostics";
+import { isGoalToolName, sessionGoalQueryKey } from "../surface/use-session-goal";
 import {
   completeRunningSessionCompactions,
   getSessionCompactionFromMessage,
@@ -1636,6 +1638,10 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (!part?.sessionID || !part.messageID) return;
     const activityStore = useSessionActivityStore.getState();
     activityStore.markRuntimeEvent(workspaceId, part.sessionID);
+    // A finished goal tool call changed server goal state; refresh the card now.
+    if (part.type === "tool" && isGoalToolName(part.tool) && (part.state?.status === "completed" || part.state?.status === "error")) {
+      void queryClient.invalidateQueries({ queryKey: sessionGoalQueryKey(workspaceId, part.sessionID) });
+    }
     if (part.type === "compaction") {
       const boundaryMode: SessionCompactionMode = part.auto ? "auto" : "manual";
       entry.pendingCompactionModes.set(part.sessionID, boundaryMode);
@@ -1671,7 +1677,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       }
       return;
     }
-    if (isCompactionContinuePart(part)) {
+    if (isCompactionContinuePart(part) || isGoalContinuationPart(part)) {
       // OpenCode resumes an automatic compaction by injecting a synthetic
       // user prompt. It is engine control flow, not a new user turn. Drop
       // any buffered streaming state first so a late flush cannot resurrect

@@ -103,6 +103,7 @@ describe("jugglework runtime config file", () => {
     expect((parsed.plugin as string[]).some((entry) => entry.includes("jugglework-context-overflow"))).toBe(true);
     expect((parsed.plugin as string[]).some((entry) => entry.includes("jugglework-screenshot-history"))).toBe(true);
     expect((parsed.plugin as string[]).some((entry) => entry.includes("jugglework-confirmation-gate"))).toBe(true);
+    expect((parsed.plugin as string[]).some((entry) => entry.includes("jugglework-goal"))).toBe(true);
     expect(parsed.agent).toMatchObject({
       jugglework: {
         permission: {

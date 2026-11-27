@@ -12,6 +12,11 @@ export function sessionGoalQueryKey(workspaceId: string, sessionId: string) {
   return ["session-goal", workspaceId, sessionId] as const;
 }
 
+/** Model-facing goal tools served by the jugglework-goal OpenCode plugin. */
+export function isGoalToolName(name: string | undefined): boolean {
+  return typeof name === "string" && name.startsWith("jugglework_goal_");
+}
+
 /** A goal that still owns the session: shown on the goal card and blocks creating another. */
 export function isGoalUnfinished(goal: JuggleWorkSessionGoal | null | undefined): goal is JuggleWorkSessionGoal {
   return Boolean(goal && goal.status !== "completed" && goal.status !== "cancelled");

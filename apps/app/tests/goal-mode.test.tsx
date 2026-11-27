@@ -5,7 +5,7 @@ import TestRenderer, { act } from "react-test-renderer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext.js";
 
 import type { JuggleWorkSessionGoal } from "../src/app/lib/jugglework-server";
-import { canContinueGoal, goalCriteriaProgress, isGoalUnfinished } from "../src/react-app/domains/session/surface/use-session-goal";
+import { canContinueGoal, goalCriteriaProgress, isGoalToolName, isGoalUnfinished } from "../src/react-app/domains/session/surface/use-session-goal";
 import { emptyGoalDraft, GoalCard, goalDraftFromGoal, goalDraftPayload } from "../src/react-app/domains/session/surface/goal-panel";
 
 // Real composer; only DOM leaves and unrelated services are replaced.
@@ -56,7 +56,7 @@ function goal(overrides: Partial<JuggleWorkSessionGoal> = {}): JuggleWorkSession
     ],
     status: "active", execution: "idle", checkpoint: null,
     continuationTotal: 3, continuationStreak: 3, continuationCap: 10,
-    blockerReason: null, activeRunId: null, version: 4, createdAt: 1, updatedAt: 2, completedAt: null,
+    blockerReason: null, blockerCount: 0, noProgressCount: 0, activeRunId: null, version: 4, createdAt: 1, updatedAt: 2, completedAt: null,
     ...overrides,
   };
 }
@@ -179,4 +179,32 @@ test("the goal card shows criteria progress and the n/10 continuation count, and
   expect(byTestId("goal-cancel")).toHaveLength(0);
   await act(async () => { byTestId("goal-dismiss")[0]!.props.onClick(); });
   expect(handlers.onDismiss).toHaveBeenCalledTimes(1);
+});
+
+test("the card shows the blocker reason, criterion evidence and the checkpoint", async () => {
+  const handlers = { onContinue: mock(), onPause: mock(), onResume: mock(), onEdit: mock(), onComplete: mock(), onCancel: mock(), onDismiss: mock() };
+  const waiting = goal({ execution: "waiting_user", blockerReason: "Which CSV delimiter?", blockerCount: 1, checkpoint: "Export button wired; delimiter pending" });
+  await act(async () => { view = TestRenderer.create(<GoalCard goal={waiting} sessionRunning={false} pending={false} error={null} {...handlers} />); });
+  const byTestId = (id: string) => view!.root.findAll((node) => node.props["data-testid"] === id && typeof node.type === "string");
+  expect(byTestId("goal-blocker")[0]!.children.join("")).toBe("Needs you: Which CSV delimiter?");
+  expect(byTestId("goal-execution")[0]!.children.join("")).toBe("Waiting for you");
+  // Waiting for the user still allows Continue once they have answered.
+  expect(byTestId("goal-continue")[0]!.props.disabled).toBe(false);
+  // Criteria details are collapsed until expanded.
+  expect(byTestId("goal-criteria")).toHaveLength(0);
+  const expand = view!.root.findAll((node) => node.type === "button" && node.props["aria-expanded"] === false)[0]!;
+  await act(async () => { expand.props.onClick(); });
+  expect(byTestId("goal-criterion-evidence").map((node) => node.children.join(""))).toEqual(["tested"]);
+  expect(byTestId("goal-checkpoint")[0]!.children.join("")).toContain("Export button wired; delimiter pending");
+
+  await act(async () => { view!.update(<GoalCard goal={{ ...waiting, status: "blocked" }} sessionRunning={false} pending={false} error={null} {...handlers} />); });
+  expect(byTestId("goal-blocker")[0]!.children.join("")).toBe("Blocked: Which CSV delimiter?");
+  expect(byTestId("goal-resume")).toHaveLength(1);
+});
+
+test("goal tool names are recognized for card refresh", () => {
+  expect(isGoalToolName("jugglework_goal_progress")).toBe(true);
+  expect(isGoalToolName("jugglework_goal_complete")).toBe(true);
+  expect(isGoalToolName("todowrite")).toBe(false);
+  expect(isGoalToolName(undefined)).toBe(false);
 });

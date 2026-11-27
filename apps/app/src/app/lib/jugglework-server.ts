@@ -382,6 +382,8 @@ export type JuggleWorkSessionGoal = {
   continuationStreak: number;
   continuationCap: number;
   blockerReason: string | null;
+  blockerCount: number;
+  noProgressCount: number;
   activeRunId: string | null;
   version: number;
   createdAt: number;

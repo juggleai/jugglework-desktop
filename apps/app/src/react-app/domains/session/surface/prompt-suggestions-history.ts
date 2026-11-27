@@ -3,13 +3,15 @@ import type { JuggleWorkSessionSnapshot } from "@/app/lib/jugglework-server";
 import { snapshotToUIMessages } from "../sync/usechat-adapter";
 
 type RawMessage = JuggleWorkSessionSnapshot["messages"][number];
-type Flags = { synthetic?: boolean; ignored?: boolean; compaction_continue?: boolean };
+type Flags = { synthetic?: boolean; ignored?: boolean; compaction_continue?: boolean; jugglework_goal?: { trigger?: unknown } };
 function flags(value: unknown): Flags {
   return value && typeof value === "object" ? value as Flags : {};
 }
 function control(value: unknown) {
   const item = flags(value);
-  return item.synthetic === true || item.ignored === true || item.compaction_continue === true;
+  const goalTrigger = item.jugglework_goal?.trigger;
+  return item.synthetic === true || item.ignored === true || item.compaction_continue === true ||
+    (typeof goalTrigger === "string" && goalTrigger !== "create");
 }
 
 /** Real user evidence only; callers supply the full, unreverted raw tail. */

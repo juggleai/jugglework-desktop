@@ -332,10 +332,18 @@ function promptBodyToV2Input(prompt: Record<string, unknown>) {
   };
 }
 
+function isGoalContinuationMetadata(metadata: unknown): boolean {
+  const goal = isRecord(metadata) ? metadata.jugglework_goal : undefined;
+  return isRecord(goal) && typeof goal.trigger === "string" && goal.trigger !== "create";
+}
+
 function isInternalTextPart(part: unknown): boolean {
   return isRecord(part) && part.type === "text" && (
     part.synthetic === true || part.ignored === true ||
-    (isRecord(part.metadata) && part.metadata.compaction_continue === true)
+    (isRecord(part.metadata) && part.metadata.compaction_continue === true) ||
+    // A goal continuation is wording written by JuggleWork, not by the user,
+    // so it must not change the session's detected response language.
+    isGoalContinuationMetadata(part.metadata)
   );
 }
 

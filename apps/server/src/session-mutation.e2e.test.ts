@@ -2633,6 +2633,10 @@ describe("session goal APIs", () => {
     expect(prompt.system).toContain("Ship CSV export");
     expect(prompt.system).toContain("<automatic_continuations_remaining>10</automatic_continuations_remaining>");
     expect(prompt.parts?.[0]?.text).toContain("Ship CSV export");
+    // The request is tagged with stable, content-free metadata.
+    expect((prompt.parts?.[0] as { metadata?: unknown }).metadata).toEqual({
+      jugglework_goal: { goalId: created.body.item.id, ordinal: 1, trigger: "create" },
+    });
 
     // A second unfinished goal is rejected and returns the existing one.
     const duplicate = await call("POST", goalPath, createBody);
@@ -2643,7 +2647,7 @@ describe("session goal APIs", () => {
 
   test("a run ending returns the goal to idle without completing it, and continue starts the next run", async () => {
     const sessionId = "ses_goal_continue";
-    const { harness, goalPath, call, finishRun } = await goalHarness(sessionId);
+    const { engine, harness, goalPath, call, finishRun } = await goalHarness(sessionId);
     const created = (await call("POST", goalPath, createBody)).body.item;
     finishRun();
     await waitUntil(async () => {
@@ -2659,6 +2663,45 @@ describe("session goal APIs", () => {
     expect(continued.status).toBe(202);
     expect(continued.body.item).toMatchObject({ execution: "running", continuationTotal: 1, continuationStreak: 0 });
     expect(continued.body.run.ordinal).toBe(2);
+    const continuation = engine.prompts.at(-1)?.body as { system?: string; parts?: Array<{ metadata?: unknown }> };
+    expect(continuation.parts?.[0]?.metadata).toEqual({ jugglework_goal: { goalId: idle.id, ordinal: 2, trigger: "user_continue" } });
+    // The envelope is rebuilt from durable state, so the next run still carries the goal after compaction.
+    expect(continuation.system).toContain("## Active goal");
+    expect(continuation.system).toContain("Ship CSV export");
+  });
+
+  test("a delayed run end cannot reactivate a paused or cancelled goal, and pausing is not undone by Continue", async () => {
+    const sessionId = "ses_goal_race";
+    const { harness, goalPath, call, finishRun } = await goalHarness(sessionId);
+    const created = (await call("POST", goalPath, createBody)).body.item;
+    const paused = (await call("POST", `${goalPath}/${created.id}/pause`, { expectedVersion: created.version })).body.item;
+    expect(paused.status).toBe("paused");
+    // The run was in flight when the user paused; its terminal event arrives afterwards.
+    finishRun();
+    await waitUntil(async () => {
+      await harness.server.reconcileActiveSessionRuns?.();
+      return (await call("GET", goalPath)).body.item.activeRunId === null;
+    }, 3_000);
+    const after = (await call("GET", goalPath)).body.item;
+    expect(after.status).toBe("paused");
+    expect(after.execution).toBe("idle");
+    // A stale Continue (old version) and a Continue on a paused goal are both refused.
+    expect((await call("POST", `${goalPath}/${created.id}/continue`, { expectedVersion: created.version })).status).toBe(409);
+    expect((await call("POST", `${goalPath}/${after.id}/continue`, { expectedVersion: after.version })).body.code).toBe("goal_invalid_transition");
+    const cancelled = (await call("POST", `${goalPath}/${after.id}/cancel`, { expectedVersion: after.version })).body.item;
+    expect(cancelled.status).toBe("cancelled");
+    expect((await call("POST", `${goalPath}/${after.id}/resume`, { expectedVersion: cancelled.version })).status).toBe(409);
+  });
+
+  test("goals are scoped to their session: another session sees none and cannot change it", async () => {
+    const { engine, goalPath, call } = await goalHarness("ses_goal_scope_a");
+    const created = (await call("POST", goalPath, { ...createBody, start: false })).body.item;
+    engine.sessions.set("ses_goal_scope_b", { id: "ses_goal_scope_b", title: "Other", directory: engine.sessions.get("ses_goal_scope_a")!.directory, time: { created: 1, updated: 1 } });
+    const otherPath = goalPath.replace("ses_goal_scope_a", "ses_goal_scope_b");
+    expect((await call("GET", otherPath)).body.item).toBeNull();
+    const crossed = await call("POST", `${otherPath}/${created.id}/pause`, { expectedVersion: created.version });
+    expect(crossed.status).toBeGreaterThanOrEqual(400);
+    expect((await call("GET", goalPath)).body.item.status).toBe("active");
   });
 
   test("continue while the session is busy fails without leaving the goal queued", async () => {
@@ -2722,5 +2765,101 @@ describe("session goal APIs", () => {
     expect((await fetch(`${harness.base}/workspace/ws_1/sessions/${sessionId}`, { method: "DELETE", headers: harness.collaboratorHeaders })).status).toBe(200);
     engine.sessions.set(sessionId, { id: sessionId, title: "Recreated", directory: harness.config.workspaces[0]!.path, time: { created: 2, updated: 2 } });
     expect((await call("GET", goalPath)).body.item).toBeNull();
+  });
+});
+
+describe("session goal agent APIs", () => {
+  const createBody = { objective: "Ship CSV export", criteria: [{ text: "Export downloads a CSV" }, { text: "Docs mention export", required: false }] };
+
+  async function harnessWithGoal(sessionId: string, start = true) {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.sessions.set(sessionId, { id: sessionId, title: "Goal", directory: harness.config.workspaces[0]!.path, time: { created: 1, updated: 1 } });
+    const call = async (method: string, path: string, body?: unknown) => {
+      const response = await fetch(`${harness.base}${path}`, { method, headers: harness.collaboratorHeaders, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      return { status: response.status, body: await response.json() as any };
+    };
+    const goalPath = `/workspace/ws_1/sessions/${sessionId}/goal`;
+    const agent = (action: string, body: Record<string, unknown> = {}) => call("POST", `/workspace/ws_1/goal-agent/${action}`, { sessionId, ...body });
+    const created = (await call("POST", goalPath, { ...createBody, start })).body;
+    const finishRun = () => {
+      engine.statuses.set(sessionId, { type: "idle" });
+      engine.messages.set(sessionId, [{ info: { id: `msg_done_${engine.prompts.length}`, sessionID: sessionId, role: "assistant", time: { created: Date.now(), completed: Date.now() }, finish: "stop" }, parts: [] }]);
+    };
+    return { engine, harness, call, agent, goalPath, created, finishRun };
+  }
+
+  test("the running goal turn records progress, then completes only when required criteria are met", async () => {
+    const sessionId = "ses_goal_agent";
+    const { agent, call, goalPath, created } = await harnessWithGoal(sessionId);
+    const criterionId = created.item.criteria[0].id;
+    expect(created.item.execution).toBe("running");
+
+    const read = await agent("read");
+    expect(read.status).toBe(200);
+    expect(read.body.goal).toMatchObject({ objective: "Ship CSV export", automaticContinuationsRemaining: 10 });
+    expect(read.body.goal.criteria[0]).toMatchObject({ id: criterionId, required: true, status: "pending" });
+
+    expect((await agent("complete")).body.code).toBe("goal_criteria_unmet");
+    const missingEvidence = await agent("progress", { criteria: [{ id: criterionId, status: "met" }], checkpoint: "done", madeProgress: true });
+    expect(missingEvidence.status).toBe(400);
+    expect(missingEvidence.body.code).toBe("goal_invalid");
+
+    const progressed = await agent("progress", { criteria: [{ id: criterionId, status: "met", evidence: "downloaded export.csv in test" }], checkpoint: "Export works; docs optional", madeProgress: true });
+    expect(progressed.status).toBe(200);
+    expect(progressed.body.goal.criteria[0].status).toBe("met");
+    const card = (await call("GET", goalPath)).body.item;
+    expect(card.checkpoint).toBe("Export works; docs optional");
+    expect(card.criteria[0].evidence).toBe("downloaded export.csv in test");
+
+    const completed = await agent("complete");
+    expect(completed.status).toBe(200);
+    expect(completed.body.goal.status).toBe("completed");
+    expect((await call("GET", goalPath)).body.item.status).toBe("completed");
+    // A finished goal is no longer visible to the model.
+    expect((await agent("read")).body.goal).toBeNull();
+  });
+
+  test("model updates are refused between runs and after the user pauses", async () => {
+    const sessionId = "ses_goal_agent_idle";
+    const { agent, call, goalPath, created } = await harnessWithGoal(sessionId, false);
+    const criterionId = created.item.criteria[0].id;
+    const report = { criteria: [{ id: criterionId, status: "met", evidence: "x" }], checkpoint: "x", madeProgress: true };
+    const idle = await agent("progress", report);
+    expect(idle.status).toBe(409);
+    expect(idle.body.code).toBe("goal_invalid_transition");
+
+    const paused = (await call("POST", `${goalPath}/${created.item.id}/pause`, { expectedVersion: created.item.version })).body.item;
+    expect(paused.status).toBe("paused");
+    expect((await agent("blocker", { reason: "stuck", needsUser: false })).body.code).toBe("goal_invalid_transition");
+    // Another session cannot see or update this goal.
+    expect((await call("POST", "/workspace/ws_1/goal-agent/read", { sessionId: "ses_other" })).body.goal).toBeNull();
+  });
+
+  test("needsUser keeps the goal waiting after its run ends; Continue resumes it", async () => {
+    const sessionId = "ses_goal_agent_waiting";
+    const { harness, agent, call, goalPath, finishRun } = await harnessWithGoal(sessionId);
+    const waiting = await agent("blocker", { reason: "Which CSV delimiter?", needsUser: true });
+    expect(waiting.body.goal).toMatchObject({ execution: "waiting_user", blocker: { reason: "Which CSV delimiter?", repeats: 1 } });
+    finishRun();
+    await waitUntil(async () => {
+      await harness.server.reconcileActiveSessionRuns?.();
+      const item = (await call("GET", goalPath)).body.item;
+      return item.activeRunId === null;
+    }, 3_000);
+    const after = (await call("GET", goalPath)).body.item;
+    expect(after).toMatchObject({ status: "active", execution: "waiting_user", blockerReason: "Which CSV delimiter?" });
+    const continued = await call("POST", `${goalPath}/${after.id}/continue`, { expectedVersion: after.version });
+    expect(continued.status).toBe(202);
+    expect(continued.body.item.execution).toBe("running");
+  });
+
+  test("agent APIs are rejected outside local workspaces", async () => {
+    const sessionId = "ses_goal_agent_sandbox";
+    const { harness, agent } = await harnessWithGoal(sessionId, false);
+    harness.config.workspaces[0]!.sandboxBackend = "docker";
+    const result = await agent("read");
+    expect(result.status).toBe(400);
+    expect(result.body.code).toBe("goal_workspace_unsupported");
   });
 });

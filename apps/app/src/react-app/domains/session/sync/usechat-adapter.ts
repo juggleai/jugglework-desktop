@@ -204,6 +204,19 @@ export function isCompactionContinuePart(part: Part): boolean {
     (part.metadata as { compaction_continue?: unknown } | undefined)?.compaction_continue === true;
 }
 
+/**
+ * A goal continuation request (resume, continue) is written by JuggleWork,
+ * not by the user. It is tagged with stable `jugglework_goal` metadata and is
+ * grouped under the goal card instead of appearing as a new task bubble. The
+ * first request of a goal (`create`) restates the user's own objective and
+ * stays visible.
+ */
+export function isGoalContinuationPart(part: Part): boolean {
+  if (part.type !== "text") return false;
+  const goal = (part.metadata as { jugglework_goal?: { trigger?: unknown } } | undefined)?.jugglework_goal;
+  return typeof goal?.trigger === "string" && goal.trigger !== "create";
+}
+
 function mapFilePart(part: FilePart): UIMessage["parts"][number] {
   return {
     type: "file",
@@ -315,7 +328,7 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
     // here keeps the run in one assistant group instead of splitting it.
     const isCompactionContinueUserMessage =
       message.info.role === "user" &&
-      message.parts.some(isCompactionContinuePart);
+      message.parts.some((part) => isCompactionContinuePart(part) || isGoalContinuationPart(part));
     const isSummary = message.info.role === "assistant" && message.info.summary === true;
     const summaryMode = isSummary ? pendingCompactionMode : null;
     if (isSummary) pendingCompactionMode = null;
@@ -326,7 +339,7 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
       parts: [
         ...message.parts.flatMap<UIMessage["parts"][number]>((part) => {
         if (part.type === "text") {
-          if (part.synthetic || part.ignored) return [];
+          if (part.synthetic || part.ignored || isGoalContinuationPart(part)) return [];
           const officeSelection = officeSelectionDisplay(part.metadata);
           return [{
             type: "text",

@@ -241,6 +241,11 @@ export function GoalCard(props: {
           )}
         </div>
       </div>
+      {unfinished && goal.blockerReason ? (
+        <div className="mt-1.5 pl-6 text-xs text-amber-11" data-testid="goal-blocker">
+          {t(goal.status === "blocked" ? "goal.blocked_reason" : "goal.waiting_reason", { reason: goal.blockerReason })}
+        </div>
+      ) : null}
       {expanded ? (
         <ul className="mt-2 max-h-48 space-y-1.5 overflow-auto pl-6" data-testid="goal-criteria">
           {goal.criteria.map((criterion) => (
@@ -248,10 +253,17 @@ export function GoalCard(props: {
               <span className={`mt-0.5 shrink-0 rounded-full px-1.5 text-[10px] ${criterion.status === "met" ? "bg-green-3 text-green-11" : criterion.status === "waived" ? "bg-gray-3 text-gray-10" : "bg-gray-2 text-gray-9"}`}>
                 {t(`goal.criterion_status_${criterion.status}`)}
               </span>
-              <span className={`min-w-0 flex-1 ${criterion.required ? "text-gray-12" : "text-gray-10"}`}>{criterion.text}</span>
+              <span className="min-w-0 flex-1">
+                <span className={criterion.required ? "text-gray-12" : "text-gray-10"}>{criterion.text}</span>
+                {criterion.evidence ? <span className="block text-xs text-gray-9" data-testid="goal-criterion-evidence">{criterion.evidence}</span> : null}
+              </span>
             </li>
           ))}
-          {goal.checkpoint ? <li className="text-xs text-gray-9 whitespace-pre-wrap">{goal.checkpoint}</li> : null}
+          {goal.checkpoint ? (
+            <li className="text-xs text-gray-9 whitespace-pre-wrap" data-testid="goal-checkpoint">
+              <span className="font-medium text-gray-10">{t("goal.checkpoint_label")} </span>{goal.checkpoint}
+            </li>
+          ) : null}
         </ul>
       ) : null}
       {props.error ? <div className="mt-1 pl-6 text-xs text-red-11">{props.error}</div> : null}

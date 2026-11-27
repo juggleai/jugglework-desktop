@@ -2,10 +2,13 @@ import { z } from "zod";
 import { ApiError } from "../errors.js";
 import {
   buildGoalEnvelope,
+  GOAL_BLOCKER_MAX_CHARS,
+  GOAL_CHECKPOINT_MAX_CHARS,
   GOAL_CRITERIA_MAX,
+  GOAL_EVIDENCE_MAX_CHARS,
   GOAL_CRITERION_MAX_CHARS,
   GOAL_OBJECTIVE_MAX_CHARS,
-  goalRunPromptText,
+  goalRunPromptPart,
   GoalStoreError,
   type GoalRunTrigger,
   type GoalStore,
@@ -61,6 +64,40 @@ const editBody = z.object({
 const versionBody = z.object({ expectedVersion: z.number().int().positive() }).strict();
 const continueBody = versionBody.extend({ run: runOptions.optional() }).strict();
 const completeBody = versionBody.extend({ override: z.boolean().optional() }).strict();
+// Model-facing calls carry only the calling session; the goal is resolved on the server.
+const agentScope = { sessionId: identifier };
+const agentProgressBody = z.object({
+  ...agentScope,
+  criteria: z.array(z.object({
+    id: identifier,
+    status: z.enum(["met", "pending"]),
+    evidence: z.string().max(GOAL_EVIDENCE_MAX_CHARS * 2).optional(),
+  }).strict()).max(GOAL_CRITERIA_MAX),
+  checkpoint: z.string().min(1).max(GOAL_CHECKPOINT_MAX_CHARS * 2),
+  madeProgress: z.boolean(),
+}).strict();
+const agentBlockerBody = z.object({
+  ...agentScope,
+  reason: z.string().min(1).max(GOAL_BLOCKER_MAX_CHARS * 2),
+  needsUser: z.boolean(),
+}).strict();
+const agentSessionBody = z.object(agentScope).strict();
+
+/** Compact goal view returned to the model: no ids beyond what its tools accept. */
+function agentGoalView(goal: SessionGoal | null) {
+  if (!goal) return { goal: null };
+  return {
+    goal: {
+      objective: goal.objective,
+      status: goal.status,
+      execution: goal.execution,
+      criteria: goal.criteria.map((criterion) => ({ id: criterion.id, text: criterion.text, required: criterion.required, status: criterion.status })),
+      checkpoint: goal.checkpoint,
+      blocker: goal.blockerReason ? { reason: goal.blockerReason, repeats: goal.blockerCount } : null,
+      automaticContinuationsRemaining: Math.max(0, goal.continuationCap - goal.continuationStreak),
+    },
+  };
+}
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   const parsed = schema.safeParse(body);
@@ -135,7 +172,7 @@ export function registerGoalRoutes(options: RegisterGoalRoutesOptions) {
     })();
     const reservedGoal = reserved.goal;
     const prompt: Record<string, unknown> = {
-      parts: [{ type: "text", text: goalRunPromptText(reservedGoal, trigger) }],
+      parts: [goalRunPromptPart(reservedGoal, { ordinal: reserved.run.ordinal, trigger })],
       system: buildGoalEnvelope(reservedGoal, { ordinal: reserved.run.ordinal, trigger }),
       ...(run?.model ? { model: run.model } : {}),
       ...(run?.variant ? { variant: run.variant } : {}),
@@ -229,6 +266,51 @@ export function registerGoalRoutes(options: RegisterGoalRoutesOptions) {
     const body = parse(continueBody, await readJsonBody(ctx.request));
     const started = await dispatchGoalRun(ctx, goal, "user_continue", body.run, body.expectedVersion);
     return jsonResponse({ item: started.goal, run: started.run }, 202);
+  });
+
+  // Called by the jugglework-goal OpenCode plugin on behalf of the running turn.
+  async function agentScopeFor(ctx: RequestContext) {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    assertGoalWorkspace(workspace);
+    return workspace;
+  }
+
+  addRoute(routes, "POST", "/workspace/:id/goal-agent/read", "client", async (ctx) => {
+    const workspace = await agentScopeFor(ctx);
+    const body = parse(agentSessionBody, await readJsonBody(ctx.request));
+    return jsonResponse(agentGoalView(goals.unfinished(workspace.id, body.sessionId)));
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/goal-agent/progress", "client", async (ctx) => {
+    const workspace = await agentScopeFor(ctx);
+    const body = parse(agentProgressBody, await readJsonBody(ctx.request));
+    try {
+      return jsonResponse({ ok: true, ...agentGoalView(goals.reportProgress(workspace.id, body.sessionId, body)) });
+    } catch (error) {
+      remapGoalError(error);
+    }
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/goal-agent/blocker", "client", async (ctx) => {
+    const workspace = await agentScopeFor(ctx);
+    const body = parse(agentBlockerBody, await readJsonBody(ctx.request));
+    try {
+      return jsonResponse({ ok: true, ...agentGoalView(goals.reportBlocker(workspace.id, body.sessionId, body)) });
+    } catch (error) {
+      remapGoalError(error);
+    }
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/goal-agent/complete", "client", async (ctx) => {
+    const workspace = await agentScopeFor(ctx);
+    const body = parse(agentSessionBody, await readJsonBody(ctx.request));
+    try {
+      return jsonResponse({ ok: true, ...agentGoalView(goals.requestCompletion(workspace.id, body.sessionId)) });
+    } catch (error) {
+      remapGoalError(error);
+    }
   });
 
   addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/goal/:goalId/runs", "client", async (ctx) => {

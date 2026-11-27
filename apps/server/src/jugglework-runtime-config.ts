@@ -26,6 +26,7 @@ import {
   juggleworkMcpWorkspacePolicyPluginPath,
   juggleworkScreenshotHistoryPluginPath,
   juggleworkConfirmationGatePluginPath,
+  juggleworkGoalPluginPath,
 } from "./jugglework-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -224,6 +225,7 @@ export function buildJuggleWorkRuntimeConfigObjectFromSnapshot(
       juggleworkMcpWorkspacePolicyPluginPath(),
       juggleworkScreenshotHistoryPluginPath(),
       juggleworkConfirmationGatePluginPath(),
+      juggleworkGoalPluginPath(),
       ...runtimePluginList(runtimeConfig),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),

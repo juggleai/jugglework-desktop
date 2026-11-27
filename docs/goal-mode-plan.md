@@ -176,3 +176,13 @@
 - 测试：`apps/server/src/goal-store.test.ts`、`session-mutation.e2e.test.ts` 中的 "session goal APIs"、`apps/app/tests/goal-mode.test.tsx`。
 
 P1 刻意未做：自动续跑（GoalCoordinator）、模型侧 `goal.*` 工具、检查点写入、续跑消息折叠。目标卡上的完成标准状态在 P2 之前只会由用户手动"标记完成"改变。
+
+## 13. P2 实现记录
+
+- 新增 OpenCode 插件 `jugglework-goal`（`apps/server/src/opencode-plugins/jugglework-goal.ts`），提供 `jugglework_goal_read/progress/blocker/complete`，通过 `POST /workspace/:id/goal-agent/*` 回调服务端。已在 `jugglework-extensions-plugin-path.ts`、`jugglework-runtime-config.ts`、`package.json` build 列表和 `verify-opencode-plugin-bundles.mjs` 注册。
+- 服务端只接受调用会话自己的、未完成且 run 进行中的目标；`met` 必须带证据；必需标准全部 met 才能完成；同一阻塞连续 3 次转 `blocked`；`needsUser` 转 `waiting_user` 并在 run 结束后保留。
+- 渲染端目标卡显示阻塞原因、标准证据、检查点；`jugglework_goal_*` 工具调用结束时立即刷新目标。
+- 目标护栏提示：插件仅在会话有未完成目标时通过 `experimental.chat.system.transform` 注入，禁止模型自行创建、编辑、暂停、取消目标或提前宣告完成，并说明普通用户消息不是目标运行。读取失败不影响对话。
+- 续跑请求元数据：目标 run 的文本 part 带稳定且不含内容的 `metadata.jugglework_goal = { goalId, ordinal, trigger }`。`trigger` 非 `create` 的续跑请求在会话记录中隐藏（快照与实时同步），不进入提示建议，也不参与回复语言检测；首次创建请求保留显示。
+- 已补测试：暂停/取消后迟到的 run 结束、过期版本、会话作用域隔离、重开后信封重建、相似文案不被误判为续跑。
+- 未做：导出/复制中把续跑活动归入同一目标展示（5.5）、自动续跑（P3）。

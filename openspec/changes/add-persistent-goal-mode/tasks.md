@@ -11,16 +11,16 @@
 - [x] 2.1 Add collaborator-authorized local APIs to create, read, list, edit, pause, resume, cancel, explicitly continue, and inspect runs/events for session goals.
 - [x] 2.2 Require explicit creation intent, return the existing unfinished goal on conflict, reject non-local (remote, cloud, sandbox) workspaces, and preserve ordinary submissions as non-goal tasks.
 - [x] 2.3 Implement independent lifecycle and execution-state transitions, including terminal fencing and reset of blocker audit on explicit resume.
-- [ ] 2.4 Implement criterion-level progress evidence, bounded checkpoints, stale-generation rejection, and completion validation with an explicit user override path.
-- [ ] 2.5 Add API and lifecycle tests for invalid transitions, stale versions, premature completion, pause/resume/cancel races, and workspace/session scope isolation.
+- [x] 2.4 Implement criterion-level progress evidence, bounded checkpoints, stale-generation rejection, and completion validation with an explicit user override path.
+- [x] 2.5 Add API and lifecycle tests for invalid transitions, stale versions, premature completion, pause/resume/cancel races, and workspace/session scope isolation.
 
 ## 3. Model Goal Protocol and Context
 
-- [ ] 3.1 Expose model-facing operations for explicit-intent goal creation, current-goal read, progress reporting, blocker reporting, and completion requests.
-- [ ] 3.2 Add goal-mode system instructions that forbid inferred creation, inferred pause, premature completion, permission expansion, and repetition of confirmed work.
-- [ ] 3.3 Build the compact goal envelope from durable objective, criteria, checkpoint, blocker audit, continuation ordinal, and remaining automatic continuations before the cap for every goal run.
-- [ ] 3.4 Tag internal goal continuation requests with stable metadata and keep them out of the user-authored task presentation while preserving engine history needed for recovery.
-- [ ] 3.5 Add protocol tests for explicit creation, structured progress, stale updates, compaction reinjection, completion evidence, and ordinary prompts that must not create goals.
+- [x] 3.1 Expose model-facing operations for explicit-intent goal creation, current-goal read, progress reporting, blocker reporting, and completion requests.
+- [x] 3.2 Add goal-mode system instructions that forbid inferred creation, inferred pause, premature completion, permission expansion, and repetition of confirmed work.
+- [x] 3.3 Build the compact goal envelope from durable objective, criteria, checkpoint, blocker audit, continuation ordinal, and remaining automatic continuations before the cap for every goal run.
+- [x] 3.4 Tag internal goal continuation requests with stable metadata and keep them out of the user-authored task presentation while preserving engine history needed for recovery.
+- [x] 3.5 Add protocol tests for explicit creation, structured progress, stale updates, compaction reinjection, completion evidence, and ordinary prompts that must not create goals.
 
 ## 4. Goal Continuation Coordinator
 
@@ -66,3 +66,14 @@ P1 (local workspaces only) ships the goal store, Goal API, plus-menu entry, setu
 - 2.4 remains open: completion validation and the user override are implemented, but criterion evidence is only reported by the model protocol in 3.x.
 - 3.3 is partly in place: every goal run carries the envelope (objective, criteria status, checkpoint, remaining continuations) through `runs/start` `system`. Checkpoints are only written once 3.1 lands.
 - 5.4 remains open: the goal card renders above the todo panel, but internal-continuation grouping (5.5) is not started.
+
+## P2 Delivery Notes
+
+- 3.1: model-facing tools `jugglework_goal_read`, `jugglework_goal_progress`, `jugglework_goal_blocker`, `jugglework_goal_complete` ship as the `jugglework-goal` OpenCode plugin, backed by `POST /workspace/:id/goal-agent/{read,progress,blocker,complete}`. Goal creation stays user-only (no model creation tool), so inferred creation is impossible by construction.
+- 2.4: updates are accepted only for the calling session's unfinished goal while its goal run is in progress. `met` needs evidence, unknown criterion ids and missing checkpoints are rejected, and `waived` criteria are not overwritten. Completion requires every required criterion met. The same blocker (case, whitespace, and digit insensitive) three times in a row sets `blocked`; `needsUser` sets `waiting_user`, which survives the run ending. Progress without `madeProgress` increments `noProgressCount`.
+- 3.3: the envelope lists criterion ids, checkpoint, last blocker with repeat count, and the tool-call rules.
+- Renderer: the card shows blocker reason, per-criterion evidence, and checkpoint; a finished `jugglework_goal_*` tool call invalidates the goal query so the card refreshes immediately.
+- 3.2: the plugin injects a standing guardrail instruction (`experimental.chat.system.transform`) only while the session has an unfinished goal. It forbids inferred creation/edit/pause/cancel, premature completion, and permission expansion, and says an ordinary user message is not a goal run. Failures to read the goal never break a turn.
+- 3.4: every goal run request carries stable content-free part metadata `jugglework_goal: { goalId, ordinal, trigger }`. Continuation requests (`trigger` other than `create`) are hidden from the task transcript (snapshot and live sync), ignored by prompt suggestions, and excluded from response-language detection. The `create` request stays visible because it restates the user's own objective. Real user content in the same message stays visible.
+- 2.5 / 3.5: tests cover a delayed run end after pause/cancel, stale versions, session scope isolation, explicit-only creation, envelope rebuild after a reopen, and lookalike text that must not be treated as a continuation.
+- Not done in this phase: grouping continuation activity under one goal presentation in export/copy (5.5) and automatic continuation (P3).

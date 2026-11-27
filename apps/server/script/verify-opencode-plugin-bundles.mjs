@@ -10,6 +10,7 @@ export const EXPECTED_OPENCODE_PLUGIN_BUNDLES = [
   "jugglework-confirmation-gate.js",
   "jugglework-context-overflow.js",
   "jugglework-extensions-preview.js",
+  "jugglework-goal.js",
   "jugglework-mcp-workspace-policy.js",
   "jugglework-office-attachments.js",
   "jugglework-safe-grep.js",

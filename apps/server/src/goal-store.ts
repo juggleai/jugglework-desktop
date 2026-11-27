@@ -8,6 +8,10 @@ export const GOAL_OBJECTIVE_MAX_CHARS = 4_000;
 export const GOAL_CRITERION_MAX_CHARS = 500;
 export const GOAL_CRITERIA_MAX = 20;
 export const GOAL_CHECKPOINT_MAX_CHARS = 8_000;
+export const GOAL_EVIDENCE_MAX_CHARS = 1_000;
+export const GOAL_BLOCKER_MAX_CHARS = 1_000;
+/** The same blocker reported this many times in a row marks the goal blocked. */
+export const GOAL_BLOCKER_REPEAT_LIMIT = 3;
 const GOAL_EVENTS_PER_SESSION = 500;
 
 export type GoalStatus = "active" | "paused" | "blocked" | "completed" | "cancelled";
@@ -93,6 +97,22 @@ function normalizeText(value: string, max: number, field: string) {
   if (text.length > max) throw new GoalStoreError("goal_invalid", `${field} exceeds ${max} characters`);
   if (hasControlCharacters(text)) throw new GoalStoreError("goal_invalid", `${field} contains control characters`);
   return text;
+}
+
+function boundText(value: string, max: number) {
+  const text = value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").trim();
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function normalizeCheckpoint(value: string) {
+  const text = boundText(value, GOAL_CHECKPOINT_MAX_CHARS);
+  if (!text) throw new GoalStoreError("goal_invalid", "Checkpoint is required");
+  return text;
+}
+
+/** Case, whitespace and digit-insensitive key so retries with new counts still match. */
+export function blockerFingerprint(reason: string) {
+  return reason.toLowerCase().replace(/\d+/g, "#").replace(/[^\p{L}\p{N}#]+/gu, " ").trim();
 }
 
 /**
@@ -300,6 +320,34 @@ export async function createGoalStore(options: { config?: ServerConfig; path?: s
     });
   }
 
+  /**
+   * Apply a model-originated change to the session's unfinished goal. The
+   * goal must be active with a running turn; the caller's run identity is
+   * the session's active goal run, so no goal id is accepted from the model.
+   */
+  function agentMutate(
+    workspaceId: string,
+    sessionId: string,
+    event: string,
+    apply: (goal: SessionGoal) => SessionGoal,
+  ): SessionGoal {
+    return transaction(() => {
+      const goal = unfinished(workspaceId, sessionId);
+      if (!goal) throw new GoalStoreError("goal_not_found", "This session has no unfinished goal");
+      if (goal.status !== "active") {
+        throw new GoalStoreError("goal_invalid_transition", `The goal is ${goal.status}; only the user can change it now`, goal);
+      }
+      if (!goal.activeRunId) {
+        throw new GoalStoreError("goal_invalid_transition", "No goal run is in progress", goal);
+      }
+      const changed = apply(structuredClone(goal));
+      const next = { ...changed, version: goal.version + 1, updatedAt: now() };
+      write(next);
+      recordEvent(next, event, { runId: goal.activeRunId });
+      return next;
+    });
+  }
+
   return {
     current,
     unfinished,
@@ -487,14 +535,97 @@ export async function createGoalStore(options: { config?: ServerConfig; path?: s
      */
     observeRunTerminal(workspaceId: string, sessionId: string, runId: string, outcome: string): SessionGoal | null {
       return transaction(() => {
-        const goal = unfinished(workspaceId, sessionId);
-        if (!goal || goal.activeRunId !== runId) return null;
+        // The run may belong to a goal the model just completed, so look the
+        // goal up by run identity rather than only among unfinished goals.
+        const row = statement(sqlite, `SELECT * FROM session_goals WHERE workspace_id = ? AND session_id = ? AND active_run_id = ? LIMIT 1`)
+          .get(workspaceId, sessionId, runId);
+        if (!row) return null;
+        const goal = goalFromRow(row);
         statement(sqlite, `UPDATE session_goal_runs SET state = 'ended', outcome = ?, updated_at = ? WHERE goal_id = ? AND run_id = ?`)
           .run(outcome, now(), goal.id, runId);
-        const next = { ...goal, execution: "idle" as const, activeRunId: null, version: goal.version + 1, updatedAt: now() };
+        // A blocker or "needs user" report made during the run survives its end.
+        const execution = TERMINAL.has(goal.status) ? "idle" as const
+          : goal.execution === "waiting_user" ? "waiting_user" as const : "idle" as const;
+        const next = { ...goal, execution, activeRunId: null, version: goal.version + 1, updatedAt: now() };
         write(next);
         recordEvent(next, "run_ended", { runId });
         return next;
+      });
+    },
+
+    /**
+     * Model-reported progress for the session's unfinished goal. Only the
+     * goal's own running turn may report, so a stale or unrelated run can
+     * never move criteria. `waived` is reserved for the user.
+     */
+    reportProgress(workspaceId: string, sessionId: string, input: {
+      criteria: Array<{ id: string; status: "met" | "pending"; evidence?: string }>;
+      checkpoint: string;
+      madeProgress: boolean;
+    }): SessionGoal {
+      return agentMutate(workspaceId, sessionId, "progress_reported", (goal) => {
+        const byId = new Map(goal.criteria.map((criterion) => [criterion.id, criterion]));
+        for (const update of input.criteria) {
+          if (!byId.has(update.id)) throw new GoalStoreError("goal_invalid", `Unknown criterion ${update.id}`, goal);
+          if (update.status === "met" && !update.evidence?.trim()) {
+            throw new GoalStoreError("goal_invalid", `Criterion ${update.id} needs evidence to be marked met`, goal);
+          }
+        }
+        const criteria = goal.criteria.map((criterion) => {
+          const update = input.criteria.find((item) => item.id === criterion.id);
+          if (!update || criterion.status === "waived") return criterion;
+          return {
+            ...criterion,
+            status: update.status,
+            evidence: update.status === "met" ? boundText(update.evidence ?? "", GOAL_EVIDENCE_MAX_CHARS) : null,
+          };
+        });
+        const checkpoint = normalizeCheckpoint(input.checkpoint);
+        const changed = checkpoint !== goal.checkpoint ||
+          criteria.some((criterion, index) => criterion.status !== goal.criteria[index]!.status);
+        const progressed = input.madeProgress && changed;
+        return {
+          ...goal, criteria, checkpoint,
+          noProgressCount: progressed ? 0 : goal.noProgressCount + 1,
+          // Real progress clears a recorded blocker.
+          blockerReason: progressed ? null : goal.blockerReason,
+          blockerCount: progressed ? 0 : goal.blockerCount,
+        };
+      });
+    },
+
+    /**
+     * Model-reported blocker. The same normalized reason in
+     * GOAL_BLOCKER_REPEAT_LIMIT consecutive reports marks the goal blocked;
+     * `needsUser` stops at waiting_user without blocking.
+     */
+    reportBlocker(workspaceId: string, sessionId: string, input: { reason: string; needsUser: boolean }): SessionGoal {
+      return agentMutate(workspaceId, sessionId, "blocker_reported", (goal) => {
+        const reason = normalizeText(input.reason, GOAL_BLOCKER_MAX_CHARS, "Blocker reason");
+        const same = goal.blockerReason !== null && blockerFingerprint(goal.blockerReason) === blockerFingerprint(reason);
+        const blockerCount = same ? goal.blockerCount + 1 : 1;
+        const blocked = blockerCount >= GOAL_BLOCKER_REPEAT_LIMIT;
+        return {
+          ...goal,
+          blockerReason: reason,
+          blockerCount,
+          status: blocked ? "blocked" : goal.status,
+          execution: input.needsUser || blocked ? "waiting_user" : goal.execution,
+        };
+      });
+    },
+
+    /**
+     * Model-requested completion. Every required criterion must already be
+     * met through reportProgress; the model cannot override.
+     */
+    requestCompletion(workspaceId: string, sessionId: string): SessionGoal {
+      return agentMutate(workspaceId, sessionId, "completed", (goal) => {
+        const unmet = goal.criteria.filter((criterion) => criterion.required && criterion.status === "pending");
+        if (unmet.length > 0) {
+          throw new GoalStoreError("goal_criteria_unmet", `Required criteria not met: ${unmet.map((criterion) => criterion.id).join(", ")}`, goal);
+        }
+        return { ...goal, status: "completed", execution: "idle", completedAt: now() };
       });
     },
 
@@ -536,8 +667,8 @@ export type GoalStore = Awaited<ReturnType<typeof createGoalStore>>;
  * rebuilt from durable state so context compaction cannot erase the goal.
  */
 export function buildGoalEnvelope(goal: SessionGoal, input: { ordinal: number; trigger: GoalRunTrigger }): string {
-  const criteria = goal.criteria.map((criterion, index) =>
-    `${index + 1}. [${criterion.status}${criterion.required ? "" : ", optional"}] ${criterion.text}`).join("\n");
+  const criteria = goal.criteria.map((criterion) =>
+    `- id=${criterion.id} [${criterion.status}${criterion.required ? "" : ", optional"}] ${criterion.text}`).join("\n");
   const remaining = Math.max(0, goal.continuationCap - goal.continuationStreak);
   return [
     "## Active goal",
@@ -546,15 +677,35 @@ export function buildGoalEnvelope(goal: SessionGoal, input: { ordinal: number; t
     `<objective>\n${goal.objective}\n</objective>`,
     `<criteria>\n${criteria}\n</criteria>`,
     goal.checkpoint ? `<checkpoint>\n${goal.checkpoint}\n</checkpoint>` : "<checkpoint>none yet</checkpoint>",
+    goal.blockerReason ? `<last_blocker repeats="${goal.blockerCount}">\n${goal.blockerReason}\n</last_blocker>` : "",
     `<automatic_continuations_remaining>${remaining}</automatic_continuations_remaining>`,
     "</goal>",
     "Rules for goal runs:",
     "- First inspect the current workspace state; do not repeat work that is already done.",
     "- Work toward the unmet required criteria in order of dependency.",
-    "- Do not claim the goal is complete unless every required criterion is verifiably satisfied, and state the evidence for each.",
-    "- If you need a decision, permission, or credential from the user, ask and stop instead of guessing.",
+    "- Goal state changes only through the goal tools; saying a criterion is done in prose does not record it.",
+    "- Call jugglework_goal_progress whenever a criterion is verified as met, and always once before you finish this turn. Mark a criterion met only with concrete evidence (a command and its result, a file path, a test name). Set checkpoint to what is done and the next step, so a later run can resume without the transcript.",
+    "- If you cannot proceed, call jugglework_goal_blocker with the reason. Set needsUser when a decision, permission, or credential from the user is required, then ask the user and stop.",
+    "- When every required criterion is met, call jugglework_goal_complete. It is rejected while any required criterion is still pending.",
     "- Goal mode grants no extra permissions; existing approval rules still apply.",
-  ].join("\n");
+  ].filter(Boolean).join("\n");
+}
+
+/** Stable part metadata key identifying a goal run request in engine history. */
+export const GOAL_RUN_METADATA_KEY = "jugglework_goal";
+
+/**
+ * The text part that starts a goal run. The metadata is stable and content
+ * free, so presentation and language detection can recognize goal-run
+ * requests without reading their wording. A create request still shows as the
+ * user's own task; continuation requests are internal.
+ */
+export function goalRunPromptPart(goal: SessionGoal, input: { ordinal: number; trigger: GoalRunTrigger }) {
+  return {
+    type: "text" as const,
+    text: goalRunPromptText(goal, input.trigger),
+    metadata: { [GOAL_RUN_METADATA_KEY]: { goalId: goal.id, ordinal: input.ordinal, trigger: input.trigger } },
+  };
 }
 
 /** The short user-visible instruction that starts a goal run. */
