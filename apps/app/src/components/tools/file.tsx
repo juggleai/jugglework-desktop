@@ -1,5 +1,19 @@
+import type { ReactNode } from "react"
+import { BookOpen, FilePen, FolderOpen, type LucideIcon } from "lucide-react"
 import type { ReadToolPart, WriteToolPart } from "@/lib/build-in-tools"
 import { parseFilename } from "@/components/tools/path"
+
+/** 与 Tool 组件的行样式保持一致：图标占 size-4 槽位，文字用弱化色。 */
+function FileToolRow({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
+  return (
+    <div className="text-muted-foreground flex min-w-0 items-center gap-2 text-sm">
+      <span className="inline-flex size-4 shrink-0 items-center justify-center">
+        <Icon className="size-3.5" aria-hidden="true" />
+      </span>
+      <span className="min-w-0 truncate">{children}</span>
+    </div>
+  )
+}
 
 interface ReadFileToolProps {
   part: ReadToolPart
@@ -10,9 +24,7 @@ export function ReadFileTool({ part }: ReadFileToolProps) {
 
   if (part.state === "output-error") {
     return (
-      <div>
-        <span className="text-muted-foreground">Read attempted {filename}</span> 
-      </div>
+      <FileToolRow icon={BookOpen}>Read attempted {filename}</FileToolRow>
     )
   }
 
@@ -24,22 +36,15 @@ export function ReadFileTool({ part }: ReadFileToolProps) {
 
   if (output.type === "directory") {
     return (
-      <div>
-        <span className="text-muted-foreground">Listing {filename}</span>
-      </div>
+      <FileToolRow icon={FolderOpen}>Listing {filename}</FileToolRow>
     )
   }
 
   return (
-    <div>
-      <span className="text-muted-foreground">Read {filename}</span>
-      {output.lineRange && output.truncated ? (
-        <>
-          {" "}
-          <span className="text-muted-foreground">L{output.lineRange.firstLine}-{output.lineRange.lastLine}</span>
-        </>
-      ) : null}
-    </div>
+    <FileToolRow icon={BookOpen}>
+      Read {filename}
+      {output.lineRange && output.truncated ? ` L${output.lineRange.firstLine}-${output.lineRange.lastLine}` : null}
+    </FileToolRow>
   )
 }
 
@@ -52,9 +57,7 @@ export function WriteFileTool({ part }: WriteFileToolProps) {
 
   if (part.state === "output-error") {
     return (
-      <div>
-        <span className="text-muted-foreground">Write attempted {filename}</span> 
-      </div>
+      <FileToolRow icon={FilePen}>Write attempted {filename}</FileToolRow>
     )
   }
 
@@ -63,9 +66,7 @@ export function WriteFileTool({ part }: WriteFileToolProps) {
   }
 
   return (
-    <div>
-      <span className="text-muted-foreground">Write {filename}</span> 
-    </div>
+    <FileToolRow icon={FilePen}>Write {filename}</FileToolRow>
   )
 }
 

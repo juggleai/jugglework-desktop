@@ -39,8 +39,8 @@ export function BashTool({ part }: BashToolProps) {
         </CollapsibleToolTrigger>
         <CollapsibleToolContent className="bg-muted rounded-lg p-2">
           <div className="flex flex-col gap-2 text-xs">
-            <pre>$ {displayCommand}</pre>
-            <pre className="opacity-80">{displayOutput}</pre>
+            <pre className="overflow-x-auto" data-testid="bash-tool-command">$ {displayCommand}</pre>
+            <pre className="overflow-x-auto opacity-80" data-testid="bash-tool-output">{displayOutput}</pre>
           </div>
         </CollapsibleToolContent>
       </CollapsibleToolStep>

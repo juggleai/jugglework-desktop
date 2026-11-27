@@ -21,54 +21,18 @@ import {
 } from "@/components/tools/mcp-reconnect-state"
 import { getToolActivityLabel, isToolPartInFlight } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
+import { toolIcon } from "@/components/tools/tool-icon"
 import {
-  Bot,
   Check,
   ChevronDown,
   CircleAlert,
   Copy,
   ExternalLink,
-  FilePen,
-  KeyRound,
-  ListTodo,
   LoaderCircle,
-  MessageCircleQuestion,
   RefreshCcw,
-  Search,
-  Sparkles,
-  SquareCode,
-  Wrench,
 } from "lucide-react"
 import { useCallback, useState } from "react"
 import type { DynamicToolUIPart, ToolUIPart } from "ai"
-
-function toolIcon(part: ToolPart) {
-  const name = part.type === "dynamic-tool" ? part.toolName : part.type
-  switch (name) {
-    case "edit":
-    case "write":
-    case "apply_patch":
-      return FilePen
-    case "grep":
-    case "glob":
-      return Search
-    case "lsp":
-      return SquareCode
-    case "skill":
-      return Sparkles
-    case "todowrite":
-      return ListTodo
-    case "question":
-      return MessageCircleQuestion
-    case "request_env_var":
-    case "env_var_request":
-      return KeyRound
-    case "task":
-      return Bot
-    default:
-      return Wrench
-  }
-}
 
 export type ToolPart = ToolUIPart | DynamicToolUIPart
 

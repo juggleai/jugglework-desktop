@@ -38,6 +38,7 @@ import { openDesktopUrl } from "@/app/lib/desktop"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
+import { toolIcon } from "@/components/tools/tool-icon"
 import { EditTool } from "@/components/tools/edit"
 import { EnvVarRequestTool } from "@/components/tools/env-var-request"
 import { ReadFileTool, WriteFileTool } from "@/components/tools/file"
@@ -314,6 +315,7 @@ function ToolRunGroup({
 
   const running = parts.some(isToolPartInFlight)
   const label = toolRunPreviewLabel(previewPart)
+  const PreviewIcon = toolIcon(previewPart)
 
   React.useEffect(() => {
     if (!isStreaming) setOpen(false)
@@ -326,7 +328,9 @@ function ToolRunGroup({
         aria-label={`${open ? "Collapse" : "Expand"} ${parts.length} tool ${parts.length === 1 ? "call" : "calls"}`}
         data-testid="task-tool-run-toggle"
       >
-        {running ? <LoaderCircle className="size-3.5 shrink-0 animate-spin" aria-hidden="true" /> : null}
+        {running
+          ? <LoaderCircle className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />
+          : <PreviewIcon className="size-3.5 shrink-0" aria-hidden="true" />}
         <span className="min-w-0 truncate">{label}</span>
         <ChevronRight className="size-4 shrink-0 opacity-0 transition-all duration-200 group-hover/tool-run:opacity-100 group-data-panel-open/tool-run:rotate-90 group-data-panel-open/tool-run:opacity-100" />
       </CollapsibleTrigger>
