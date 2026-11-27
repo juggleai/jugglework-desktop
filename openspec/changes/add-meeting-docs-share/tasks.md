@@ -35,6 +35,7 @@
 
 ## 部署（2026-11-27，测试环境 47.237.210.32）
 - [x] Work：二进制基于 `9715d1c`，同批带上 `eb15adc` 之后的任务模块提交与 6 个迁移（`2026112303`、`2026112501`、`2026112601`、`2026112602`、`2026112603`、`2026112604`），迁移已应用，`product_tasks` 21 行完整；`/jwork/api/health`、`/jwork/api/ready` 与公网 runtime-config 返回 200。部署前备份旧二进制、配置与 `jwork_db` 导出。
+- [x] Docs Web 更新：发布目录 `meeting-web-19b6340c7-20261127T091017Z`（`19b6340c7`：会议舞台收起左侧栏；用户刚操作时不被跟随拉回），Server 仍为 `ec5238c27`；上一版 `meeting-web-88779ac99-20261127T090209Z` 保留可回滚。实测截图见 `screenshots/README.md`。
 - [x] Docs Web 更新：发布目录 `meeting-web-7353415dd-20261127T083821Z`，只替换 Web 静态资源（`7353415dd`，页面锚点改取最内层正文块），Server 仍为 `ec5238c27`；部署前备份 PostgreSQL，上一版 `meeting-ec5238c27-20261127T060324Z` 保留可回滚。
 - [x] Docs：发布目录 `meeting-ec5238c27-20261127T060324Z`，Server 与 Web 静态资源均为 `ec5238c27`；`/info` 返回 200，无会话访问 `session/docs/recent`、`session/docs/search` 返回 401。部署前备份 PostgreSQL，上一版 `review-d1a22ae88-20261126T082902Z` 保留可回滚。- [x] 单端真实环境（本地 Desktop 连接测试环境）：共享 JuggleWork 窗口与云文档均可开始、停止，服务端共享槽随之占用与释放；云文档列表加载，表格与幻灯片灰显。
 - [ ] 打包 Desktop 后在测试环境完成 M0 验证与双端真实环境验收。

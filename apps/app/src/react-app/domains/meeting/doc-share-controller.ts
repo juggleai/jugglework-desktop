@@ -53,6 +53,8 @@ let inflight: { key: string; promise: Promise<void> } | null = null;
 let deniedKey = "";
 /** 本机正在发起共享（视图已打开、共享槽尚未占用）；期间不能因为槽为空而关闭视图。 */
 let starting = false;
+/** 已进入会议舞台布局的视图；页面首次上报视口说明命令监听已就绪。 */
+let stagedInstance = "";
 
 const bridge = () => window.__JUGGLEWORK_ELECTRON__?.cloudDocs;
 const set = (patch: Partial<DocShareState>) => useDocShareStore.setState(patch);
@@ -152,7 +154,8 @@ function applyLatest() {
     });
   } else if (view.phase === "ready") {
     const elsewhere = view.docId !== pageId;
-    set({ sharerElsewhere: elsewhere });
+    // 共享人在别的文档时，本地文档里的相对位置已失效。
+    set(elsewhere ? { sharerElsewhere: true, relation: null } : { sharerElsewhere: false });
     // 共享人在别的文档时也下发，页面据此清除旧标记。
     bridge()?.meetingCommand?.({ instanceId: view.instanceId, action: "apply-viewport", payload: { follow: false, sharerName: sharerLabel(), viewport: { workspaceId, docId: pageId, mode, ...latest.viewport } } });
   }
@@ -162,6 +165,11 @@ function onEvent(event: CloudDocsMeetingEvent) {
   const view = useDocShareStore.getState().view;
   if (view.phase !== "ready" || event.instanceId !== view.instanceId) return;
   if (event.type === "docs.sharer-relation") { set({ relation: event.meeting }); return; }
+  if (stagedInstance !== view.instanceId) {
+    // 首个命令让页面进入会议舞台布局（收起侧栏），同时对齐本地缩放。
+    stagedInstance = view.instanceId;
+    bridge()?.meetingCommand?.({ instanceId: view.instanceId, action: "zoom", payload: { factor: useDocShareStore.getState().zoom } });
+  }
   const { userInput, ...viewport } = event.meeting;
   lastLocal = viewport;
   if (view.docId !== viewport.docId) set({ view: { ...view, docId: viewport.docId } });

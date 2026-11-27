@@ -11,9 +11,10 @@ export function MeetingShareBar({ share, selfId, sharerName, onChange, onError }
   const mine = share.userId === selfId;
   const [, tick] = useState(0);
   useEffect(() => { const timer = setInterval(() => tick(n => n + 1), 5_000); return () => clearInterval(timer); }, []);
-  const where = relation && relation.direction !== "visible" && relation.direction !== "missing"
-    ? `共享人在${relation.heading ? `「${relation.heading}」` : "文档中"}${relation.direction === "above" ? "↑" : "↓"}`
-    : sharerElsewhere ? "共享人已切换文档" : "";
+  const where = sharerElsewhere ? "共享人已切换文档"
+    : relation && relation.direction !== "visible" && relation.direction !== "missing"
+      ? `共享人在${relation.heading ? `「${relation.heading}」` : "文档中"}${relation.direction === "above" ? "↑" : "↓"}`
+      : "";
   return <div className="doc-share-bar" role="status">
     <span className="doc-share-who"><span className="avatar-dot">{sharerName.slice(0, 1)}</span>{mine ? "你正在共享" : `${sharerName} 正在共享`}</span>
     {mine ? null : <span className="doc-share-badge" data-mode={interrupted ? "interrupted" : mode}>
