@@ -4,7 +4,7 @@ import { CHANNEL_MANIFEST_CACHE_CONTROL, RELEASE_CDN_ORIGIN, promotionLockKey } 
 import { cdnFailureDetails, readBackDigest, verifyCdnObject } from "./cdn.mjs";
 import { assertEvidenceMatchesPlan, assertLocalVerification, assertPromotionEvidence } from "./evidence.mjs";
 import { standingPolicyException, standingPolicyEvidence } from "./standing-policy.mjs";
-import { assertBootstrap, proveBootstrapAbsence } from "./bootstrap.mjs";
+import { assertBootstrap, proveBootstrapAbsence, requiresBootstrap } from "./bootstrap.mjs";
 
 function exactRemote(remote, object) {
   return remote?.size === object.size && remote?.etag === object.etag;
@@ -129,7 +129,7 @@ export async function promoteChannel(plan, evidence, {
   assertPromotionEvidence(plan, evidence, { notarizationExceptionReason, preCanaryExceptionReason, cacheExceptionReason, metadataExceptionReason, standingPolicy });
   const policyEvidence = standingPolicy ? standingPolicyEvidence(plan, evidence, { standingPolicy, preCanaryExceptionReason, metadataExceptionReason }) : {};
   const initialization = bootstrap === undefined ? null : assertBootstrap(plan, { bootstrap, bucket: qiniu?.bucket, standingPolicy, expectedPreviousChannelDigest });
-  if (plan.origin === RELEASE_CDN_ORIGIN && plan.version === "1.2.41" && !initialization) {
+  if (requiresBootstrap(plan) && !initialization) {
     throw new Error("First new Stable promotion requires explicit manual-transition bootstrap");
   }
   if (initialization && (plan.origin !== RELEASE_CDN_ORIGIN || plan.channelManifest.key !== initialization.key
@@ -275,7 +275,7 @@ export async function promoteChannel(plan, evidence, {
     await refresh([plan.channelManifest.url]);
     onEvent({ type: "channel-readback", url: plan.channelManifest.url });
     const readBackResult = await readBack(plan.channelManifest.url, plan.manifest.sha256, { fetchImpl, expectedSize: plan.manifest.size, origin: plan.origin });
-    const result = { lockKey, channelKey: plan.channelManifest.key, cacheControl, readBack: readBackResult, lock: lockPayload, notarizationException, preCanaryException };
+    const result = { ...(initialization ? { bootstrap: { ...initialization, preLock, postLock, insertOnly: true } } : {}), lockKey, channelKey: plan.channelManifest.key, cacheControl, readBack: readBackResult, lock: lockPayload, notarizationException, preCanaryException };
     await onPromotionVerified(result);
     channelVerified = true;
     return result;

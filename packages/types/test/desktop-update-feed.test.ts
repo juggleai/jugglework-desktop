@@ -3,13 +3,14 @@ import { describe, it } from "node:test";
 
 import {
   parseDesktopUpdateManifest,
+  isNewWindowsStableVersion,
   resolveDesktopUpdateFeed,
   selectMacDmgArtifact,
   selectMacZipArtifact,
 } from "../src/desktop-update-feed.ts";
 
 describe("desktop update feeds", () => {
-  it("moves only macOS arm64 Stable, including future exact targets", () => {
+  it("preserves macOS arm64 Stable migration, including future exact targets", () => {
     const route = { platform: "darwin", arch: "arm64" } as const;
     assert.equal(new URL(resolveDesktopUpdateFeed(route).feedUrl).hostname, "downloads.jugglework.cn");
     for (const targetVersion of ["1.2.41", "1.2.42", "1.3.0"]) {
@@ -20,6 +21,28 @@ describe("desktop update feeds", () => {
       assert.equal(new URL(resolveDesktopUpdateFeed(input).feedUrl).hostname, "downloads.jugglechat.cn");
     }
   });
+  it("moves Windows stable from 1.2.42 on both architectures while preserving history and Alpha", () => {
+    for (const arch of ["x64", "arm64"]) {
+      const route = { platform: "win32", arch };
+      assert.equal(resolveDesktopUpdateFeed(route).feedUrl,
+        "https://downloads.jugglework.cn/jugglework/releases/stable/windows");
+      for (const targetVersion of ["1.2.42", "1.2.43", "1.3.0", "2.0.0"]) {
+        assert.equal(isNewWindowsStableVersion(targetVersion), true);
+        assert.equal(resolveDesktopUpdateFeed({ ...route, targetVersion }).feedUrl,
+          `https://downloads.jugglework.cn/jugglework/releases/v${targetVersion}/windows`);
+      }
+      for (const targetVersion of ["0.9.0", "1.1.99", "1.2.41"]) {
+        assert.equal(isNewWindowsStableVersion(targetVersion), false);
+        assert.equal(resolveDesktopUpdateFeed({ ...route, targetVersion }).feedUrl,
+          `https://downloads.jugglechat.cn/jugglework/releases/v${targetVersion}/windows`);
+      }
+      assert.equal(resolveDesktopUpdateFeed({ ...route, channel: "alpha" }).feedUrl,
+        "https://downloads.jugglechat.cn/jugglework/releases/alpha/windows");
+    }
+    for (const version of [undefined, null, "", "v1.2.42", "1.2.42-alpha.1", "1.2.42+build", "bad"]) {
+      assert.equal(isNewWindowsStableVersion(version), false);
+    }
+  });
   it("resolves stable, Alpha and exact feeds per platform", () => {
     assert.equal(resolveDesktopUpdateFeed({ platform: "darwin" }).manifestUrl,
       "https://downloads.jugglechat.cn/jugglework/releases/stable/mac/latest-mac.yml");
@@ -28,7 +51,7 @@ describe("desktop update feeds", () => {
     assert.equal(resolveDesktopUpdateFeed({ platform: "darwin", targetVersion: "v1.2.15" }).feedUrl,
       "https://downloads.jugglechat.cn/jugglework/releases/v1.2.15/mac");
     assert.equal(resolveDesktopUpdateFeed({ platform: "win32" }).manifestUrl,
-      "https://downloads.jugglechat.cn/jugglework/releases/stable/windows/latest.yml");
+      "https://downloads.jugglework.cn/jugglework/releases/stable/windows/latest.yml");
     assert.equal(resolveDesktopUpdateFeed({ platform: "linux", arch: "arm64" }).manifestUrl,
       "https://downloads.jugglechat.cn/jugglework/releases/stable/linux/latest-linux-arm64.yml");
   });

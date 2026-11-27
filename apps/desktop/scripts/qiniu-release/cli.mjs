@@ -265,7 +265,7 @@ export async function runCli(argv, {
 }
 
 export function usage() {
-  const bootstrapUsage = "Manual-transition bootstrap: promote-channel --bootstrap manual-transition-1.2.41 (standing policy and its two reasons still required; mutually exclusive with --expected-previous-channel-digest). Legacy release routes are read-only.\n\n";
+  const bootstrapUsage = "Manual-transition bootstrap: promote-channel --bootstrap manual-transition-1.2.41 (macOS standing policy and its two reasons still required) or --bootstrap manual-transition-windows-1.2.42 (exact stable Windows 1.2.42 arm64,x64; trusted verification and both physical canaries required). Both require the jugglework bucket and verified absence, and are mutually exclusive with --expected-previous-channel-digest. Legacy release routes are read-only.\n\n";
   const standingUsage = "Standing policy is opt-in per release: --standing-policy stable-mac-arm64-standing-policy --pre-canary-exception-reason TEXT --metadata-exception-reason TEXT --expected-previous-channel-digest SHA256. Only exact stable/mac/arm64 >=1.2.35, including 1.2.36, is eligible; two independent trimmed reasons >=20 characters are required. Canary is waived only when absent; supplied failed/mismatched evidence is rejected. Only mutable Cache-Control mutation/validation is skipped; notarization, lock/predecessor/race/size/ETag, immutable/full public digests, CDN refresh and public read-back remain required.\n\n";
   return bootstrapUsage + standingUsage + historicalUsage().replace("Future 1.2.35 is not authorized", "Without explicit standing policy, 1.2.35 and later are not authorized by historical scopes");
 }

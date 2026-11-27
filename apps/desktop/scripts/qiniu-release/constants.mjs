@@ -5,8 +5,12 @@ export const DEFAULT_BUCKET = "jugglework";
 export const RELEASE_CDN_ORIGIN = "https://downloads.jugglework.cn";
 
 export function usesNewReleaseOrigin({ version, channel, platform, architectures }) {
-  return channel === "stable" && platform === "mac" && architectures?.length === 1 && architectures[0] === "arm64"
-    && STABLE_VERSION.test(version) && compareSemver(version, "1.2.41") >= 0;
+  if (channel !== "stable" || !STABLE_VERSION.test(version)) return false;
+  if (platform === "mac") return architectures?.length === 1 && architectures[0] === "arm64"
+    && compareSemver(version, "1.2.41") >= 0;
+  return platform === "windows" && architectures?.length === 2
+    && WINDOWS_ARCHITECTURES.every((arch) => architectures.includes(arch))
+    && compareSemver(version, "1.2.42") >= 0;
 }
 export const SUPPORTED_ARCHITECTURES = ["arm64", "x64", "universal"];
 export const SUPPORTED_PLATFORMS = ["mac", "windows"];

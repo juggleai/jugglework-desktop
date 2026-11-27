@@ -17,15 +17,13 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { parse as parseYaml } from "yaml";
-import { assertWindowsReleaseVersion } from "./qiniu-release/constants.mjs";
+import { assertWindowsReleaseVersion, CDN_ORIGIN, RELEASE_CDN_ORIGIN, RELEASE_ROOT, usesNewReleaseOrigin } from "./qiniu-release/constants.mjs";
 import { inspectArtifact } from "./qiniu-release/metadata.mjs";
 import { verifyToonFactoryBundle } from "../electron/toonFactoryBundle.mjs";
 import { verifyMediaTools } from "../electron/mediaTools.mjs";
 
 const ARCHITECTURES = ["arm64", "x64"];
 const PE_MACHINE = { x64: 0x8664, arm64: 0xaa64 };
-const WINDOWS_UPDATE_FEED = "https://downloads.jugglechat.cn/jugglework/releases/stable/windows";
-const IMMUTABLE_RELEASE_ROOT = "https://downloads.jugglechat.cn/jugglework/releases";
 const LOCAL_VERIFICATION_SCHEMA = "com.juggleai.jugglework.windows-local-verification";
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
@@ -289,15 +287,23 @@ function publisherNamesFromConfig(value) {
   return [];
 }
 
-export function verifyPackagedUpdateConfiguration(stagingDirectory, expectedPublishers) {
+function releaseRoot(version) {
+  const origin = usesNewReleaseOrigin({ version, channel: "stable", platform: "windows", architectures: ARCHITECTURES })
+    ? RELEASE_CDN_ORIGIN
+    : CDN_ORIGIN;
+  return `${origin}/${RELEASE_ROOT}`;
+}
+
+export function verifyPackagedUpdateConfiguration(stagingDirectory, expectedPublishers, version) {
   const updateConfigPath = findSingle(
     filesRecursively(stagingDirectory).filter((filePath) => path.basename(filePath).toLowerCase() === "app-update.yml"),
     `packaged app-update.yml in ${stagingDirectory}`,
   );
   const config = readYaml(updateConfigPath, "packaged updater configuration");
   if (config?.provider !== "generic") fail(`${updateConfigPath} must use the generic provider`);
-  if (config.url !== WINDOWS_UPDATE_FEED) {
-    fail(`Expected Windows updater feed ${WINDOWS_UPDATE_FEED}, found ${config?.url || "<missing>"}`);
+  const expectedFeed = `${releaseRoot(version)}/stable/windows`;
+  if (config.url !== expectedFeed) {
+    fail(`Expected Windows updater feed ${expectedFeed}, found ${config?.url || "<missing>"}`);
   }
   const configuredPublishers = publisherNamesFromConfig(config.publisherName);
   if (configuredPublishers.length === 0 || JSON.stringify(configuredPublishers) !== JSON.stringify(expectedPublishers)) {
@@ -323,7 +329,7 @@ function verifyStagingManifest(manifestPath, { arch, version, executableName, me
 }
 
 function expectedArtifactUrl(version, arch, name) {
-  return `${IMMUTABLE_RELEASE_ROOT}/v${version}/windows/${arch}/${name}`;
+  return `${releaseRoot(version)}/v${version}/windows/${arch}/${name}`;
 }
 
 function verifyMergedManifest(manifestPath, version, artifactsByArch) {
@@ -491,7 +497,7 @@ export async function verifyPackagedWindows(options, dependencies = {}) {
     const blockmapMetadata = await inspect(blockmapPath);
     await verifyPublishedBlockmap(executablePath, blockmapPath, generateBlockmap);
     const latest = verifyStagingManifest(latestPath, { arch, version, executableName, metadata });
-    const updater = verifyPackagedUpdateConfiguration(stagingDirectory, publisherNames);
+    const updater = verifyPackagedUpdateConfiguration(stagingDirectory, publisherNames, version);
     architectureResults.push({
       arch,
       stagingDirectory,

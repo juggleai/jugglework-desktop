@@ -5,11 +5,10 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveDesktopUpdateFeed } from "../dist/runtime/desktop-update-feed.js";
+import { DESKTOP_UPDATE_ORIGIN, WINDOWS_STABLE_UPDATE_ORIGIN, isNewWindowsStableVersion, resolveDesktopUpdateFeed } from "../dist/runtime/desktop-update-feed.js";
 
 const ELECTRON_UPDATER_CHANNEL_FILENAME = "electron-updater-channel.v1.json";
 const WINDOWS_UPDATE_ARCHITECTURES = ["x64", "arm64"];
-const WINDOWS_UPDATE_ORIGIN = "https://downloads.jugglechat.cn";
 
 // In dev mode, app.getVersion() returns the Electron framework version
 // (e.g. "35.7.5") instead of the JuggleWork app version. Read from
@@ -312,10 +311,12 @@ export function selectWindowsUpdateArtifact(updateInfo, arch = process.arch) {
   if (!WINDOWS_UPDATE_ARCHITECTURES.includes(arch)) {
     throw new Error(`Unsupported Windows update architecture: ${arch}`);
   }
-  if (!updateInfo?.version || !Array.isArray(updateInfo.files)) {
+  if (typeof updateInfo?.version !== "string" || !/^\d+\.\d+\.\d+$/.test(updateInfo.version) || !Array.isArray(updateInfo.files)) {
     throw new Error("Windows update manifest inventory is missing.");
   }
 
+  const expectedOrigin = isNewWindowsStableVersion(updateInfo.version)
+    ? WINDOWS_STABLE_UPDATE_ORIGIN : DESKTOP_UPDATE_ORIGIN;
   const inventory = new Map(WINDOWS_UPDATE_ARCHITECTURES.map((value) => [value, []]));
   for (const file of updateInfo.files) {
     if (typeof file?.url !== "string" || !validSha512(file.sha512)) {
@@ -327,7 +328,7 @@ export function selectWindowsUpdateArtifact(updateInfo, arch = process.arch) {
     } catch {
       throw new Error(`Windows update artifact URL must be absolute: ${file.url}`);
     }
-    if (artifactUrl.protocol !== "https:" || artifactUrl.origin !== WINDOWS_UPDATE_ORIGIN) {
+    if (artifactUrl.protocol !== "https:" || artifactUrl.origin !== expectedOrigin) {
       throw new Error(`Windows update artifact uses an unauthorized origin: ${file.url}`);
     }
     if (artifactUrl.search || artifactUrl.hash) {

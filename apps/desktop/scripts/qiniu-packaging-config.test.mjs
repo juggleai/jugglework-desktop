@@ -21,7 +21,7 @@ describe("Qiniu packaged updater configuration", () => {
     }]);
     assert.deepEqual(config.win.publish, [{
       provider: "generic",
-      url: "https://downloads.jugglechat.cn/jugglework/releases/stable/windows",
+      url: "https://downloads.jugglework.cn/jugglework/releases/stable/windows",
     }]);
   });
 
@@ -56,6 +56,10 @@ describe("Qiniu packaged updater configuration", () => {
     for (const suffix of ["toonFactoryV2", "toonFactoryV2/", "toonFactoryV2/bun-helper", "toonFactoryV2/bun/child", "toonFactoryV2/server/native.node", "sidecars/opencode"]) {
       assert.equal(ignored(suffix), false, suffix);
     }
+  });
+
+  it("preserves the pinned upstream Windows Bun while signing other executables", () => {
+    assert.deepEqual(config.win.signExts, ["!bun.exe"]);
   });
 
   it("passes an unprefixed certificate name to electron-builder while keeping the full helper identity", () => {

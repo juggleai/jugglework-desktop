@@ -1,6 +1,13 @@
 export const DESKTOP_UPDATE_ROOT = "https://downloads.jugglechat.cn/jugglework/releases";
 export const DESKTOP_UPDATE_ORIGIN = "https://downloads.jugglechat.cn";
 export const MAC_ARM64_STABLE_UPDATE_ORIGIN = "https://downloads.jugglework.cn";
+export const WINDOWS_STABLE_UPDATE_ORIGIN = "https://downloads.jugglework.cn";
+
+export function isNewWindowsStableVersion(version: unknown): boolean {
+  if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/.test(version)) return false;
+  const [major, minor, patch] = version.split(".").map(Number);
+  return major > 1 || (major === 1 && (minor > 2 || (minor === 2 && patch >= 42)));
+}
 
 export function isNewMacStableVersion(version: unknown): boolean {
   if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/.test(version)) return false;
@@ -66,9 +73,13 @@ export function resolveDesktopUpdateFeed(input: {
   const targetVersion = input.targetVersion == null ? null : normalizeStableDesktopUpdateVersion(input.targetVersion);
   if (input.targetVersion != null && !targetVersion) throw new Error("Target update version must use the stable x.y.z format.");
   if (targetVersion && channel !== "stable") throw new Error("Version-specific update feeds are supported only on the stable channel.");
-  const migrated = platform === "mac" && input.arch === "arm64" && channel === "stable"
+  const migratedMac = platform === "mac" && input.arch === "arm64" && channel === "stable"
     && (!targetVersion || isNewMacStableVersion(targetVersion));
-  const root = migrated ? `${MAC_ARM64_STABLE_UPDATE_ORIGIN}/jugglework/releases` : DESKTOP_UPDATE_ROOT;
+  const migratedWindows = platform === "windows" && channel === "stable"
+    && (!targetVersion || isNewWindowsStableVersion(targetVersion));
+  const origin = migratedWindows ? WINDOWS_STABLE_UPDATE_ORIGIN
+    : migratedMac ? MAC_ARM64_STABLE_UPDATE_ORIGIN : DESKTOP_UPDATE_ORIGIN;
+  const root = `${origin}/jugglework/releases`;
   const feedUrl = `${root}/${targetVersion ? `v${targetVersion}` : channel}/${platform}`;
   const manifestName = desktopUpdateManifestName(platform, input.arch);
   return { platform, channel, targetVersion, feedUrl, manifestName, manifestUrl: `${feedUrl}/${manifestName}` };

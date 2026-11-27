@@ -10,7 +10,7 @@ import {
   compareSemver,
   normalizeReleaseArchitectures,
 } from "./constants.mjs";
-import { assertBootstrap } from "./bootstrap.mjs";
+import { assertBootstrap, requiresBootstrap } from "./bootstrap.mjs";
 
 export const EVIDENCE_SCHEMA = "com.juggleai.jugglework.qiniu-release-evidence";
 export const EVIDENCE_SCHEMA_VERSION = 2;
@@ -201,7 +201,7 @@ function assertWindowsLocalVerification(plan, verification, { stable }) {
     || new Set(verification.approvedPublishers).size !== verification.approvedPublishers.length) {
     throw new Error("Windows local verification requires an explicit non-empty approved publisher list");
   }
-  const expectedFeed = `${CDN_ORIGIN}/jugglework/releases/${plan.channel}/windows`;
+  const expectedFeed = `${plan.origin ?? CDN_ORIGIN}/jugglework/releases/${plan.channel}/windows`;
   if (verification.packagedUpdater?.provider !== "generic" || verification.packagedUpdater?.feedUrl !== expectedFeed
     || !sameArray(verification.packagedUpdater?.publisherNames, verification.approvedPublishers)) {
     throw new Error("Packaged Windows updater must bind the approved publisher list and Qiniu channel feed");
@@ -359,7 +359,8 @@ function assertWindowsCanary(plan, canary) {
     if (compareSemver(run.sourceVersion, plan.version) >= 0) throw new Error(`Windows canary source version must be older for ${arch}`);
     timestamp(run.verifiedAt, `Windows canary verifiedAt for ${arch}`);
     assertCanaryChecks(run.checks, plan.version, `Windows canary ${arch}`);
-    if (run.network?.manifestOrigin !== CDN_ORIGIN || run.network?.artifactOrigin !== CDN_ORIGIN) {
+    const origin = plan.origin ?? CDN_ORIGIN;
+    if (run.network?.manifestOrigin !== origin || run.network?.artifactOrigin !== origin) {
       throw new Error(`Windows canary did not verify Qiniu CDN origins for ${arch}`);
     }
   }
@@ -454,7 +455,7 @@ export function assertRecordedPromotion(plan, evidence) {
   const cacheException = promotion?.cacheException;
   const metadataException = promotion?.metadataException;
   const standing = metadataException?.scope === STANDING_POLICY_SCOPE;
-  if (plan.origin === RELEASE_CDN_ORIGIN && plan.version === "1.2.41" && promotion?.bootstrap === undefined) {
+  if (requiresBootstrap(plan) && promotion?.bootstrap === undefined) {
     throw new Error("Recorded first new Stable promotion requires bootstrap evidence");
   }
   if (promotion?.bootstrap !== undefined) {

@@ -22,16 +22,19 @@ const SHA512_X64 = Buffer.alloc(64, 1).toString("base64");
 const SHA512_ARM64 = Buffer.alloc(64, 2).toString("base64");
 
 function windowsUpdateInfo(version = "9.0.0") {
+  const [major, minor, patch] = version.split(".").map(Number);
+  const domain = major > 1 || (major === 1 && (minor > 2 || (minor === 2 && patch >= 42)))
+    ? "jugglework" : "jugglechat";
   return {
     version,
     files: [
       {
-        url: `https://downloads.jugglechat.cn/jugglework/releases/v${version}/windows/x64/jugglework-win-x64-${version}.exe`,
+        url: `https://downloads.${domain}.cn/jugglework/releases/v${version}/windows/x64/jugglework-win-x64-${version}.exe`,
         sha512: SHA512_X64,
         size: 100,
       },
       {
-        url: `https://downloads.jugglechat.cn/jugglework/releases/v${version}/windows/arm64/jugglework-win-arm64-${version}.exe`,
+        url: `https://downloads.${domain}.cn/jugglework/releases/v${version}/windows/arm64/jugglework-win-arm64-${version}.exe`,
         sha512: SHA512_ARM64,
         size: 101,
       },
@@ -105,6 +108,14 @@ describe("staleUpdaterStatePaths", () => {
 });
 
 describe("targetedStableUpdaterFeed", () => {
+  it("routes Windows exact targets across the 1.2.42 migration boundary", () => {
+    for (const arch of ["x64", "arm64"]) {
+      assert.equal(targetedStableUpdaterFeed("1.2.40", "1.2.41", "win32", arch),
+        "https://downloads.jugglechat.cn/jugglework/releases/v1.2.41/windows");
+      assert.equal(targetedStableUpdaterFeed("1.2.41", "v1.2.42", "win32", arch),
+        "https://downloads.jugglework.cn/jugglework/releases/v1.2.42/windows");
+    }
+  });
   it("builds a fixed Qiniu release feed from a strict stable version", () => {
     assert.equal(
       targetedStableUpdaterFeed("0.17.22", "0.17.23", "darwin", "arm64"),
@@ -183,6 +194,40 @@ describe("Qiniu updater configuration", () => {
 });
 
 describe("Windows update inventory", () => {
+  it("requires the exact version-specific origin for every architecture", () => {
+    for (const version of ["1.2.41", "1.2.42", "1.2.43", "1.3.0", "2.0.0"]) {
+      for (const arch of ["x64", "arm64"]) {
+        const info = windowsUpdateInfo(version);
+        assert.equal(selectWindowsUpdateArtifact(info, arch).arch, arch);
+        const otherDomain = version === "1.2.41" ? "jugglework" : "jugglechat";
+        for (const index of [0, 1]) {
+          const wrong = structuredClone(info);
+          wrong.files[index].url = wrong.files[index].url.replace(/downloads\.[^.]+\.cn/, `downloads.${otherDomain}.cn`);
+          assert.throws(() => selectWindowsUpdateArtifact(wrong, arch), /unauthorized origin/);
+        }
+      }
+    }
+  });
+
+  it("rejects malformed versions before choosing an origin", () => {
+    for (const version of ["v1.2.42", "1.2.42-alpha.1", "1.2.42+build", "bad"]) {
+      assert.throws(() => selectWindowsUpdateArtifact(windowsUpdateInfo(version), "x64"), /inventory is missing/);
+    }
+  });
+
+  it("retains immutable path, version and SHA-512 validation on the new origin", () => {
+    for (const mutate of [
+      (info) => { info.files[0].url += "?mutable=1"; },
+      (info) => { info.files[0].url += "#fragment"; },
+      (info) => { info.files[0].url = info.files[0].url.replace("/v1.2.42/", "/stable/"); },
+      (info) => { info.files[0].url = info.files[0].url.replace("/v1.2.42/", "/v1.2.43/"); },
+      (info) => { info.files[0].sha512 = "invalid"; },
+    ]) {
+      const info = windowsUpdateInfo("1.2.42");
+      mutate(info);
+      assert.throws(() => selectWindowsUpdateArtifact(info, "x64"));
+    }
+  });
   it("selects the unique native EXE from a valid dual-architecture inventory", () => {
     const info = windowsUpdateInfo("1.2.18");
     assert.deepEqual(selectWindowsUpdateArtifact(info, "x64"), {
@@ -429,7 +474,7 @@ describe("updater IPC hardening", () => {
             : "latest-linux.yml";
       assert.equal(
         result.manifestUrl,
-        `https://downloads.${process.platform === "darwin" && process.arch === "arm64" ? "jugglework" : "jugglechat"}.cn/jugglework/releases/stable/${platformPath}/${manifestName}`,
+        `https://downloads.${process.platform === "win32" || (process.platform === "darwin" && process.arch === "arm64") ? "jugglework" : "jugglechat"}.cn/jugglework/releases/stable/${platformPath}/${manifestName}`,
       );
       assert.match(result.reason, new RegExp(result.manifestUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     } finally {

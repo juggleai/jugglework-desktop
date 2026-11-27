@@ -152,6 +152,12 @@ async function writePackagedUpdateConfiguration(context, environment = process.e
       url = resolveDesktopUpdateFeed({ platform: "mac", arch: "arm64", channel: "stable" }).feedUrl;
     }
   }
+  if (context.electronPlatformName === "win32") {
+    const { isNewWindowsStableVersion, resolveDesktopUpdateFeed } = await import("../dist/runtime/desktop-update-feed.js");
+    if (isNewWindowsStableVersion(context.packager.appInfo.version)) {
+      url = resolveDesktopUpdateFeed({ platform: "windows", arch: normalizeArch(context.arch), channel: "stable" }).feedUrl;
+    }
+  }
   if (!resourcesPath || !url) {
     throw new Error(`Cannot resolve packaged updater configuration for ${context.electronPlatformName || "unknown platform"}`);
   }

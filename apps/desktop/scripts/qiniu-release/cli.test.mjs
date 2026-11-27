@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { parseArguments, runCli, usage } from "./cli.mjs";
+import { WINDOWS_BOOTSTRAP } from "./bootstrap.mjs";
 
 const REQUIRED = [
   "--version", "1.2.15",
@@ -11,6 +12,19 @@ const REQUIRED = [
   "--dist", "/tmp/dist",
   "--evidence", "/tmp/evidence.json",
 ];
+
+test("Windows bootstrap is exact stable 1.2.42 dual-architecture jugglework without Mac policy", () => {
+  const base = REQUIRED.with(1, "1.2.42").with(5, "windows");
+  const parse = (args) => parseArguments(["promote-channel", ...args, "--bootstrap", WINDOWS_BOOTSTRAP]);
+  assert.equal(parse(base).options.bootstrap, WINDOWS_BOOTSTRAP);
+  assert.equal(parse([...base, "--bucket", "jugglework"]).options.bucket, "jugglework");
+  for (const args of [base.with(1, "1.2.41"), base.with(1, "1.2.43"), base.with(3, "alpha"),
+    base.with(5, "mac"), base.with(7, "x64"), [...base, "--bucket", "juggleim"],
+    [...base, "--expected-previous-channel-digest", "a".repeat(64)],
+    [...base, "--standing-policy", "stable-mac-arm64-standing-policy"]]) assert.throws(() => parse(args));
+  assert.throws(() => parseArguments(["plan", ...base, "--bootstrap", WINDOWS_BOOTSTRAP]), /only accepted/);
+  assert.match(usage(), /manual-transition-windows-1\.2\.42/);
+});
 
 test("CLI strictly parses release coordinates and dry-run", () => {
   const parsed = parseArguments(["plan", ...REQUIRED, "--dry-run", "--pre-canary-exception-reason", "Operator authorized the live upgrade validation"]);

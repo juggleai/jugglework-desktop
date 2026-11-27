@@ -19,6 +19,7 @@ import {
 } from "./constants.mjs";
 import { normalizeMacManifest, normalizeWindowsManifest } from "./manifest.mjs";
 import { inspectArtifact, metadataForBuffer } from "./metadata.mjs";
+import { requiresBootstrap } from "./bootstrap.mjs";
 
 function artifactTypes(platform) {
   return platform === "mac" ? ["zip", "dmg", "zip.blockmap", "dmg.blockmap"] : ["exe", "exe.blockmap"];
@@ -123,7 +124,7 @@ export async function createReleasePlan({
       `upload immutable ${manifest.key}`,
       `verify CDN ${manifest.url}`,
       `acquire promotion lock for ${channel}/${platform}`,
-      origin === RELEASE_CDN_ORIGIN && version === "1.2.41"
+      requiresBootstrap({ origin, version, channel, platform, architectures: normalizedArchitectures })
         ? `initialize ${channelManifestKey(channel, platform)} insert-only with explicit bootstrap and verified absence`
         : `overwrite channel manifest ${channelManifestKey(channel, platform)}`,
       `conditionally set and verify channel Cache-Control ${CHANNEL_MANIFEST_CACHE_CONTROL}`,

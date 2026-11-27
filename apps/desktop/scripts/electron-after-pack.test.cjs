@@ -273,6 +273,13 @@ test("writes platform-specific generic packaged update configuration", async (t)
     ["darwin", "mac", 3, "1.2.41", "jugglework"],
     ["linux", "linux"],
     ["win32", "windows"],
+    ...[1, 3, "x64", "arm64"].flatMap((arch) => [
+      ["win32", "windows", arch, "1.2.41"],
+      ["win32", "windows", arch, "1.2.42-alpha.1"],
+      ["win32", "windows", arch, "1.2.42", "jugglework"],
+      ["win32", "windows", arch, "1.3.0", "jugglework"],
+      ["win32", "windows", arch, "2.0.0", "jugglework"],
+    ]),
   ];
   for (const [platform, segment, arch, version, domain = "jugglechat"] of cases) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), `jugglework-update-config-${platform}-`));
@@ -287,7 +294,8 @@ test("writes platform-specific generic packaged update configuration", async (t)
       : {
           appOutDir: root,
           electronPlatformName: platform,
-          packager: { appInfo: { productFilename: "JuggleWork" } },
+          arch,
+          packager: { appInfo: { productFilename: "JuggleWork", version } },
         };
     if (platform === "darwin") {
       fs.mkdirSync(path.join(root, "JuggleWork.app", "Contents", "Resources"), { recursive: true });

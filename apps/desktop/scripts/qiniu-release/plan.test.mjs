@@ -10,16 +10,16 @@ import { createReleasePlan } from "./plan.mjs";
 
 const VERSION = "1.2.18";
 
-async function stageWindowsArchitecture(dist, arch) {
+async function stageWindowsArchitecture(dist, arch, version = VERSION) {
   const directory = path.join(dist, arch);
   await mkdir(directory, { recursive: true });
-  const exeName = `jugglework-win-${arch}-${VERSION}.exe`;
+  const exeName = `jugglework-win-${arch}-${version}.exe`;
   const exe = Buffer.from(`signed-${arch}-installer`);
   const exeMetadata = metadataForBuffer(exe, exeName);
   await writeFile(path.join(directory, exeName), exe);
   await writeFile(path.join(directory, `${exeName}.blockmap`), `blockmap-${arch}`);
   await writeFile(path.join(directory, "latest.yml"), stringifyYaml({
-    version: VERSION,
+    version,
     files: [{ url: exeName, sha512: exeMetadata.sha512, size: exeMetadata.size }],
     path: exeName,
     sha512: exeMetadata.sha512,
@@ -106,4 +106,22 @@ test("1.2.41 Stable arm64 plan points all objects and manifest entries to the ex
   }
   assert.match(plan.manifest.content, /https:\/\/downloads\.jugglework\.cn\/jugglework\/releases\/v1\.2\.41\/mac\/arm64\//);
   assert.doesNotMatch(plan.manifest.content, /downloads\.jugglechat\.cn/);
+});
+
+test("Windows stable 1.2.42 and later migrate both architectures and shared manifests together", async (t) => {
+  const dist = await mkdtemp(path.join(os.tmpdir(), "qiniu-windows-origin-"));
+  t.after(() => rm(dist, { recursive: true, force: true }));
+  for (const version of ["1.2.41", "1.2.42", "1.2.43"]) {
+    await Promise.all(["arm64", "x64"].map((arch) => stageWindowsArchitecture(dist, arch, version)));
+    for (const channel of ["stable", "alpha"]) {
+      const plan = await createReleasePlan({ version, channel, platform: "windows", architectures: ["x64", "arm64"], dist });
+      const origin = channel === "stable" && version !== "1.2.41" ? "https://downloads.jugglework.cn" : "https://downloads.jugglechat.cn";
+      assert.equal(plan.origin, origin);
+      for (const object of [...plan.objects, plan.manifest, plan.channelManifest]) assert.equal(object.url, `${origin}/${object.key}`);
+      assert.match(plan.manifest.content, new RegExp(`${origin.replaceAll(".", "\\.")}/jugglework/releases/v${version}/windows/arm64/`));
+      assert.match(plan.manifest.content, /\/windows\/x64\//);
+      assert.doesNotMatch(plan.manifest.content, /^path:|^sha512:/m);
+      assert.equal(plan.actions.some((action) => action.includes("insert-only")), channel === "stable" && version === "1.2.42");
+    }
+  }
 });

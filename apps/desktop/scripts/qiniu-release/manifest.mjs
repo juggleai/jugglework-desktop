@@ -190,14 +190,14 @@ export function serializeWindowsManifest(manifest) {
   return `${lines.join("\n")}\n`;
 }
 
-function validateImmutableManifestUrl(url, expectedFiles) {
+function validateImmutableManifestUrl(url, expectedFiles, origin = CDN_ORIGIN) {
   let parsed;
   try {
     parsed = new URL(url);
   } catch {
     throw new Error(`Invalid manifest URL: ${url}`);
   }
-  if (parsed.origin !== CDN_ORIGIN || parsed.protocol !== "https:") throw new Error(`Wrong CDN origin: ${url}`);
+  if (parsed.origin !== origin || parsed.protocol !== "https:") throw new Error(`Wrong CDN origin: ${url}`);
   if (parsed.search || parsed.hash || /\/(stable|alpha)\//.test(parsed.pathname)) {
     throw new Error(`Mutable manifest path: ${url}`);
   }
@@ -237,13 +237,13 @@ function validateStagingManifests(version, artifacts, stagingManifests) {
   }
 }
 
-export function validateWindowsManifest({ version, platform = "windows", manifest, artifacts }) {
+export function validateWindowsManifest({ version, platform = "windows", manifest, artifacts, origin = CDN_ORIGIN }) {
   assertSemverVersion(version);
   if (assertPlatform(platform) !== "windows") throw new Error(`Windows manifest requires windows platform, received ${platform}`);
   if (!manifest || manifest.version !== version) {
     throw new Error(`Manifest version mismatch: expected ${version}, received ${manifest?.version ?? "<missing>"}`);
   }
-  const normalized = normalizeArtifacts({ version, platform, artifacts });
+  const normalized = normalizeArtifacts({ version, platform, artifacts, origin });
   const expectedFiles = normalized.filter((artifact) => artifact.type === "exe");
   const architectures = [...new Set(expectedFiles.map((artifact) => artifact.arch))];
   if (JSON.stringify(architectures) !== JSON.stringify(["arm64", "x64"])) {
@@ -256,7 +256,7 @@ export function validateWindowsManifest({ version, platform = "windows", manifes
   for (const file of manifest.files) {
     if (seenUrls.has(file.url)) throw new Error(`Duplicate manifest file: ${file.url}`);
     seenUrls.add(file.url);
-    const expected = validateImmutableManifestUrl(file.url, expectedFiles);
+    const expected = validateImmutableManifestUrl(file.url, expectedFiles, origin);
     if (!expected) throw new Error(`Unexpected or wrong-architecture manifest file: ${file.url}`);
     validateMetadata(file, file.url);
     if (file.size !== expected.size || file.sha512 !== expected.sha512) {
@@ -283,6 +283,6 @@ export function normalizeWindowsManifest(input) {
     files: executables.map(({ url, sha512, size }) => ({ url, sha512, size })),
     ...(input.releaseDate ? { releaseDate: new Date(input.releaseDate).toISOString() } : {}),
   };
-  validateWindowsManifest({ version: input.version, platform, manifest, artifacts });
+  validateWindowsManifest({ version: input.version, platform, manifest, artifacts, origin: input.origin });
   return { manifest, yaml: serializeWindowsManifest(manifest), artifacts };
 }

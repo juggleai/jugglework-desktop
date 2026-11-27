@@ -20,6 +20,9 @@ import {
   withEvidenceResults,
 } from "./evidence.mjs";
 import { metadataForBuffer } from "./metadata.mjs";
+import { CDN_ORIGIN, RELEASE_CDN_ORIGIN, usesNewReleaseOrigin } from "./constants.mjs";
+import { WINDOWS_BOOTSTRAP } from "./bootstrap.mjs";
+import { promoteChannel } from "./workflow.mjs";
 
 function plan(version = "1.2.15", channel = "stable") {
   const artifact = { name: "app.zip", key: `jugglework/releases/v${version}/mac/arm64/app.zip`, url: `https://downloads.jugglechat.cn/jugglework/releases/v${version}/mac/arm64/app.zip`, mime: "application/zip", ...metadataForBuffer("zip", "app.zip") };
@@ -105,15 +108,16 @@ function promotionEvidence(releasePlan = plan()) {
   }, "2026-09-08T03:00:00.000Z");
 }
 
-function windowsPlan() {
-  const version = "1.2.18";
+function windowsPlan(version = "1.2.18") {
+  const origin = usesNewReleaseOrigin({ version, channel: "stable", platform: "windows", architectures: ["arm64", "x64"] }) ? RELEASE_CDN_ORIGIN : CDN_ORIGIN;
   const objects = ["arm64", "x64"].flatMap((arch) => ["exe", "exe.blockmap"].map((type) => {
     const name = `jugglework-win-${arch}-${version}.${type}`;
     const key = `jugglework/releases/v${version}/windows/${arch}/${name}`;
-    return { arch, type, name, key, url: `https://downloads.jugglechat.cn/${key}`, mime: type === "exe" ? "application/vnd.microsoft.portable-executable" : "application/octet-stream", ...metadataForBuffer(`${arch}-${type}`, name) };
+    return { arch, type, name, key, url: `${origin}/${key}`, mime: type === "exe" ? "application/vnd.microsoft.portable-executable" : "application/octet-stream", ...metadataForBuffer(`${arch}-${type}`, name) };
   }));
-  const manifest = { key: `jugglework/releases/v${version}/windows/latest.yml`, url: `https://downloads.jugglechat.cn/jugglework/releases/v${version}/windows/latest.yml`, mime: "text/yaml", ...metadataForBuffer(`version: ${version}\n`, "latest.yml") };
-  return { version, channel: "stable", platform: "windows", architectures: ["arm64", "x64"], objects, manifest };
+  const manifest = { key: `jugglework/releases/v${version}/windows/latest.yml`, url: `${origin}/jugglework/releases/v${version}/windows/latest.yml`, content: `version: ${version}\n`, mime: "text/yaml", ...metadataForBuffer(`version: ${version}\n`, "latest.yml") };
+  const key = "jugglework/releases/stable/windows/latest.yml";
+  return { version, channel: "stable", platform: "windows", architectures: ["arm64", "x64"], origin, objects, manifest, channelManifest: { key, url: `${origin}/${key}` } };
 }
 
 function windowsLocalVerification(releasePlan = windowsPlan()) {
@@ -139,7 +143,7 @@ function windowsLocalVerification(releasePlan = windowsPlan()) {
     verifiedAt: "2026-09-08T00:00:00.000Z",
     packagedUpdater: {
       provider: "generic",
-      feedUrl: "https://downloads.jugglechat.cn/jugglework/releases/stable/windows",
+      feedUrl: `${releasePlan.origin ?? CDN_ORIGIN}/jugglework/releases/stable/windows`,
       publisherNames: approvedPublishers,
     },
     artifacts: releasePlan.objects.map((object) => ({
@@ -184,7 +188,7 @@ function windowsCanary(releasePlan = windowsPlan()) {
         machineKind: "physical", nativeArchitecture: arch, emulated: false, machineId: `machine-${arch}`,
         artifactName: executable.name, artifactSha256: executable.sha256, verifiedAt: "2026-09-08T01:00:00.000Z",
         checks: { cleanClient: "passed", updateDiscovered: "passed", download: "passed", install: "passed", restart: "passed", installedVersion: releasePlan.version, userData: "preserved", workspaceAccess: "preserved", permissions: "preserved", publisherIdentity: "passed" },
-        network: { manifestOrigin: "https://downloads.jugglechat.cn", artifactOrigin: "https://downloads.jugglechat.cn" },
+        network: { manifestOrigin: releasePlan.origin ?? CDN_ORIGIN, artifactOrigin: releasePlan.origin ?? CDN_ORIGIN },
       };
     }),
   };
@@ -209,6 +213,102 @@ function windowsPromotionEvidence(releasePlan = windowsPlan()) {
     },
   }, "2026-09-08T03:00:00.000Z");
 }
+
+test("Windows migrated evidence follows plan origin and retains trusted and physical canary gates", () => {
+  const plan = windowsPlan("1.2.42");
+  assertPromotionEvidence(plan, windowsPromotionEvidence(plan));
+  for (const mutate of [
+    (e) => { e.localVerification.packagedUpdater.feedUrl = `${CDN_ORIGIN}/jugglework/releases/stable/windows`; },
+    (e) => { e.localVerification.artifacts[0].authenticode.status = "untrusted"; },
+    (e) => { e.localVerification.artifacts[0].authenticode.timestamp.status = "untrusted"; },
+    (e) => { e.canary = null; },
+    (e) => { e.canary.runs.pop(); },
+    (e) => { e.canary.runs[0].machineKind = "virtual"; },
+    (e) => { e.canary.runs[0].network.manifestOrigin = CDN_ORIGIN; },
+    (e) => { e.canary.runs[1].network.artifactOrigin = CDN_ORIGIN; },
+    (e) => { e.canary.runs[1].artifactSha256 = "wrong"; },
+  ]) {
+    const evidence = windowsPromotionEvidence(plan);
+    mutate(evidence);
+    assert.throws(() => assertPromotionEvidence(plan, evidence));
+  }
+});
+
+test("Windows bootstrap retains absence, ownership, immutable, cache, refresh and durable read-back gates", async () => {
+  for (const failure of [null, "no-bootstrap", "canary", "signature", "immutable", "held-lock", "404", "race", "ownership", "collision", "cache", "refresh", "digest", "persist"]) {
+    const plan = windowsPlan("1.2.42");
+    const evidence = windowsPromotionEvidence(plan);
+    const state = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { ...item, content: item.content ?? `${item.arch}-${item.type}` }]));
+    const lockKey = "jugglework/releases/locks/stable-windows.lock";
+    if (failure === "held-lock") state.set(lockKey, { etag: "held" });
+    if (failure === "immutable") state.get(plan.objects[0].key).etag = "wrong";
+    if (failure === "canary") evidence.canary = null;
+    if (failure === "signature") evidence.localVerification.artifacts[0].authenticode.status = "untrusted";
+    const calls = [];
+    let absence = 0;
+    let refreshed = false;
+    const qiniu = {
+      bucket: "jugglework",
+      async stat(key) { calls.push(["stat", key]); return state.get(key) ?? null; },
+      async readContent() { throw new Error("bootstrap must not read predecessor"); },
+      async assertObjectAbsent(key) {
+        calls.push(["absence", key]);
+        if (failure === "race" && ++absence === 3) state.set(key, { etag: "raced" });
+        if (state.has(key)) throw new Error("object exists");
+        if (failure === "ownership" && calls.filter(([op]) => op === "absence").length === 4) state.set(lockKey, { etag: "stolen" });
+      },
+      async uploadContent(key, content, mime, options) {
+        calls.push(["upload", key, options]);
+        assert.equal(options.overwrite, false);
+        if (failure === "collision" && key === plan.channelManifest.key) throw new Error("insert collision");
+        state.set(key, { ...metadataForBuffer(content, key), content });
+      },
+      async setCacheControl(key, value, expected) {
+        calls.push(["cache", key]);
+        assert.equal(expected.etag, state.get(key).etag);
+        if (failure === "cache") throw new Error("cache failure");
+        return { ...state.get(key), cacheControl: value };
+      },
+      async delete(key) { calls.push(["delete", key]); state.delete(key); },
+    };
+    const operation = promoteChannel(plan, evidence, {
+      qiniu, bootstrap: failure === "no-bootstrap" ? undefined : WINDOWS_BOOTSTRAP,
+      refresh: async () => { calls.push(["refresh"]); if (failure === "refresh") throw new Error("refresh failure"); refreshed = true; },
+      readBack: (url, digest, options) => import("./cdn.mjs").then(({ readBackDigest }) => readBackDigest(url, digest, { ...options, attempts: 1 })),
+      fetchImpl: async (url, request) => {
+        const key = new URL(url).pathname.slice(1);
+        const item = state.get(key);
+        if (!item) return failure === "404" ? Response.json({ error: "routing error" }, { status: 404 })
+          : Response.json({ error: "Document not found" }, { status: 404 });
+        const range = request.headers?.Range;
+        const body = failure === "digest" && key === plan.channelManifest.key ? "wrong" : item.content;
+        return new Response(request.method === "HEAD" ? null : range ? body.slice(0, 1) : body, {
+          status: range ? 206 : 200, headers: { "content-type": item.mime, "content-length": range ? 1 : item.size, "cache-control": "public, max-age=31536000",
+            ...(range ? { "content-range": `bytes 0-0/${item.size}` } : {}) },
+        });
+      },
+      onPromotionVerified: async (result) => {
+        assert.equal(refreshed, true);
+        assert.equal(state.has(lockKey), true);
+        const recorded = withEvidenceResults(evidence, { workflow: { promotion: { ...result, status: "verified", promotedAt: result.readBack.checkedAt } } });
+        assertRecordedPromotion(plan, recorded);
+        delete recorded.workflow.promotion.bootstrap;
+        assert.throws(() => assertRecordedPromotion(plan, recorded), /requires bootstrap evidence/);
+        if (failure === "persist") throw new Error("persist failure");
+      },
+    });
+    if (failure) await assert.rejects(operation);
+    else {
+      const result = await operation;
+      assert.equal(result.bootstrap.mode, WINDOWS_BOOTSTRAP);
+      assert.equal(result.bootstrap.insertOnly, true);
+      assert.equal(calls.filter(([op]) => op === "absence").length, 4);
+      assert.equal(result.cacheControl.verified, true);
+    }
+    if (["no-bootstrap", "canary", "signature"].includes(failure)) assert.deepEqual(calls, []);
+    assert.equal(state.has(lockKey), ["held-lock", "ownership", "collision", "cache", "refresh", "digest", "persist"].includes(failure));
+  }
+});
 
 test("recursively rejects and redacts broad secret-like evidence key names", () => {
   for (const key of ["accessKey", "secretKey", "token", "cookie", "password", "privateKey", "apiKey", "clientSecret", "authorization", "sessionToken", "refresh_token"]) {

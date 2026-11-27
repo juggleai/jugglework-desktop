@@ -100,7 +100,7 @@ function createToonFactoryBundle(resources, arch, machine) {
   }));
 }
 
-function createFixture(t) {
+function createFixture(t, version = VERSION, origin = "https://downloads.jugglechat.cn") {
   const root = mkdtempSync(path.join(tmpdir(), "jugglework-verify-windows-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const artifacts = {};
@@ -108,43 +108,43 @@ function createFixture(t) {
     const directory = path.join(root, arch);
     const resources = path.join(directory, `${arch}-unpacked`, "resources");
     mkdirSync(resources, { recursive: true });
-    const name = `jugglework-win-${arch}-${VERSION}.exe`;
+    const name = `jugglework-win-${arch}-${version}.exe`;
     const executable = pe(machine, marker);
     const blockmap = Buffer.from(`blockmap-${arch}`);
     const executablePath = path.join(directory, name);
     writeFileSync(executablePath, executable);
     writeFileSync(`${executablePath}.blockmap`, blockmap);
     writeManifest(path.join(directory, "latest.yml"), {
-      version: VERSION,
+      version,
       files: [{ url: name, ...metadata(executable) }],
       path: name,
       sha512: metadata(executable).sha512,
     });
     writeManifest(path.join(resources, "app-update.yml"), {
       provider: "generic",
-      url: FEED,
+      url: `${origin}/jugglework/releases/stable/windows`,
       publisherName: [PUBLISHER],
     });
     createToonFactoryBundle(resources, arch, machine);
     artifacts[arch] = { directory, name, executable, blockmap, executablePath };
   }
 
-  const mergedManifestPath = path.join(root, `qiniu-v${VERSION}-latest.yml`);
+  const mergedManifestPath = path.join(root, `qiniu-v${version}-latest.yml`);
   const files = ["arm64", "x64"].map((arch) => ({
-    url: `https://downloads.jugglechat.cn/jugglework/releases/v${VERSION}/windows/${arch}/${artifacts[arch].name}`,
+    url: `${origin}/jugglework/releases/v${version}/windows/${arch}/${artifacts[arch].name}`,
     sha512: metadata(artifacts[arch].executable).sha512,
     size: artifacts[arch].executable.length,
   }));
   writeManifest(mergedManifestPath, {
-    version: VERSION,
+    version,
     files,
   });
-  return { root, artifacts, mergedManifestPath };
+  return { root, artifacts, mergedManifestPath, version };
 }
 
 function options(fixture, overrides = {}) {
   return {
-    version: VERSION,
+    version: fixture.version,
     stagingDirectories: {
       arm64: fixture.artifacts.arm64.directory,
       x64: fixture.artifacts.x64.directory,
@@ -177,6 +177,47 @@ function dependencies(overrides = {}) {
 }
 
 describe("Windows packaged release verifier", () => {
+  for (const [version, origin, wrongOrigin] of [
+    ["1.2.41", "https://downloads.jugglechat.cn", "https://downloads.jugglework.cn"],
+    ["1.2.42", "https://downloads.jugglework.cn", "https://downloads.jugglechat.cn"],
+    ["1.2.43", "https://downloads.jugglework.cn", "https://downloads.jugglechat.cn"],
+    ["1.3.0", "https://downloads.jugglework.cn", "https://downloads.jugglechat.cn"],
+    ["2.0.0", "https://downloads.jugglework.cn", "https://downloads.jugglechat.cn"],
+  ]) {
+    it(`verifies the version-specific packaged feed and manifest for ${version}`, async (t) => {
+      const fixture = createFixture(t, version, origin);
+      const result = await verifyPackagedWindows(options(fixture), dependencies());
+      assert.equal(result.ok, true);
+      const expectedFeed = `${origin}/jugglework/releases/stable/windows`;
+      assert.equal(result.localVerification.packagedUpdater.feedUrl, expectedFeed);
+      assert.deepEqual(result.architectureResults.map(({ updater }) => updater.url), [expectedFeed, expectedFeed]);
+      assert.deepEqual(result.manifest.files.map(({ url }) => url), ["arm64", "x64"].map((arch) => (
+        `${origin}/jugglework/releases/v${version}/windows/${arch}/${fixture.artifacts[arch].name}`
+      )));
+    });
+
+    for (const arch of ["arm64", "x64"]) {
+      it(`rejects the wrong packaged feed origin for ${version} ${arch}`, async (t) => {
+        const fixture = createFixture(t, version, origin);
+        writeManifest(path.join(fixture.artifacts[arch].directory, `${arch}-unpacked`, "resources", "app-update.yml"), {
+          provider: "generic",
+          url: `${wrongOrigin}/jugglework/releases/stable/windows`,
+          publisherName: [PUBLISHER],
+        });
+        await assert.rejects(verifyPackagedWindows(options(fixture), dependencies()), /Expected Windows updater feed/);
+      });
+
+      it(`rejects the wrong manifest origin for ${version} ${arch}`, async (t) => {
+        const fixture = createFixture(t, version, origin);
+        const manifest = parseYaml(readFileSync(fixture.mergedManifestPath, "utf8"));
+        const file = manifest.files.find(({ url }) => url.includes(`/windows/${arch}/`));
+        file.url = file.url.replace(origin, wrongOrigin);
+        writeManifest(fixture.mergedManifestPath, manifest);
+        await assert.rejects(verifyPackagedWindows(options(fixture), dependencies()), /unexpected or duplicate architecture URL/);
+      });
+    }
+  }
+
   it("reads x64 and arm64 PE machine values", (t) => {
     const fixture = createFixture(t);
     assert.equal(readPeMachine(fixture.artifacts.x64.executablePath), 0x8664);
