@@ -276,7 +276,7 @@ describe("jugglework runtime config file", () => {
       provider: Record<string, { options: Record<string, unknown> }>;
     };
     expect(parsed.provider.lpr_managed?.options).toMatchObject({
-      headerTimeout: 330_000,
+      headerTimeout: 90_000,
       chunkTimeout: 330_000,
     });
     expect(parsed.provider.ollama?.options).toEqual({ baseURL: "http://127.0.0.1:11434/v1" });

@@ -20,7 +20,7 @@ The plugin SHALL use a single reader, preserve every inspected byte, and return 
 - **THEN** the original stream is handed off immediately without waiting for visible output, EOF, or creating another attempt
 
 ### Requirement: Initial waits remain bounded and diagnosable
-Default response-header and first-byte waits SHALL be 330 seconds, slightly behind the gateway's authoritative 300-second deadline. Existing timeout environment overrides SHALL remain supported. Exhausted pre-stream timeouts SHALL identify their phase. After the first body byte, the plugin SHALL NOT impose a meaningful-output deadline; the provider's outer stream-idle timeout remains bounded at 330 seconds.
+Default response-header and first-byte waits SHALL be 90 seconds so a stalled request is replaced early; the gateway's observed first-token p99 is about 52 seconds. Existing timeout environment overrides SHALL remain supported. Exhausted pre-stream timeouts SHALL identify their phase. After the first body byte, the plugin SHALL NOT impose a meaningful-output deadline; the provider's outer stream-idle timeout remains bounded at 330 seconds.
 
 #### Scenario: First byte never arrives
 - **WHEN** an upstream returns headers but emits no body byte before the first-byte deadline

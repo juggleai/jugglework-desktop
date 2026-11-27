@@ -28,6 +28,11 @@ describe("JuggleWork confirmation gate plugin", () => {
     expect(declaresBlockingConfirmation("```md\n你确认后，我会开始实现。\n```")).toBe(false);
   });
 
+  test("ignores a text part without string content instead of throwing", () => {
+    expect(declaresBlockingConfirmation(undefined)).toBe(false);
+    expect(declaresBlockingConfirmation(null)).toBe(false);
+  });
+
   test("blocks non-question tools after a declared confirmation and resumes after a reply", async () => {
     const plugin = await JuggleWorkConfirmationGate();
     await plugin["experimental.text.complete"](

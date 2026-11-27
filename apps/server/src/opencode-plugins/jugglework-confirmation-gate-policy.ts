@@ -14,7 +14,10 @@ function proseOnly(text: string): string {
     .join("\n");
 }
 
-export function declaresBlockingConfirmation(text: string): boolean {
+export function declaresBlockingConfirmation(text: unknown): boolean {
+  // Hosts may hand over a non-string part (e.g. undefined for a tool-only
+  // message). A failing hook makes OpenCode drop the whole plugin.
+  if (typeof text !== "string") return false;
   const prose = proseOnly(text);
   return BLOCKING_CONFIRMATION_PATTERNS.some((pattern) => pattern.test(prose));
 }

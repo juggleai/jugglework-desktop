@@ -41,10 +41,11 @@ import {
 type HostMarketplaceMcpOverlay = Record<string, Record<string, unknown>>;
 
 const hostMarketplaceMcpOverlayByConfig = new WeakMap<ServerConfig, HostMarketplaceMcpOverlay>();
-// The cloud gateway owns a 300-second request/stream-idle deadline. Client
-// timers stay slightly behind it so a gateway timeout wins the race and is not
-// misreported by the gateway as a downstream client disconnect.
-const MANAGED_PROVIDER_HEADER_TIMEOUT_MS = 330_000;
+// Pre-stream waits mirror the plugin's 90-second default. The cloud gateway
+// owns a 300-second stream-idle deadline; the chunk timer stays slightly behind
+// it so a gateway timeout wins the race and is not misreported by the gateway
+// as a downstream client disconnect.
+const MANAGED_PROVIDER_HEADER_TIMEOUT_MS = 90_000;
 const MANAGED_PROVIDER_CHUNK_TIMEOUT_MS = 330_000;
 
 function boundedProviderTimeout(name: string, fallback: number): number {

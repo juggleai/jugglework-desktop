@@ -20,11 +20,14 @@ const TLS_RETRY_DELAY_MS = 150;
 const EMPTY_STREAM_RETRY_DELAYS_MS = [1_000] as const;
 const EMPTY_STREAM_RETRY_HEADER = "x-jugglework-empty-stream-retry";
 const MANAGED_GATEWAY_PATH = /\/jwork\/api\/gateway\/v1\/lpr_[a-z0-9._-]+(?:\/|$)/i;
-// The managed gateway owns the authoritative 300-second upstream and stream
-// idle deadlines. Keep the desktop slightly behind it so the gateway can
+// Pre-stream waits fail fast so the single replacement request starts early.
+// Gateway first-token latency is p99 ~52s, so 90s leaves headroom while no
+// longer holding a stalled request for five minutes.
+const PROVIDER_RESPONSE_TIMEOUT_MS = 90_000;
+const PROVIDER_FIRST_BYTE_TIMEOUT_MS = 90_000;
+// Once bytes flow, the managed gateway owns the authoritative 300-second
+// stream idle deadline. Keep the desktop slightly behind it so the gateway can
 // return the real failure instead of being recorded as client_disconnected.
-const PROVIDER_RESPONSE_TIMEOUT_MS = 330_000;
-const PROVIDER_FIRST_BYTE_TIMEOUT_MS = 330_000;
 const PROVIDER_CHUNK_TIMEOUT_MS = 330_000;
 
 type EmptyStreamRetryReason = "empty" | "response_timeout" | "first_byte_timeout";
