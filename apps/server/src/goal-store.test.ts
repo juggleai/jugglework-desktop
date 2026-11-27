@@ -110,18 +110,21 @@ describe("goal store", () => {
     // A repeated reservation before dispatch returns the same queued run.
     expect(store.reserveRun(goal.id, { trigger: "create" }).run.ordinal).toBe(1);
     store.markRunStarted(goal.id, 1, "run_1");
+    const advance = (note: string) => store.reportProgress("ws", "ses", { criteria: [], checkpoint: note, madeProgress: true });
     expect(store.observeRunTerminal("ws", "ses", "run_stale", "completed")).toBeNull();
+    advance("step 1");
     expect(store.observeRunTerminal("ws", "ses", "run_1", "completed")?.execution).toBe("idle");
 
     for (const [ordinal, runId] of [[2, "run_2"], [3, "run_3"]] as const) {
       const auto = store.reserveRun(goal.id, { trigger: "auto" });
       expect(auto.run.ordinal).toBe(ordinal);
       store.markRunStarted(goal.id, ordinal, runId);
+      advance(`step ${ordinal}`);
       store.observeRunTerminal("ws", "ses", runId, "completed");
     }
     expect(store.get(goal.id)).toMatchObject({ continuationStreak: 2, continuationTotal: 2 });
     expect(errorCode(() => store.reserveRun(goal.id, { trigger: "auto" }))).toBe("goal_continuation_cap");
-    expect(store.get(goal.id)?.execution).toBe("waiting_user");
+    expect(store.get(goal.id)).toMatchObject({ execution: "waiting_user", stopReason: "continuation_cap" });
 
     const manual = store.reserveRun(goal.id, { trigger: "user_continue" });
     expect(manual.goal).toMatchObject({ continuationStreak: 0, continuationTotal: 3 });

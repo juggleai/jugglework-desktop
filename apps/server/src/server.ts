@@ -123,13 +123,14 @@ import { FileDeliveryService } from "./artifacts/delivery.js";
 import { registerFileDeliveryRoutes } from "./routes/file-deliveries.js";
 import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
-import { registerSessionRoutes } from "./routes/sessions.js";
+import { registerSessionRoutes, type StartGoalRunInternally } from "./routes/sessions.js";
 import { createSessionPendingOperationStore, type SessionPendingOperationStore } from "./session-pending-operations.js";
 import { createSessionModelPreferenceStore, type SessionModelPreferenceStore } from "./session-model-preferences.js";
 import { createGoalStore, type GoalStore } from "./goal-store.js";
+import { createGoalCoordinator, type GoalCoordinator } from "./goal-coordinator.js";
 import { createSessionPendingOperationPump, type SessionPendingOperationPump } from "./session-pending-operation-pump.js";
 import { createSessionRunJournal } from "./session-run-journal.js";
-import { registerInteractionRoutes } from "./routes/interactions.js";
+import { readInteractionSnapshot, registerInteractionRoutes } from "./routes/interactions.js";
 import { registerSessionPermissionRoutes } from "./routes/session-permissions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerReviewRoutes, registerReviewWorkflowRoutes } from "./routes/reviews.js";
@@ -1063,6 +1064,7 @@ export async function startServer(config: ServerConfig, options: {
     throw error;
   }
   let goalStore: GoalStore;
+  const goalCoordinatorRef: { current: GoalCoordinator | null } = { current: null };
   try {
     goalStore = await createGoalStore({ config });
   } catch (error) {
@@ -1101,6 +1103,8 @@ export async function startServer(config: ServerConfig, options: {
         try {
           goalStore.observeRunTerminal(event.run.workspaceId, event.run.sessionId, event.run.runId,
             event.event === "run_terminal" ? (event.terminalReason ?? "completed") : "start_rolled_back");
+          // Reevaluate promptly instead of waiting for the next interval.
+          void goalCoordinatorRef.current?.wake().catch(() => undefined);
         } catch (error) {
           logger.log("error", "session_goal_terminal_observe_failed", {
             workspaceId: event.run.workspaceId, sessionId: event.run.sessionId, runId: event.run.runId,
@@ -1320,6 +1324,7 @@ export async function startServer(config: ServerConfig, options: {
     sessionPendingOperations.close();
     sessionModelPreferences.close();
     sessionRunJournal.close();
+    void goalCoordinatorRef.current?.close();
     goalStore.close();
     clearHostMarketplaceMcpOverlay(config);
     throw error;
@@ -1695,7 +1700,7 @@ export async function startServer(config: ServerConfig, options: {
     },
   };
   const imageGenerationRuntime = new ToonflowImageRuntime({ config, env, repository: imageGenerationRepository });
-  const { routes, reconcileWorkspaceActiveRuns } = createRoutes(
+  const { routes, reconcileWorkspaceActiveRuns, startGoalRunInternally } = createRoutes(
     config,
     approvals,
     tokens,
@@ -1931,6 +1936,7 @@ export async function startServer(config: ServerConfig, options: {
     internalReloadDispatchers.delete(config);
     closeSessionPendingOperations();
     sessionRunJournal.close();
+    void goalCoordinatorRef.current?.close();
     goalStore.close();
     void automationEventPoller.dispose();
     void automationSubscriptionSync.dispose();
@@ -1983,6 +1989,47 @@ export async function startServer(config: ServerConfig, options: {
       }, signal);
     },
   });
+
+  // Automatic goal continuation is gated separately from goal creation, so it
+  // can be switched off at runtime (JUGGLEWORK_GOAL_AUTO_CONTINUE=0) without
+  // deleting goals or blocking manual Continue.
+  const goalCoordinator = goalCoordinatorRef.current = createGoalCoordinator({
+    store: goalStore,
+    isAutoContinuationEnabled: () => !config.readOnly && resolveGoalAutoContinuationEnabled(),
+    async getSessionStatus(goal, signal) {
+      const workspace = await resolveWorkspaceWithoutBootstrap(config, goal.workspaceId);
+      const statuses = unwrapOpencodeResult(await createWorkspaceOpencodeClient(config, workspace).session.status(undefined, { signal }), "/session/status");
+      if (!isRecord(statuses)) throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
+      const status = statuses[goal.sessionId];
+      return isRecord(status) && status.type !== "idle" ? "busy" : "idle";
+    },
+    async hasPendingInteraction(goal) {
+      const workspace = await resolveWorkspaceWithoutBootstrap(config, goal.workspaceId);
+      // Include delegated child sessions: a child asking for approval also blocks the goal.
+      const snapshot = await readInteractionSnapshot(createWorkspaceOpencodeClient(config, workspace), goal.sessionId, true);
+      return snapshot.permissions.length > 0 || snapshot.questions.length > 0;
+    },
+    hasActiveRun: (goal) => sessionMutations.getActive(goal.workspaceId, goal.sessionId) !== null,
+    async isGoalWorkspace(goal) {
+      try {
+        const workspace = await resolveWorkspaceWithoutBootstrap(config, goal.workspaceId);
+        return workspace.workspaceType === "local" && !workspace.sandboxBackend;
+      } catch {
+        return false;
+      }
+    },
+    isRunActive: (goal, runId) => sessionMutations.getActive(goal.workspaceId, goal.sessionId)?.runId === runId,
+    async dispatch(input) {
+      return startGoalRunInternally({ config, approvals, reloadEvents, tokens }, {
+        workspaceId: input.goal.workspaceId,
+        sessionId: input.goal.sessionId,
+        idempotencyKey: input.idempotencyKey,
+        prompt: input.prompt,
+      });
+    },
+    log: (event, fields) => logger.log("info", event, fields),
+  });
+  if (!config.readOnly) goalCoordinator.start();
 
   if (localAutomationEnabled && !config.readOnly && config.workspaces.some((workspace) => workspace.workspaceType !== "remote")) {
     automationScheduler.start();
@@ -2053,6 +2100,7 @@ export async function startServer(config: ServerConfig, options: {
       if (pendingPumpClosed) {
         try { closeSessionPendingOperations(); } catch (error) { errors.push(error); }
       }
+      try { await goalCoordinatorRef.current?.close(); } catch (error) { errors.push(error); }
       try { sessionRunJournal.close(); } catch (error) { errors.push(error); }
       try { goalStore.close(); } catch (error) { errors.push(error); }
       try { automationRepository.close(); } catch (error) { errors.push(error); }
@@ -2729,6 +2777,13 @@ function resolveSandboxEnabled(backend: Capabilities["sandbox"]["backend"]): boo
   return backend !== "none";
 }
 
+/** Automatic goal continuation is on unless explicitly switched off. */
+function resolveGoalAutoContinuationEnabled(): boolean {
+  const raw = (process.env.JUGGLEWORK_GOAL_AUTO_CONTINUE ?? "").trim().toLowerCase();
+  if (!raw) return true;
+  return !["0", "false", "no", "off"].includes(raw);
+}
+
 function resolveInboxEnabled(): boolean {
   const raw = (process.env.JUGGLEWORK_INBOX_ENABLED ?? "").trim().toLowerCase();
   if (!raw) return true;
@@ -3300,7 +3355,7 @@ function createRoutes(
     options?: { initializeConversation?: boolean; locale?: string },
   ) => Promise<{ workspaceId: string; sessionId: string }>,
   goals: GoalStore,
-): { routes: Route[]; reconcileWorkspaceActiveRuns: (workspace: WorkspaceInfo, signal?: AbortSignal) => Promise<void> } {
+): { routes: Route[]; reconcileWorkspaceActiveRuns: (workspace: WorkspaceInfo, signal?: AbortSignal) => Promise<void>; startGoalRunInternally: StartGoalRunInternally } {
   const routes: Route[] = [];
   let reconcileWorkspaceActiveRunsForMutation: (workspace: WorkspaceInfo, signal?: AbortSignal) => Promise<void> = async () => {};
   registerHostMarketplacePluginRoutes({
@@ -3502,7 +3557,7 @@ function createRoutes(
       goals.deleteSession(workspaceId, sessionId);
     },
   });
-  const { reconcileWorkspaceActiveRuns } = sessionRoutes;
+  const { reconcileWorkspaceActiveRuns, startGoalRunInternally } = sessionRoutes;
   reconcileWorkspaceActiveRunsForMutation = reconcileWorkspaceActiveRuns;
 
   addRoute(routes, "GET", "/internal/session-response-language/:sessionId", "client", async (ctx) => {
@@ -5274,7 +5329,7 @@ function createRoutes(
     return jsonResponse(result);
   });
 
-  return { routes, reconcileWorkspaceActiveRuns };
+  return { routes, reconcileWorkspaceActiveRuns, startGoalRunInternally };
 }
 
 async function resolveWorkspaceForInspection(config: ServerConfig, id: string): Promise<WorkspaceInfo> {

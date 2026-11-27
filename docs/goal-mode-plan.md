@@ -186,3 +186,13 @@ P1 刻意未做：自动续跑（GoalCoordinator）、模型侧 `goal.*` 工具�
 - 续跑请求元数据：目标 run 的文本 part 带稳定且不含内容的 `metadata.jugglework_goal = { goalId, ordinal, trigger }`。`trigger` 非 `create` 的续跑请求在会话记录中隐藏（快照与实时同步），不进入提示建议，也不参与回复语言检测；首次创建请求保留显示。
 - 已补测试：暂停/取消后迟到的 run 结束、过期版本、会话作用域隔离、重开后信封重建、相似文案不被误判为续跑。
 - 未做：导出/复制中把续跑活动归入同一目标展示（5.5）、自动续跑（P3）。
+
+## 14. P3 实现记录
+
+- 新增 `goal-coordinator.ts`：2 秒定时 + 每次 run 终态立即唤醒。只有目标为 active 且 idle、上一个已接受的 run 正常结束、会话权威空闲且无活动 run、没有待处理的权限或问题（含子会话）、工作区为本地且无沙箱、未到上限和无进展限制时才续跑。读取引擎状态或交互快照失败时不派发。
+- 通过 `startGoalRunInternally` 走 `startSessionRun`，与用户发起的 run 共用准入、回复语言和模型规则。
+- 派发前先写 `session_goal_runs`（`<goalId>:<ordinal>`），重复唤醒落到同一条记录。会话忙时撤销预留，不占用上限。
+- 停止原因 `stopReason`：`continuation_cap`、`no_progress`（连续 3 次 run 未记录进展）、`run_failed`、`run_aborted`（用户点停止后不自动续跑）、`run_lost`、`dispatch_failed`（连续 3 次派发失败）。目标进入 `waiting_user`，目标卡显示原因，用户点“继续”后清零。
+- 重启恢复：协调器不认识的 `running` run 记为 `orphaned`；`queued` 或 `dispatching` 且结果未知的 run 不会自动重发。两者都等用户处理。
+- 开关：`JUGGLEWORK_GOAL_AUTO_CONTINUE=0` 关闭自动续跑，不影响创建目标和手动“继续”。
+- 未做：`usage_limited` 暂无产生方，账号额度耗尽表现为 run 失败；子会话卡住的集成测试（4.9）；开关的设置界面。

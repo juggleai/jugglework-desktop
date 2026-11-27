@@ -384,12 +384,21 @@ export type JuggleWorkSessionGoal = {
   blockerReason: string | null;
   blockerCount: number;
   noProgressCount: number;
+  /** Set when the system, not the model, stopped automatic continuation. */
+  stopReason: JuggleWorkGoalStopReason | null;
   activeRunId: string | null;
   version: number;
   createdAt: number;
   updatedAt: number;
   completedAt: number | null;
 };
+export type JuggleWorkGoalStopReason =
+  | "continuation_cap"
+  | "no_progress"
+  | "run_failed"
+  | "run_aborted"
+  | "run_lost"
+  | "dispatch_failed";
 export type JuggleWorkGoalCriterionInput = { id?: string; text: string; required?: boolean };
 export type JuggleWorkGoalRunOptions = { model?: { providerID: string; modelID: string }; variant?: string };
 export type JuggleWorkGoalStartResult = {

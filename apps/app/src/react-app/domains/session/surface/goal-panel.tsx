@@ -241,6 +241,11 @@ export function GoalCard(props: {
           )}
         </div>
       </div>
+      {unfinished && goal.status === "active" && goal.execution === "waiting_user" && goal.stopReason ? (
+        <div className="mt-1.5 pl-6 text-xs text-amber-11" data-testid="goal-stop-reason">
+          {t(`goal.stop_${goal.stopReason}`, { cap: goal.continuationCap, limit: 3 })}
+        </div>
+      ) : null}
       {unfinished && goal.blockerReason ? (
         <div className="mt-1.5 pl-6 text-xs text-amber-11" data-testid="goal-blocker">
           {t(goal.status === "blocked" ? "goal.blocked_reason" : "goal.waiting_reason", { reason: goal.blockerReason })}

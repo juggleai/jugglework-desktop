@@ -56,7 +56,7 @@ function goal(overrides: Partial<JuggleWorkSessionGoal> = {}): JuggleWorkSession
     ],
     status: "active", execution: "idle", checkpoint: null,
     continuationTotal: 3, continuationStreak: 3, continuationCap: 10,
-    blockerReason: null, blockerCount: 0, noProgressCount: 0, activeRunId: null, version: 4, createdAt: 1, updatedAt: 2, completedAt: null,
+    blockerReason: null, blockerCount: 0, noProgressCount: 0, stopReason: null, activeRunId: null, version: 4, createdAt: 1, updatedAt: 2, completedAt: null,
     ...overrides,
   };
 }
@@ -207,4 +207,27 @@ test("goal tool names are recognized for card refresh", () => {
   expect(isGoalToolName("jugglework_goal_complete")).toBe(true);
   expect(isGoalToolName("todowrite")).toBe(false);
   expect(isGoalToolName(undefined)).toBe(false);
+});
+
+test("the card explains why automatic continuation stopped and still offers Continue", async () => {
+  const handlers = { onContinue: mock(), onPause: mock(), onResume: mock(), onEdit: mock(), onComplete: mock(), onCancel: mock(), onDismiss: mock() };
+  const byTestId = (id: string) => view!.root.findAll((node) => node.props["data-testid"] === id && typeof node.type === "string");
+  const expected: Record<string, string> = {
+    continuation_cap: "Paused after 10 automatic runs. Press Continue to keep going.",
+    no_progress: "Paused: 3 runs in a row recorded no progress. Check the checkpoint, then press Continue.",
+    run_failed: "Paused: the last run failed. Press Continue to try again.",
+    run_aborted: "Paused: the last run was stopped. Press Continue to resume.",
+    run_lost: "Paused: the last run was interrupted. Press Continue to resume from the checkpoint.",
+    dispatch_failed: "Paused: the next run could not be started. Press Continue to try again.",
+  };
+  for (const [reason, text] of Object.entries(expected)) {
+    const stopped = goal({ execution: "waiting_user", stopReason: reason as never, continuationStreak: 10 });
+    await act(async () => { view = TestRenderer.create(<GoalCard goal={stopped} sessionRunning={false} pending={false} error={null} {...handlers} />); });
+    expect({ reason, text: byTestId("goal-stop-reason")[0]?.children.join("") }).toEqual({ reason, text });
+    expect(byTestId("goal-continue")[0]!.props.disabled).toBe(false);
+    await act(async () => { view!.unmount(); });
+  }
+  // A stop the user has not hit (or a running goal) shows no stop reason.
+  await act(async () => { view = TestRenderer.create(<GoalCard goal={goal({ execution: "running" })} sessionRunning pending={false} error={null} {...handlers} />); });
+  expect(byTestId("goal-stop-reason")).toHaveLength(0);
 });

@@ -24,14 +24,14 @@
 
 ## 4. Goal Continuation Coordinator
 
-- [ ] 4.1 Implement a server-owned Goal Coordinator and pump that evaluates active goals on run terminal state, authoritative idle, interaction resolution, explicit continue, and startup recovery.
-- [ ] 4.2 Persist deterministic continuation ordinals and idempotency keys before dispatch and reconcile queued or dispatching records after restart.
-- [ ] 4.3 Route continuation through the existing session mutation/start boundary with generation fencing, authoritative busy checks, and no concurrent root runs.
-- [ ] 4.4 Integrate goal-linked run acceptance, progress heartbeat, usage accounting, terminal outcomes, aborts, and orphan reconciliation with the run lifecycle journal.
-- [ ] 4.5 Suspend continuation for unresolved permissions, questions, credentials, destructive confirmations, material scope choices, and account usage limits.
-- [ ] 4.6 Implement checkpoint and blocker fingerprints, three-turn repeated-blocker transition, bounded retry, and a consecutive automatic-continuation cap defaulting to 10 that resets only on explicit user continue or resume.
-- [ ] 4.7 Atomically revoke queued admissions on pause or cancellation and prevent delayed dispatch or terminal events from reactivating a non-active goal.
-- [ ] 4.8 Add coordinator tests for duplicate idle events, dispatch crashes, restart recovery, busy sessions, stale generations, pause/cancel races, interaction gates, continuation-cap reach and reset, no-progress loops, and orphaned runs.
+- [x] 4.1 Implement a server-owned Goal Coordinator and pump that evaluates active goals on run terminal state, authoritative idle, interaction resolution, explicit continue, and startup recovery.
+- [x] 4.2 Persist deterministic continuation ordinals and idempotency keys before dispatch and reconcile queued or dispatching records after restart.
+- [x] 4.3 Route continuation through the existing session mutation/start boundary with generation fencing, authoritative busy checks, and no concurrent root runs.
+- [x] 4.4 Integrate goal-linked run acceptance, progress heartbeat, usage accounting, terminal outcomes, aborts, and orphan reconciliation with the run lifecycle journal.
+- [x] 4.5 Suspend continuation for unresolved permissions, questions, credentials, destructive confirmations, material scope choices, and account usage limits.
+- [x] 4.6 Implement checkpoint and blocker fingerprints, three-turn repeated-blocker transition, bounded retry, and a consecutive automatic-continuation cap defaulting to 10 that resets only on explicit user continue or resume.
+- [x] 4.7 Atomically revoke queued admissions on pause or cancellation and prevent delayed dispatch or terminal events from reactivating a non-active goal.
+- [x] 4.8 Add coordinator tests for duplicate idle events, dispatch crashes, restart recovery, busy sessions, stale generations, pause/cancel races, interaction gates, continuation-cap reach and reset, no-progress loops, and orphaned runs.
 - [ ] 4.9 Add delegated-child integration tests proving recent child activity preserves the parent and child-only stall recovery does not duplicate or abort the goal root run.
 
 ## 5. Session and Composer Experience
@@ -54,7 +54,7 @@
 
 ## 7. Rollout and Documentation
 
-- [ ] 7.1 Gate creation and automatic continuation independently so storage/UI can ship before autonomous dispatch and rollback can stop new work without deleting goals.
+- [x] 7.1 Gate creation and automatic continuation independently so storage/UI can ship before autonomous dispatch and rollback can stop new work without deleting goals.
 - [ ] 7.2 Document lifecycle semantics, the continuation cap and its reset rule, the local-workspace-only scope, recovery behavior, privacy boundaries, and the distinction between Goal mode, Plan mode, todos, and automations.
 - [ ] 7.3 Record rollout evidence and confirm ordinary non-goal sessions, remote-control queues, automations, and archived sessions remain behaviorally unchanged.
 
@@ -77,3 +77,14 @@ P1 (local workspaces only) ships the goal store, Goal API, plus-menu entry, setu
 - 3.4: every goal run request carries stable content-free part metadata `jugglework_goal: { goalId, ordinal, trigger }`. Continuation requests (`trigger` other than `create`) are hidden from the task transcript (snapshot and live sync), ignored by prompt suggestions, and excluded from response-language detection. The `create` request stays visible because it restates the user's own objective. Real user content in the same message stays visible.
 - 2.5 / 3.5: tests cover a delayed run end after pause/cancel, stale versions, session scope isolation, explicit-only creation, envelope rebuild after a reopen, and lookalike text that must not be treated as a continuation.
 - Not done in this phase: grouping continuation activity under one goal presentation in export/copy (5.5) and automatic continuation (P3).
+
+## P3 Delivery Notes
+
+- 4.1 / 4.3: `GoalCoordinator` (`apps/server/src/goal-coordinator.ts`) runs on a 2s timer and is woken by every run terminal event. It continues a goal only when it is active and idle, its last accepted run ended `completed`, the session is authoritatively idle with no mutation-coordinator run, no permission or question is pending (child sessions included), the workspace is local and unsandboxed, and the cap and no-progress limit are not reached. It starts the run through `startSessionRun` (via `startGoalRunInternally`), so admission, response language, and model rules are shared with user-started runs. An unreadable engine status or interaction snapshot fails closed.
+- 4.2 / 4.7: the run is reserved durably (`session_goal_runs`, key `<goalId>:<ordinal>`) before dispatch; duplicate passes resolve to the same record. A busy session abandons the reservation and does not consume the cap. Pause and cancel fence a stale candidate: the goal is re-read and reserved with `expectedVersion`, and `reserveRun` refuses non-active goals.
+- 4.4 / 4.5: a run that ends `failed`, `aborted`, or `orphaned`, a run that reported no progress three times in a row, three failed dispatches in a row, and the 10-run cap each move the goal to `waiting_user` with a `stopReason` shown on the card. User Stop is respected: it never auto-continues. Pending interactions suspend the pump.
+- 4.6: the cap resets only on explicit Continue or Resume; automatic runs do not reset it. Explicit user actions also reset the no-progress count and stop reason.
+- 4.8: 17 coordinator unit tests and 4 end-to-end tests cover duplicates, each gate, busy, dispatch failure and a thrown dispatch, cap and reset, no-progress, completion, restart recovery, a stale candidate, and fail-closed reads.
+- 7.1: creation and automatic continuation are independent. `JUGGLEWORK_GOAL_AUTO_CONTINUE=0` stops dispatch at runtime without deleting goals or blocking manual Continue.
+- Restart recovery: a `running` run the mutation coordinator no longer knows is closed as `orphaned`; a `queued` or `dispatching` run of unknown outcome is never re-dispatched automatically. Both wait for the user, who sees the checkpoint.
+- Not done in P3: usage-limit detection (`usage_limited` has no producer yet, so an account limit surfaces as a failed run), delegated-child stall integration test (4.9), and per-user toggle UI for the switch.

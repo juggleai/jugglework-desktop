@@ -386,6 +386,11 @@ function remapSessionMutationError(error: unknown): never {
   throw error;
 }
 
+export type StartGoalRunInternally = (
+  context: Pick<RequestContext, "config" | "approvals" | "reloadEvents" | "tokens">,
+  input: { workspaceId: string; sessionId: string; idempotencyKey: string; prompt: Record<string, unknown> },
+) => Promise<{ kind: "started"; runId: string } | { kind: "busy" } | { kind: "failed"; code: string }>;
+
 export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
   const {
     routes,
@@ -1807,5 +1812,39 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     return jsonResponse({ ok: true });
   });
 
-  return { reconcileWorkspaceActiveRuns };
+  /**
+   * Start a goal run without an HTTP request, through the same admission path
+   * as a user-started run (authoritative status check, reservation, language
+   * and model rules). Used by the goal coordinator for automatic continuation.
+   */
+  async function startGoalRunInternally(
+    context: Pick<RequestContext, "config" | "approvals" | "reloadEvents" | "tokens">,
+    input: { workspaceId: string; sessionId: string; idempotencyKey: string; prompt: Record<string, unknown> },
+  ): Promise<{ kind: "started"; runId: string } | { kind: "busy" } | { kind: "failed"; code: string }> {
+    const ctx: RequestContext = {
+      ...context,
+      request: new Request("http://127.0.0.1/internal/goal-continuation", { method: "POST" }),
+      url: new URL("http://127.0.0.1/internal/goal-continuation"),
+      params: { id: input.workspaceId },
+      actor: { type: "host", scope: "collaborator" },
+    };
+    try {
+      const response = await startSessionRun(ctx, {
+        sessionId: input.sessionId,
+        origin: "local-renderer",
+        startCommandCorrelationId: input.idempotencyKey,
+        prompt: input.prompt,
+      });
+      const body = await response.clone().json().catch(() => null) as { run?: { runId?: string } } | null;
+      const runId = body?.run?.runId;
+      return runId ? { kind: "started", runId } : { kind: "failed", code: "run_identity_missing" };
+    } catch (error) {
+      if (error instanceof ApiError) {
+        return error.code === "session_busy" ? { kind: "busy" } : { kind: "failed", code: error.code };
+      }
+      return { kind: "failed", code: "dispatch_error" };
+    }
+  }
+
+  return { reconcileWorkspaceActiveRuns, startGoalRunInternally };
 }

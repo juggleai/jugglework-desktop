@@ -12,10 +12,20 @@ export const GOAL_EVIDENCE_MAX_CHARS = 1_000;
 export const GOAL_BLOCKER_MAX_CHARS = 1_000;
 /** The same blocker reported this many times in a row marks the goal blocked. */
 export const GOAL_BLOCKER_REPEAT_LIMIT = 3;
+/** Consecutive goal runs without recorded progress before automatic continuation stops. */
+export const GOAL_NO_PROGRESS_LIMIT = 3;
 const GOAL_EVENTS_PER_SESSION = 500;
 
 export type GoalStatus = "active" | "paused" | "blocked" | "completed" | "cancelled";
 export type GoalExecution = "idle" | "queued" | "running" | "waiting_user" | "retrying" | "usage_limited";
+/** Why the system stopped automatic continuation and is waiting for the user. */
+export type GoalStopReason =
+  | "continuation_cap"
+  | "no_progress"
+  | "run_failed"
+  | "run_aborted"
+  | "run_lost"
+  | "dispatch_failed";
 export type GoalCriterionStatus = "pending" | "met" | "waived";
 export type GoalRunTrigger = "create" | "auto" | "user_continue";
 
@@ -40,6 +50,8 @@ export type SessionGoal = {
   continuationStreak: number;
   continuationCap: number;
   noProgressCount: number;
+  /** Set when the system, not the model, stopped automatic continuation. */
+  stopReason: GoalStopReason | null;
   blockerReason: string | null;
   blockerCount: number;
   activeRunId: string | null;
@@ -161,6 +173,7 @@ function goalFromRow(row: any): SessionGoal {
     continuationStreak: Number(row.continuation_streak),
     continuationCap: Number(row.continuation_cap),
     noProgressCount: Number(row.no_progress_count),
+    stopReason: row.stop_reason === null || row.stop_reason === undefined ? null : String(row.stop_reason) as GoalStopReason,
     blockerReason: row.blocker_reason === null ? null : String(row.blocker_reason),
     blockerCount: Number(row.blocker_count),
     activeRunId: row.active_run_id === null ? null : String(row.active_run_id),
@@ -237,6 +250,11 @@ function initialize(sqlite: Sqlite) {
     );
     CREATE INDEX IF NOT EXISTS session_goal_events_goal ON session_goal_events(goal_id, id);
   `);
+  // P3 adds the stop reason to databases created by earlier builds.
+  const columns = statement(sqlite, "PRAGMA table_info(session_goals)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "stop_reason")) {
+    sqlite.exec("ALTER TABLE session_goals ADD COLUMN stop_reason TEXT NULL");
+  }
 }
 
 export async function createGoalStore(options: { config?: ServerConfig; path?: string; now?: () => number }) {
@@ -290,10 +308,10 @@ export async function createGoalStore(options: { config?: ServerConfig; path?: s
 
   function write(next: SessionGoal) {
     statement(sqlite, `UPDATE session_goals SET objective = ?, criteria_json = ?, status = ?, execution = ?, checkpoint = ?,
-      continuation_total = ?, continuation_streak = ?, no_progress_count = ?, blocker_reason = ?, blocker_count = ?,
+      continuation_total = ?, continuation_streak = ?, no_progress_count = ?, stop_reason = ?, blocker_reason = ?, blocker_count = ?,
       active_run_id = ?, version = ?, updated_at = ?, completed_at = ? WHERE id = ?`).run(
       next.objective, JSON.stringify(next.criteria), next.status, next.execution, next.checkpoint,
-      next.continuationTotal, next.continuationStreak, next.noProgressCount, next.blockerReason, next.blockerCount,
+      next.continuationTotal, next.continuationStreak, next.noProgressCount, next.stopReason, next.blockerReason, next.blockerCount,
       next.activeRunId, next.version, next.updatedAt, next.completedAt, next.id,
     );
   }
@@ -375,7 +393,7 @@ export async function createGoalStore(options: { config?: ServerConfig; path?: s
           objective, criteria,
           status: "active", execution: "idle", checkpoint: null,
           continuationTotal: 0, continuationStreak: 0, continuationCap: cap,
-          noProgressCount: 0, blockerReason: null, blockerCount: 0,
+          noProgressCount: 0, stopReason: null, blockerReason: null, blockerCount: 0,
           activeRunId: null, version: 1, createdAt: timestamp, updatedAt: timestamp, completedAt: null,
         };
         statement(sqlite, `INSERT INTO session_goals(id, workspace_id, session_id, objective, criteria_json, status, execution,
@@ -419,7 +437,7 @@ export async function createGoalStore(options: { config?: ServerConfig; path?: s
         return {
           ...goal, status: "active",
           execution: goal.execution === "waiting_user" ? "idle" : goal.execution,
-          continuationStreak: 0, blockerReason: null, blockerCount: 0, noProgressCount: 0,
+          continuationStreak: 0, blockerReason: null, blockerCount: 0, noProgressCount: 0, stopReason: null,
         };
       });
     },
@@ -465,9 +483,13 @@ export async function createGoalStore(options: { config?: ServerConfig; path?: s
         const pending = statement(sqlite, `SELECT * FROM session_goal_runs WHERE goal_id = ? AND state IN ('queued','dispatching')
           ORDER BY ordinal DESC LIMIT 1`).get(goalId);
         if (pending) return { goal, run: runFromRow(pending) };
+        // Automatic runs never start behind a stop the user has not cleared.
+        if (input.trigger === "auto" && (goal.execution !== "idle" || goal.activeRunId !== null)) {
+          throw new GoalStoreError("goal_invalid_transition", `Cannot continue automatically while ${goal.execution}`, goal);
+        }
         if (input.trigger === "auto" && goal.continuationStreak >= goal.continuationCap) {
           if (goal.execution === "waiting_user") return { capped: goal };
-          const limited = { ...goal, execution: "waiting_user" as const, version: goal.version + 1, updatedAt: now() };
+          const limited = { ...goal, execution: "waiting_user" as const, stopReason: "continuation_cap" as const, version: goal.version + 1, updatedAt: now() };
           write(limited);
           recordEvent(limited, "continuation_cap_reached");
           return { capped: limited };
@@ -486,6 +508,9 @@ export async function createGoalStore(options: { config?: ServerConfig; path?: s
           execution: "queued",
           continuationTotal: input.trigger === "create" ? goal.continuationTotal : goal.continuationTotal + 1,
           continuationStreak: input.trigger === "auto" ? goal.continuationStreak + 1 : 0,
+          // An explicit user action starts a fresh attempt with its own budget.
+          noProgressCount: input.trigger === "auto" ? goal.noProgressCount : 0,
+          stopReason: input.trigger === "auto" ? goal.stopReason : null,
           version: goal.version + 1,
           updatedAt: timestamp,
         };
@@ -514,17 +539,55 @@ export async function createGoalStore(options: { config?: ServerConfig; path?: s
       });
     },
 
-    /** Release a reservation whose dispatch failed, so the user can retry. */
-    markRunFailed(goalId: string, ordinal: number, outcome: string): SessionGoal | null {
+    /**
+     * Record a reservation whose dispatch failed. A user-triggered run returns
+     * to idle so the user can retry; an automatic run stops and waits so the
+     * same failure cannot repeat unattended.
+     */
+    markRunFailed(goalId: string, ordinal: number, outcome: string, options: { stop?: GoalStopReason } = {}): SessionGoal | null {
       return transaction(() => {
         const goal = getById(goalId);
         if (!goal) return null;
         statement(sqlite, `UPDATE session_goal_runs SET state = 'ended', outcome = ?, updated_at = ? WHERE goal_id = ? AND ordinal = ?`)
           .run(outcome, now(), goalId, ordinal);
         if (TERMINAL.has(goal.status)) return goal;
-        const next = { ...goal, execution: "idle" as const, activeRunId: null, version: goal.version + 1, updatedAt: now() };
+        const next = {
+          ...goal,
+          execution: options.stop ? "waiting_user" as const : "idle" as const,
+          stopReason: options.stop ?? goal.stopReason,
+          activeRunId: null, version: goal.version + 1, updatedAt: now(),
+        };
         write(next);
         recordEvent(next, "run_dispatch_failed", { ordinal });
+        return next;
+      });
+    },
+
+    /**
+     * Withdraw an automatic reservation that was never dispatched (for example
+     * the session was busy). The run is removed and its continuation is not
+     * counted, so waiting never consumes the cap.
+     */
+    abandonRun(goalId: string, ordinal: number): SessionGoal | null {
+      return transaction(() => {
+        const goal = getById(goalId);
+        if (!goal) return null;
+        const row = statement(sqlite, `SELECT * FROM session_goal_runs WHERE goal_id = ? AND ordinal = ? AND state IN ('queued','dispatching')`)
+          .get(goalId, ordinal);
+        if (!row) return goal;
+        const run = runFromRow(row);
+        statement(sqlite, "DELETE FROM session_goal_runs WHERE goal_id = ? AND ordinal = ?").run(goalId, ordinal);
+        if (TERMINAL.has(goal.status)) return goal;
+        const auto = run.trigger === "auto";
+        const next = {
+          ...goal,
+          execution: "idle" as const,
+          continuationTotal: auto ? Math.max(0, goal.continuationTotal - 1) : goal.continuationTotal,
+          continuationStreak: auto ? Math.max(0, goal.continuationStreak - 1) : goal.continuationStreak,
+          version: goal.version + 1, updatedAt: now(),
+        };
+        write(next);
+        recordEvent(next, "run_abandoned", { ordinal });
         return next;
       });
     },
@@ -543,10 +606,30 @@ export async function createGoalStore(options: { config?: ServerConfig; path?: s
         const goal = goalFromRow(row);
         statement(sqlite, `UPDATE session_goal_runs SET state = 'ended', outcome = ?, updated_at = ? WHERE goal_id = ? AND run_id = ?`)
           .run(outcome, now(), goal.id, runId);
-        // A blocker or "needs user" report made during the run survives its end.
-        const execution = TERMINAL.has(goal.status) ? "idle" as const
-          : goal.execution === "waiting_user" ? "waiting_user" as const : "idle" as const;
-        const next = { ...goal, execution, activeRunId: null, version: goal.version + 1, updatedAt: now() };
+        let execution: GoalExecution = "idle";
+        let stopReason = goal.stopReason;
+        let noProgressCount = goal.noProgressCount;
+        if (!TERMINAL.has(goal.status) && goal.status === "active") {
+          // A run that never reported progress counts as a run without progress.
+          const reported = statement(sqlite, `SELECT 1 AS found FROM session_goal_events WHERE goal_id = ? AND run_id = ? AND event = 'progress_reported' LIMIT 1`)
+            .get(goal.id, runId);
+          if (!reported) noProgressCount += 1;
+          const failure = outcome === "aborted" ? "run_aborted"
+            : outcome === "failed" ? "run_failed"
+              : outcome === "orphaned" ? "run_lost"
+                : null;
+          if (goal.execution === "waiting_user") {
+            // A blocker or "needs user" report made during the run survives its end.
+            execution = "waiting_user";
+          } else if (failure) {
+            execution = "waiting_user";
+            stopReason = failure;
+          } else if (noProgressCount >= GOAL_NO_PROGRESS_LIMIT) {
+            execution = "waiting_user";
+            stopReason = "no_progress";
+          }
+        }
+        const next = { ...goal, execution, stopReason, noProgressCount, activeRunId: null, version: goal.version + 1, updatedAt: now() };
         write(next);
         recordEvent(next, "run_ended", { runId });
         return next;
@@ -642,6 +725,37 @@ export async function createGoalStore(options: { config?: ServerConfig; path?: s
           runId: row.runId === null ? null : String(row.runId), ordinal: row.ordinal === null ? null : Number(row.ordinal),
           occurredAt: Number(row.occurredAt),
         }));
+    },
+
+    /**
+     * Active goals whose latest run ended normally and which are idle: the
+     * only goals eligible for automatic continuation. A goal that was never
+     * run, or whose last run failed to dispatch, is never returned.
+     */
+    autoContinuationCandidates(): SessionGoal[] {
+      const rows = statement(sqlite, `SELECT * FROM session_goals WHERE status = 'active' AND execution = 'idle' AND active_run_id IS NULL
+        ORDER BY updated_at ASC LIMIT 200`).all() as any[];
+      return rows.map(goalFromRow).filter((goal) => {
+        // Look past runs that failed before the engine accepted them (no run id):
+        // a retried dispatch is judged by the last run that actually executed.
+        const last = statement(sqlite, `SELECT * FROM session_goal_runs WHERE goal_id = ? AND run_id IS NOT NULL
+          ORDER BY ordinal DESC LIMIT 1`).get(goal.id);
+        if (!last) return false;
+        const run = runFromRow(last);
+        return run.state === "ended" && run.outcome === "completed";
+      });
+    },
+
+    /** Unfinished work a restart may have interrupted: queued runs and runs believed to be running. */
+    interruptedRuns(): Array<{ goal: SessionGoal; run: SessionGoalRun }> {
+      const rows = statement(sqlite, `SELECT r.* FROM session_goal_runs r JOIN session_goals g ON g.id = r.goal_id
+        WHERE r.state IN ('queued','dispatching','running') AND g.status NOT IN ('completed','cancelled')
+        ORDER BY r.created_at ASC LIMIT 200`).all() as any[];
+      return rows.flatMap((row) => {
+        const run = runFromRow(row);
+        const goal = getById(run.goalId);
+        return goal ? [{ goal, run }] : [];
+      });
     },
 
     deleteSession(workspaceId: string, sessionId: string): void {

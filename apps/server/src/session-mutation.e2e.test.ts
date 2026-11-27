@@ -55,6 +55,8 @@ function startMockOpencode() {
   const statusRequests: string[] = [];
   const disposes: Array<{ directory: string | null }> = [];
   const statuses = new Map<string, unknown>();
+  const pendingPermissions: unknown[] = [];
+  const pendingQuestions: unknown[] = [];
   const connected = ["connected"];
   const catalogs = new Map<string, unknown>();
   const models: Record<string, unknown> = {
@@ -104,6 +106,9 @@ function startMockOpencode() {
         return Response.json(Object.fromEntries(statuses));
       }
       if (request.method === "GET" && /^\/session\/[^/]+\/todo$/.test(url.pathname)) return Response.json([]);
+      if (request.method === "GET" && url.pathname === "/session") return Response.json([...sessions.values()]);
+      if (request.method === "GET" && url.pathname === "/permission") return Response.json(pendingPermissions);
+      if (request.method === "GET" && url.pathname === "/question") return Response.json(pendingQuestions);
       const messageMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
       if (request.method === "GET" && messageMatch) {
         const sessionId = decodeURIComponent(messageMatch[1]!);
@@ -261,6 +266,8 @@ function startMockOpencode() {
     statusRequests,
     disposes,
     statuses,
+    pendingPermissions,
+    pendingQuestions,
     connected,
     catalogs,
     models,
@@ -2600,6 +2607,11 @@ describe("authoritative session mutation APIs", () => {
 });
 
 describe("session goal APIs", () => {
+  const savedAutoContinue = process.env.JUGGLEWORK_GOAL_AUTO_CONTINUE;
+  afterEach(() => {
+    if (savedAutoContinue === undefined) delete process.env.JUGGLEWORK_GOAL_AUTO_CONTINUE; else process.env.JUGGLEWORK_GOAL_AUTO_CONTINUE = savedAutoContinue;
+  });
+
   async function goalHarness(sessionId: string) {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
@@ -2646,6 +2658,8 @@ describe("session goal APIs", () => {
   });
 
   test("a run ending returns the goal to idle without completing it, and continue starts the next run", async () => {
+    // This covers the manual path, so automatic continuation must not take the turn first.
+    process.env.JUGGLEWORK_GOAL_AUTO_CONTINUE = "0";
     const sessionId = "ses_goal_continue";
     const { engine, harness, goalPath, call, finishRun } = await goalHarness(sessionId);
     const created = (await call("POST", goalPath, createBody)).body.item;
@@ -2863,3 +2877,106 @@ describe("session goal agent APIs", () => {
     expect(result.body.code).toBe("goal_workspace_unsupported");
   });
 });
+
+describe("goal automatic continuation", () => {
+  const createBody = { objective: "Ship CSV export", criteria: [{ text: "Export downloads a CSV" }] };
+  const previous = process.env.JUGGLEWORK_GOAL_AUTO_CONTINUE;
+  afterEach(() => {
+    if (previous === undefined) delete process.env.JUGGLEWORK_GOAL_AUTO_CONTINUE; else process.env.JUGGLEWORK_GOAL_AUTO_CONTINUE = previous;
+  });
+
+  async function autoHarness(sessionId: string) {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.sessions.set(sessionId, { id: sessionId, title: "Goal", directory: harness.config.workspaces[0]!.path, time: { created: 1, updated: 1 } });
+    const goalPath = `${harness.base}/workspace/ws_1/sessions/${sessionId}/goal`;
+    const call = async (method: string, path: string, body?: unknown) => {
+      const response = await fetch(path, { method, headers: harness.collaboratorHeaders, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      return { status: response.status, body: await response.json() as any };
+    };
+    const agent = (action: string, body: Record<string, unknown> = {}) => call("POST", `${harness.base}/workspace/ws_1/goal-agent/${action}`, { sessionId, ...body });
+    /** The model reports progress during its run, then the engine goes idle. */
+    const endRun = async (progress = true) => {
+      if (progress) {
+        await agent("progress", { criteria: [], checkpoint: `checkpoint ${engine.prompts.length}`, madeProgress: true });
+      }
+      engine.statuses.set(sessionId, { type: "idle" });
+      engine.messages.set(sessionId, [{ info: { id: `msg_done_${engine.prompts.length}`, sessionID: sessionId, role: "assistant", time: { created: Date.now(), completed: Date.now() }, finish: "stop" }, parts: [] }]);
+      await harness.server.reconcileActiveSessionRuns?.();
+    };
+    return { engine, harness, goalPath, call, agent, endRun };
+  }
+
+  test("a finished goal run is continued automatically with the goal envelope and a tagged request", async () => {
+    const sessionId = "ses_goal_auto";
+    const { engine, goalPath, call, endRun } = await autoHarness(sessionId);
+    const created = (await call("POST", goalPath, createBody)).body.item;
+    expect(engine.prompts).toHaveLength(1);
+    await endRun();
+    await waitUntil(async () => engine.prompts.length === 2, 5_000);
+    const auto = engine.prompts.at(-1)!.body as { system?: string; parts?: Array<{ metadata?: unknown }> };
+    expect(auto.parts?.[0]?.metadata).toEqual({ jugglework_goal: { goalId: created.id, ordinal: 2, trigger: "auto" } });
+    expect(auto.system).toContain("checkpoint 1");
+    await waitUntil(async () => (await call("GET", goalPath)).body.item.execution === "running", 3_000);
+    const card = (await call("GET", goalPath)).body.item;
+    expect(card).toMatchObject({ status: "active", continuationStreak: 1, continuationTotal: 1 });
+  });
+
+  test("turning the switch off stops dispatch but keeps the goal and manual Continue working", async () => {
+    process.env.JUGGLEWORK_GOAL_AUTO_CONTINUE = "0";
+    const sessionId = "ses_goal_auto_off";
+    const { engine, goalPath, call, endRun } = await autoHarness(sessionId);
+    await call("POST", goalPath, createBody);
+    await endRun();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(engine.prompts).toHaveLength(1);
+    const idle = await waitForIdle(call, goalPath);
+    expect(idle).toMatchObject({ status: "active", execution: "idle", stopReason: null });
+    const continued = await call("POST", `${goalPath}/${idle.id}/continue`, { expectedVersion: idle.version });
+    expect(continued.status).toBe(202);
+    expect(engine.prompts).toHaveLength(2);
+  });
+
+  test("a pending permission request suspends continuation until it is resolved", async () => {
+    const sessionId = "ses_goal_auto_permission";
+    const { engine, goalPath, call, endRun } = await autoHarness(sessionId);
+    engine.pendingPermissions.push({ id: "per_1", sessionID: sessionId, permission: "edit", patterns: ["*"], metadata: {}, always: [] });
+    await call("POST", goalPath, createBody);
+    await endRun();
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(engine.prompts).toHaveLength(1);
+    engine.pendingPermissions.length = 0;
+    await waitUntil(async () => engine.prompts.length === 2, 6_000);
+  });
+
+  test("runs that end without progress stop after the limit instead of looping", async () => {
+    const sessionId = "ses_goal_auto_noprogress";
+    const { engine, harness, goalPath, call, endRun } = await autoHarness(sessionId);
+    await call("POST", goalPath, createBody);
+    // Every run, including the first, reports nothing. Idle needs a confirmation
+    // interval, so poll until the goal leaves its run or the system stops it.
+    for (let round = 0; round < 6; round += 1) {
+      const before = (await call("GET", goalPath)).body.item;
+      if (before.execution === "waiting_user") break;
+      await endRun(false);
+      await waitUntil(async () => {
+        await harness.server.reconcileActiveSessionRuns?.();
+        const item = (await call("GET", goalPath)).body.item;
+        return item.execution === "waiting_user" || (item.activeRunId !== null && item.activeRunId !== before.activeRunId);
+      }, 8_000);
+      engine.statuses.set(sessionId, { type: "busy" });
+    }
+    const card = (await call("GET", goalPath)).body.item;
+    expect(card).toMatchObject({ status: "active", execution: "waiting_user", stopReason: "no_progress", noProgressCount: 3 });
+    // The first run plus the automatic runs up to the limit, and nothing after it.
+    expect(engine.prompts).toHaveLength(3);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(engine.prompts).toHaveLength(3);
+  });
+});
+
+async function waitForIdle(call: (method: string, path: string) => Promise<{ body: any }>, goalPath: string) {
+  let item: any;
+  await waitUntil(async () => { item = (await call("GET", goalPath)).body.item; return item.activeRunId === null; }, 3_000);
+  return item;
+}
