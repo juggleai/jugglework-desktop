@@ -41,13 +41,18 @@ This separation prevents periodic 140-message snapshot refreshes from deleting e
 
 Because the latest 140-message window can advance while retained history remains cached, the cache SHALL track the snapshot root cursor as a generation. A changed root starts a new active chain from the new snapshot boundary; the previous chain remains detached and is joined only after a fetched page overlaps it by raw message ID. A complete non-overlapping new chain replaces an unreachable detached chain rather than displaying an unproven gap.
 
-### Load one page per deliberate top approach
+### Load one page per deliberate upward gesture at the top
 
-The UI SHALL use 100-message older pages. A top sentinel or scroll threshold may request one page only when `hasOlder`, not already loading, and the user moved upward. If the transcript does not fill the viewport, an explicit accessible “Load earlier messages” control remains available rather than automatically draining all history.
+The UI SHALL use 100-message older pages and SHALL NOT require a click in the normal case. Two triggers request one page, both only when `hasOlder`, no page is loading, and the user's input was deliberate:
+
+1. **Threshold entry.** A scroll event that moves from beyond the 240px top threshold into it while scrolling upward, within the 600ms user-intent window. Each entry is consumed once and re-arms only after the position leaves the threshold.
+2. **Gesture at the top.** An upward wheel, a touch drag toward the top, or `ArrowUp` / `PageUp` / `Home` while `scrollTop` is already within the threshold. Once at the top the browser emits no further scroll events (and a short transcript cannot scroll at all), so threshold entry alone would never fire again; the gesture itself is the signal.
+
+A 400ms cooldown after a request settles, plus the single in-flight request, prevents inertial scrolling from draining several pages. Programmatic scrolling and downward gestures never load. The explicit accessible “Load earlier messages” control remains for retry after failure and for assistive technology. History is never drained automatically without a further user gesture.
 
 ### Restore a DOM message anchor after prepend
 
-Before loading, the controller records the first visible message ID and its viewport offset. After React commits the prepended page, it restores that element to the same offset. A `scrollHeight` delta is the fallback when the element is unavailable. Short-lived resize compensation may handle delayed media layout but stops on user scrolling.
+Before loading, the controller records the first visible message ID and its viewport offset. A gesture at `scrollTop <= 0` does not move content, so it does not discard the pending anchor; any other user input during the request does. After React commits the prepended page, it restores that element to the same offset. A `scrollHeight` delta is the fallback when the element is unavailable. Short-lived resize compensation may handle delayed media layout but stops on user scrolling.
 
 ### Bound concurrency and reject pagination loops
 
@@ -75,7 +80,7 @@ If an authoritative revert cursor is older than the currently continuous loaded 
 1. Ship backward-compatible Server response fields and `before` support.
 2. Ship App client types that tolerate absent page metadata.
 3. Add manual retryable older-page loading behind the normal session surface.
-4. Add scroll-threshold loading and anchor restoration after data correctness tests pass.
+4. Add scroll-threshold and top-gesture loading and anchor restoration after data correctness tests pass.
 5. Monitor page depth, latency, cancellations and anchor corrections without logging message content or cursor values.
 
 Rollback is application-only: older clients ignore the added fields, and removing the UI pagination path returns behavior to the bounded 140-message snapshot without changing stored conversations.

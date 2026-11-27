@@ -2631,15 +2631,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
           ref={scrollRef}
           onWheel={(event) => {
             sessionScroll.markScrollGesture(event.target);
-            historyScroll.markUserScrollIntent();
+            historyScroll.handleWheel(event.deltaY);
           }}
           onTouchStart={(event) => {
             sessionScroll.markScrollGesture(event.target);
-            historyScroll.markUserScrollIntent();
+            const touch = event.touches[0];
+            if (touch) historyScroll.handleTouchStart(touch.clientY);
+            else historyScroll.markUserScrollIntent();
           }}
           onTouchMove={(event) => {
             sessionScroll.markScrollGesture(event.target);
-            historyScroll.markUserScrollIntent();
+            const touch = event.touches[0];
+            if (touch) historyScroll.handleTouchMove(touch.clientY);
+            else historyScroll.markUserScrollIntent();
           }}
           onPointerDown={(event) => {
             if (event.target !== event.currentTarget) return;
@@ -2649,7 +2653,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           onKeyDown={(event) => {
             if (!["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) return;
             sessionScroll.markScrollGesture(event.currentTarget);
-            historyScroll.markUserScrollIntent();
+            historyScroll.handleKey(event.key);
           }}
           onScroll={(event) => {
             sessionScroll.handleScroll(event);

@@ -16,9 +16,11 @@
 
 - [x] 3.1 Add an accessible load-earlier/loading/retry/history-start control at the transcript top.
 - [x] 3.2 Trigger at most one older page when the user deliberately scrolls upward into the top threshold.
+- [x] 3.2a Also trigger one page when an upward wheel, touch drag or `ArrowUp`/`PageUp`/`Home` happens while already within the top threshold, with a 400ms post-load cooldown and no stacked requests.
 - [x] 3.3 Capture and restore the first visible message anchor after prepend, with a scroll-height delta fallback.
 - [x] 3.4 Cancel or ignore an older-page request when workspace/session navigation supersedes it and preserve session-scoped retained history.
 - [x] 3.5 Add UI and scroll-controller tests for underfilled viewports, duplicate trigger prevention, anchor stability, retry and session switching.
+- [x] 3.6 Add scroll-controller tests for top gestures: upward wheel at the top loads once, downward or far-from-top gestures do not, keyboard and touch trigger, exhausted history does not load, and repeated events start one request.
 
 ## 4. Verification
 

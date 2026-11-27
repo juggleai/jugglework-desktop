@@ -188,6 +188,97 @@ describe("session history prepend anchor", () => {
   });
 });
 
+describe("session history top gestures", () => {
+  function mount(options: { scrollTop: number; hasOlder?: boolean; isLoading?: boolean }) {
+    const state = { loads: 0, before: 0 };
+    const container = {
+      scrollTop: options.scrollTop,
+      scrollHeight: 1_000,
+      getBoundingClientRect: () => ({ top: 0, bottom: 500 }),
+      querySelectorAll: () => [],
+    } as unknown as HTMLDivElement;
+    let controller!: ReturnType<typeof useSessionHistoryScrollController>;
+    function Probe() {
+      controller = useSessionHistoryScrollController({
+        scopeKey: "session",
+        containerRef: { current: container },
+        loadedPageCount: 0,
+        hasOlder: options.hasOlder ?? true,
+        isLoading: options.isLoading ?? false,
+        loadOlder: async () => { state.loads += 1; return true; },
+        onBeforeLoad: () => { state.before += 1; },
+        onAfterRestore: () => {},
+      });
+      return null;
+    }
+    return { state, container, probe: Probe, get controller() { return controller; } };
+  }
+
+  test("an upward wheel while already at the top loads one older page", async () => {
+    const harness = mount({ scrollTop: 0 });
+    let view!: TestRenderer.ReactTestRenderer;
+    await act(async () => { view = TestRenderer.create(<harness.probe />); });
+    await act(async () => { harness.controller.handleWheel(-40); });
+    expect(harness.state.loads).toBe(1);
+    expect(harness.state.before).toBe(1);
+    await act(async () => view.unmount());
+  });
+
+  test("downward gestures and gestures far from the top do not load", async () => {
+    const top = mount({ scrollTop: 0 });
+    let view!: TestRenderer.ReactTestRenderer;
+    await act(async () => { view = TestRenderer.create(<top.probe />); });
+    await act(async () => { top.controller.handleWheel(40); });
+    await act(async () => { top.controller.handleKey("ArrowDown"); });
+    expect(top.state.loads).toBe(0);
+    await act(async () => view.unmount());
+
+    const far = mount({ scrollTop: 900 });
+    await act(async () => { view = TestRenderer.create(<far.probe />); });
+    await act(async () => { far.controller.handleWheel(-40); });
+    await act(async () => { far.controller.handleKey("PageUp"); });
+    expect(far.state.loads).toBe(0);
+    await act(async () => view.unmount());
+  });
+
+  test("keyboard and touch pulls toward the top load, and exhausted history does not", async () => {
+    const key = mount({ scrollTop: 10 });
+    let view!: TestRenderer.ReactTestRenderer;
+    await act(async () => { view = TestRenderer.create(<key.probe />); });
+    await act(async () => { key.controller.handleKey("Home"); });
+    expect(key.state.loads).toBe(1);
+    await act(async () => view.unmount());
+
+    const touch = mount({ scrollTop: 0 });
+    await act(async () => { view = TestRenderer.create(<touch.probe />); });
+    await act(async () => { touch.controller.handleTouchStart(100); });
+    await act(async () => { touch.controller.handleTouchMove(160); });
+    expect(touch.state.loads).toBe(1);
+    await act(async () => view.unmount());
+
+    const done = mount({ scrollTop: 0, hasOlder: false });
+    await act(async () => { view = TestRenderer.create(<done.probe />); });
+    await act(async () => { done.controller.handleWheel(-40); });
+    expect(done.state.loads).toBe(0);
+    await act(async () => view.unmount());
+  });
+
+  test("repeated wheel events during one load or right after it start only one request", async () => {
+    const harness = mount({ scrollTop: 0 });
+    let view!: TestRenderer.ReactTestRenderer;
+    await act(async () => { view = TestRenderer.create(<harness.probe />); });
+    await act(async () => {
+      harness.controller.handleWheel(-40);
+      harness.controller.handleWheel(-40);
+      harness.controller.handleWheel(-40);
+    });
+    expect(harness.state.loads).toBe(1);
+    await act(async () => { harness.controller.handleWheel(-40); });
+    expect(harness.state.loads).toBe(1);
+    await act(async () => view.unmount());
+  });
+});
+
 describe("session history control", () => {
   test("keeps load available for underfilled transcripts and exposes retry", async () => {
     setLocale("en");

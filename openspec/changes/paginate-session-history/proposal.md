@@ -6,7 +6,7 @@ The session surface intentionally opens with only the latest 140 raw messages to
 
 - Preserve the existing single-request, 140-message initial snapshot window.
 - Expose OpenCode's opaque `before` cursor and accurate older-history availability through the JuggleWork session read API.
-- Load older messages in bounded pages only when the user scrolls toward the transcript top or explicitly requests them.
+- Load older messages in bounded pages automatically when the user scrolls to, or keeps pulling upward at, the transcript top (one page per gesture), with an explicit control for retry and accessibility.
 - Merge paged raw history with the bounded snapshot and live transcript without allowing snapshot refreshes to discard loaded history or stale pages to overwrite live updates.
 - Preserve the user's visual reading anchor while older messages are prepended, and provide accessible loading, retry and history-start states.
 - Cancel superseded history reads and guard against duplicate or looping cursors.

@@ -20,17 +20,31 @@ The system SHALL expose an opaque older-history cursor and an accurate older-his
 - **THEN** the returned page is merged chronologically
 - **AND** the system reports that no older history remains
 
-### Requirement: Older history loads only on user demand
-The session surface SHALL load at most one older page when the user scrolls upward near the transcript top or activates an explicit accessible load control. It SHALL NOT continuously drain history merely because the viewport remains underfilled or the top sentinel remains visible.
+### Requirement: Older history loads automatically on each deliberate upward gesture at the top
+The session surface SHALL load at most one older page per deliberate user gesture while the transcript is within the top threshold (240px), and SHALL also provide an explicit accessible load control. A deliberate gesture is an upward wheel, a touch drag toward the top, or an upward keyboard command (`ArrowUp`, `PageUp`, `Home`). Programmatic scrolling SHALL NOT start a load. The surface SHALL NOT continuously drain history merely because the viewport remains underfilled or the top sentinel remains visible.
 
-#### Scenario: User approaches the transcript top
-- **WHEN** older history exists, no page is loading and the user scrolls upward into the top threshold
-- **THEN** the surface requests exactly one older page
+#### Scenario: User scrolls into the top threshold
+- **WHEN** older history exists, no page is loading and the user scrolls upward from outside the top threshold into it
+- **THEN** the surface requests exactly one older page without requiring a click
+
+#### Scenario: User keeps pulling upward while already at the top
+- **WHEN** older history exists, no page is loading and the transcript is already within the top threshold or cannot scroll further
+- **AND** the user performs an upward wheel, touch or keyboard gesture
+- **THEN** the surface requests exactly one older page without requiring a click
+
+#### Scenario: Repeated gestures do not stack requests
+- **WHEN** several upward gestures arrive while a page is loading, or within 400ms after a page settles
+- **THEN** no additional request is started
+
+#### Scenario: Gesture does not apply
+- **WHEN** the gesture is downward, the transcript is farther than the top threshold from the top, or no older history remains
+- **THEN** no older page is requested
 
 #### Scenario: Initial messages do not fill the viewport
 - **WHEN** older history exists but the initial transcript is not scrollable
 - **THEN** the surface exposes an explicit load-earlier control
-- **AND** it does not automatically load every remaining page
+- **AND** the next upward gesture loads one page
+- **AND** it does not automatically load every remaining page without further user gestures
 
 ### Requirement: Prepending preserves the reading position
 The session surface SHALL preserve the first visible message and its viewport offset while an older page is prepended, with a height-delta fallback when the original anchor cannot be restored.
@@ -38,6 +52,11 @@ The session surface SHALL preserve the first visible message and its viewport of
 #### Scenario: Older messages are inserted above the viewport
 - **WHEN** an older page finishes loading while the user is reading the previous oldest region
 - **THEN** the same message remains at the same visual offset after layout settles
+
+#### Scenario: Gesture at the very top starts a load
+- **WHEN** an upward gesture at scroll position 0 starts a load
+- **THEN** the reading anchor captured for that load is kept, because the gesture did not move the content
+- **AND** a gesture that does move the content during the request discards the anchor instead of overriding the user's scroll
 
 ### Requirement: Historical and live messages reconcile safely
 The system SHALL merge historical pages, the bounded snapshot and live events by raw message ID in chronological order. Current snapshot or live versions SHALL take precedence over historical copies, and a bounded snapshot refresh SHALL NOT discard explicitly loaded older pages.

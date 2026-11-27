@@ -2,6 +2,9 @@ import { useCallback, useLayoutEffect, useRef, type RefObject, type UIEventHandl
 
 export const SESSION_HISTORY_TOP_THRESHOLD_PX = 240;
 const USER_SCROLL_INTENT_WINDOW_MS = 600;
+/** 一页加载完成后，惯性滚动产生的剩余手势不应再连续触发下一页。 */
+const TOP_GESTURE_COOLDOWN_MS = 400;
+const UPWARD_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
 
 export type HistoryThresholdGate = {
   previousScrollTop: number | null;
@@ -125,6 +128,8 @@ export function useSessionHistoryScrollController(input: {
   const pendingAnchorRef = useRef<VisibleMessageAnchor | null>(null);
   const loadedPageCountRef = useRef(input.loadedPageCount);
   const requestRef = useRef<Promise<boolean> | null>(null);
+  const lastSettledAtRef = useRef(0);
+  const touchYRef = useRef<number | null>(null);
 
   if (scopeRef.current !== input.scopeKey) {
     scopeRef.current = input.scopeKey;
@@ -133,6 +138,8 @@ export function useSessionHistoryScrollController(input: {
     pendingAnchorRef.current = null;
     loadedPageCountRef.current = input.loadedPageCount;
     requestRef.current = null;
+    lastSettledAtRef.current = 0;
+    touchYRef.current = null;
   }
 
   const requestOlder = useCallback(() => {
@@ -147,6 +154,7 @@ export function useSessionHistoryScrollController(input: {
       if (!loaded) pendingAnchorRef.current = null;
       return loaded;
     }).finally(() => {
+      lastSettledAtRef.current = Date.now();
       if (requestRef.current === request) requestRef.current = null;
     });
     requestRef.current = request;
@@ -157,6 +165,46 @@ export function useSessionHistoryScrollController(input: {
     userIntentAtRef.current = Date.now();
     if (requestRef.current) pendingAnchorRef.current = null;
   }, []);
+
+  /**
+   * 已经在顶部区域时，向上滚动不再产生 scroll 事件（或内容不足一屏无法滚动），
+   * 阈值门控无法触发。这里把“在顶部继续向上操作”本身视为一次明确的加载手势。
+   */
+  const requestOlderAtTop = useCallback(() => {
+    const container = input.containerRef.current;
+    if (!container || container.scrollTop > SESSION_HISTORY_TOP_THRESHOLD_PX) return;
+    if (!input.hasOlder || input.isLoading || requestRef.current) return;
+    if (Date.now() - lastSettledAtRef.current < TOP_GESTURE_COOLDOWN_MS) return;
+    void requestOlder();
+  }, [input.containerRef, input.hasOlder, input.isLoading, requestOlder]);
+
+  const registerGesture = useCallback((upward: boolean) => {
+    const container = input.containerRef.current;
+    // 已贴顶时向上操作不会移动内容，不应丢弃加载中的滚动锚点。
+    const pinnedAtTop = upward && container !== null && container.scrollTop <= 0;
+    if (!pinnedAtTop) markUserScrollIntent();
+    if (upward) requestOlderAtTop();
+  }, [input.containerRef, markUserScrollIntent, requestOlderAtTop]);
+
+  const handleWheel = useCallback((deltaY: number) => {
+    registerGesture(deltaY < 0);
+  }, [registerGesture]);
+
+  const handleKey = useCallback((key: string) => {
+    registerGesture(UPWARD_KEYS.has(key));
+  }, [registerGesture]);
+
+  const handleTouchStart = useCallback((clientY: number) => {
+    touchYRef.current = clientY;
+    markUserScrollIntent();
+  }, [markUserScrollIntent]);
+
+  const handleTouchMove = useCallback((clientY: number) => {
+    const previous = touchYRef.current;
+    touchYRef.current = clientY;
+    // 手指向下拖动 = 内容向顶部滚动。
+    registerGesture(previous !== null && clientY > previous);
+  }, [registerGesture]);
 
   const handleScroll = useCallback<UIEventHandler<HTMLDivElement>>((event) => {
     const canLoad = input.hasOlder && !input.isLoading && requestRef.current === null;
@@ -185,5 +233,13 @@ export function useSessionHistoryScrollController(input: {
     input.onAfterRestore(container.scrollTop);
   }, [input.containerRef, input.loadedPageCount, input.onAfterRestore]);
 
-  return { handleScroll, markUserScrollIntent, requestOlder };
+  return {
+    handleScroll,
+    markUserScrollIntent,
+    handleWheel,
+    handleKey,
+    handleTouchStart,
+    handleTouchMove,
+    requestOlder,
+  };
 }
