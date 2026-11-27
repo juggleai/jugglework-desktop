@@ -20,6 +20,35 @@ The system SHALL create a persistent goal only when the user explicitly selects 
 - **THEN** the system runs it as an ordinary session task
 - **AND** no persistent goal is created automatically
 
+### Requirement: Goal entry is a plus-menu peer of Plan mode
+
+The composer plus menu SHALL list `目标` (Goal) at the same level as `计划模式` (Plan mode). Selecting Goal SHALL open the goal setup surface and SHALL NOT select or change the session agent. Goal runs SHALL use the session's ordinary execution agent. Selecting Plan mode SHALL keep its existing behavior and SHALL NOT create a goal.
+
+#### Scenario: User opens the plus menu
+
+- **WHEN** the user opens the composer plus menu in a local workspace session
+- **THEN** Goal and Plan mode appear as sibling entries
+
+#### Scenario: Plan mode is active when the user creates a goal
+
+- **WHEN** Plan mode is selected and the user confirms a new goal
+- **THEN** goal runs use the ordinary execution agent rather than the Plan agent
+- **AND** the composer no longer shows the Plan mode badge
+
+### Requirement: First release supports local workspaces only
+
+The first release SHALL offer goal creation and continuation only for local workspaces. Remote, cloud, and sandbox workspaces SHALL NOT show the Goal entry, and Server goal APIs SHALL reject goal creation for them.
+
+#### Scenario: Remote workspace session
+
+- **WHEN** the user opens the plus menu in a remote, cloud, or sandbox workspace session
+- **THEN** the Goal entry is not shown
+
+#### Scenario: Goal API receives a non-local workspace
+
+- **WHEN** a goal creation request targets a non-local workspace
+- **THEN** the Server rejects it without creating a goal
+
 ### Requirement: A session has at most one unfinished goal
 
 The system SHALL allow at most one goal whose lifecycle is not completed or cancelled in a session.
@@ -37,7 +66,7 @@ The system SHALL allow at most one goal whose lifecycle is not completed or canc
 
 ### Requirement: Goal state survives run and process boundaries
 
-The system SHALL persist the goal objective, criteria, lifecycle, execution state, checkpoint, run history, optional budget, observed usage, and timestamps independently of the current transcript context and renderer memory.
+The system SHALL persist the goal objective, criteria, lifecycle, execution state, checkpoint, run history, consecutive automatic-continuation count, and timestamps independently of the current transcript context and renderer memory.
 
 #### Scenario: Automatic context compaction occurs
 
@@ -53,7 +82,7 @@ The system SHALL persist the goal objective, criteria, lifecycle, execution stat
 
 ### Requirement: Goal lifecycle is distinct from run execution
 
-The system SHALL represent the goal lifecycle independently from whether an individual run is idle, queued, running, waiting for the user, retrying, or limited by budget or account usage.
+The system SHALL represent the goal lifecycle independently from whether an individual run is idle, queued, running, waiting for the user, retrying, or limited by account usage.
 
 #### Scenario: A run ends before the goal is complete
 
@@ -117,7 +146,7 @@ Creating or continuing a goal SHALL NOT grant filesystem, network, credential, c
 
 ### Requirement: Goal presentation remains available while unfinished
 
-The session SHALL present an unfinished goal independently of the current run's todo panel, including objective, lifecycle and execution state, criterion progress, latest confirmed action or blocker, last progress time, optional budget state, and applicable user controls.
+The session SHALL present an unfinished goal independently of the current run's todo panel, including objective, lifecycle and execution state, criterion progress, latest confirmed action or blocker, last progress time, automatic continuations used against the cap, and applicable user controls.
 
 #### Scenario: Goal is active between runs
 

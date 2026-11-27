@@ -7,7 +7,7 @@ import { useVoiceService } from "./use-voice-service";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import type { UIMessage } from "ai";
-import { AppWindowMac, ArrowUp, Check, FileCog, FileText, ImagePlus, Lightbulb, LoaderCircle, MessageCirclePlus, Mic, Minimize2, Paperclip, PenLine, Plus, Plug, Presentation, ScanSearch, Square, SquarePlay, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, ArrowUp, Check, FileCog, FileText, Flag, ImagePlus, Lightbulb, LoaderCircle, MessageCirclePlus, Mic, Minimize2, Paperclip, PenLine, Plus, Plug, Presentation, ScanSearch, Square, SquarePlay, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
@@ -86,6 +86,7 @@ type PlusMenuEntry =
   | { kind: "image-generation"; id: "image-generation"; label: string; description: string }
   | { kind: "video-generation"; id: "video-generation"; label: string; description: string }
   | { kind: "agent"; id: string; label: string; description: string; name: string | null }
+  | { kind: "goal"; id: "goal"; label: string; description: string }
   | { kind: "extension"; id: string; label: string; description: string; extension: McpDirectoryInfo }
   | { kind: "plugin-file"; id: string; label: string; description: string; file: CloudImportedPluginFile }
   | { kind: "mcp-management"; id: "mcp-management"; label: string; description: string }
@@ -157,6 +158,10 @@ export type ComposerProps = {
   onOpenSettings?: () => void;
   currentFile?: string | null;
   onCreatePresentation?: (request: PresentationRequest) => void | Promise<void>;
+  /** Opens goal setup. The Goal plus-menu entry is shown only when this is set (local workspaces). */
+  onOpenGoal?: () => void;
+  /** The session already has an unfinished goal; the Goal entry shows as selected. */
+  goalActive?: boolean;
   focusEligible: boolean;
   draft: string;
   /** 持久建议由调用方管理；仅在草稿完全空时作为占位展示。 */
@@ -685,7 +690,12 @@ export function ReactSessionComposer(props: ComposerProps) {
       description: entry.description,
       name: entry.name,
     })),
-  ], [plusMenuAgentEntries, props.restrictedHost, props.imageGenerationModels.length, props.onCreatePresentation, props.videoGenerationModels.length]);
+    // Goal is a sibling of Plan mode, but it is not an agent: it opens setup
+    // and never changes the selected agent.
+    ...(props.onOpenGoal && !props.restrictedHost
+      ? [{ kind: "goal" as const, id: "goal" as const, label: t("composer.plus_menu_goal"), description: t("composer.plus_menu_goal_description") }]
+      : []),
+  ], [plusMenuAgentEntries, props.restrictedHost, props.imageGenerationModels.length, props.onCreatePresentation, props.onOpenGoal, props.videoGenerationModels.length]);
   const plusMenuPluginEntries: PlusMenuEntry[] = [
     ...composerExtensions.map((extension) => ({
       kind: "extension" as const,
@@ -1262,6 +1272,11 @@ export function ReactSessionComposer(props: ComposerProps) {
       setPlusMenuOpen(false);
       return;
     }
+    if (entry.kind === "goal") {
+      setPlusMenuOpen(false);
+      props.onOpenGoal?.();
+      return;
+    }
     if (entry.kind === "extension") {
       applyExtensionSelection(entry.extension);
       return;
@@ -1548,6 +1563,8 @@ export function ReactSessionComposer(props: ComposerProps) {
                   );
                   const selected = entry.kind === "agent"
                     ? entry.name === null ? !props.selectedAgent : props.selectedAgent === entry.name
+                    : entry.kind === "goal"
+                      ? Boolean(props.goalActive)
                     : entry.kind === "image-generation"
                       ? Boolean(props.imageGeneration)
                       : entry.kind === "video-generation" && Boolean(props.videoGeneration);
@@ -1577,6 +1594,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                         {entry.kind === "image-generation" ? <ImagePlus size={18} strokeWidth={1.8} /> : null}
                         {entry.kind === "video-generation" ? <SquarePlay size={18} strokeWidth={1.8} /> : null}
                         {entry.kind === "agent" ? plusMenuAgentIcon(entry.name) : null}
+                        {entry.kind === "goal" ? <Flag size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
                         {entry.kind === "extension" ? extensionIcon(entry.extension, 18) : null}
                         {entry.kind === "plugin-file" ? <FileText size={18} strokeWidth={1.8} /> : null}
                         {entry.kind === "mcp" || entry.kind === "mcp-management" ? <Plug size={18} strokeWidth={1.8} /> : null}

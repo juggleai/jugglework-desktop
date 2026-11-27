@@ -126,6 +126,7 @@ import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } 
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { createSessionPendingOperationStore, type SessionPendingOperationStore } from "./session-pending-operations.js";
 import { createSessionModelPreferenceStore, type SessionModelPreferenceStore } from "./session-model-preferences.js";
+import { createGoalStore, type GoalStore } from "./goal-store.js";
 import { createSessionPendingOperationPump, type SessionPendingOperationPump } from "./session-pending-operation-pump.js";
 import { createSessionRunJournal } from "./session-run-journal.js";
 import { registerInteractionRoutes } from "./routes/interactions.js";
@@ -1061,6 +1062,15 @@ export async function startServer(config: ServerConfig, options: {
     sessionModelPreferences.close();
     throw error;
   }
+  let goalStore: GoalStore;
+  try {
+    goalStore = await createGoalStore({ config });
+  } catch (error) {
+    sessionPendingOperations.close();
+    sessionModelPreferences.close();
+    sessionRunJournal.close();
+    throw error;
+  }
   const lastJournalProgressAtByRun = new Map<string, number>();
   let fileDeliveries: FileDeliveryService | undefined;
   let officeDocuments: OfficeDocuments | undefined;
@@ -1085,6 +1095,18 @@ export async function startServer(config: ServerConfig, options: {
           error: error instanceof Error ? error.message : String(error),
         });
         throw error;
+      }
+      if (event.event === "run_terminal" || event.event === "start_rolled_back") {
+        // A goal's run ending moves the goal back to idle; it never completes the goal.
+        try {
+          goalStore.observeRunTerminal(event.run.workspaceId, event.run.sessionId, event.run.runId,
+            event.event === "run_terminal" ? (event.terminalReason ?? "completed") : "start_rolled_back");
+        } catch (error) {
+          logger.log("error", "session_goal_terminal_observe_failed", {
+            workspaceId: event.run.workspaceId, sessionId: event.run.sessionId, runId: event.run.runId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
       if (event.event === "progress") {
         lastJournalProgressAtByRun.set(event.run.runId, timestamp);
@@ -1298,6 +1320,7 @@ export async function startServer(config: ServerConfig, options: {
     sessionPendingOperations.close();
     sessionModelPreferences.close();
     sessionRunJournal.close();
+    goalStore.close();
     clearHostMarketplaceMcpOverlay(config);
     throw error;
   }
@@ -1714,6 +1737,7 @@ export async function startServer(config: ServerConfig, options: {
     nativeActions,
     localOfficeFiles,
     (automationId, prepareOptions) => automationExecutor.prepareSession(automationId, prepareOptions),
+    goalStore,
   );
 
   const sessionCreationLedger = createSessionCreationLedger();
@@ -1907,6 +1931,7 @@ export async function startServer(config: ServerConfig, options: {
     internalReloadDispatchers.delete(config);
     closeSessionPendingOperations();
     sessionRunJournal.close();
+    goalStore.close();
     void automationEventPoller.dispose();
     void automationSubscriptionSync.dispose();
     void automationScheduler.dispose();
@@ -2029,6 +2054,7 @@ export async function startServer(config: ServerConfig, options: {
         try { closeSessionPendingOperations(); } catch (error) { errors.push(error); }
       }
       try { sessionRunJournal.close(); } catch (error) { errors.push(error); }
+      try { goalStore.close(); } catch (error) { errors.push(error); }
       try { automationRepository.close(); } catch (error) { errors.push(error); }
       try { mediaGenerationRepository.close(); } catch (error) { errors.push(error); }
       try { imageGenerationRepository.close(); } catch (error) { errors.push(error); }
@@ -3273,6 +3299,7 @@ function createRoutes(
     automationId: string,
     options?: { initializeConversation?: boolean; locale?: string },
   ) => Promise<{ workspaceId: string; sessionId: string }>,
+  goals: GoalStore,
 ): { routes: Route[]; reconcileWorkspaceActiveRuns: (workspace: WorkspaceInfo, signal?: AbortSignal) => Promise<void> } {
   const routes: Route[] = [];
   let reconcileWorkspaceActiveRunsForMutation: (workspace: WorkspaceInfo, signal?: AbortSignal) => Promise<void> = async () => {};
@@ -3441,6 +3468,7 @@ function createRoutes(
     sessionMutations,
     sessionPendingOperations,
     sessionModelPreferences,
+    goals,
     readRunTerminalStatus: sessionRunJournal.terminalStatus,
     listRunTerminals: sessionRunJournal.listTerminals,
     listLifecycleFeed: sessionRunJournal.listFeed,
@@ -3471,6 +3499,7 @@ function createRoutes(
       sessionPermissionStore.deleteRootSessionRecords(workspaceId, sessionId);
       sessionResponseLanguageStore.delete(workspaceId, sessionId);
       sessionModelPreferences.delete(workspaceId, sessionId);
+      goals.deleteSession(workspaceId, sessionId);
     },
   });
   const { reconcileWorkspaceActiveRuns } = sessionRoutes;

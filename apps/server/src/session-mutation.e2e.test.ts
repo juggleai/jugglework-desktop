@@ -2598,3 +2598,129 @@ describe("authoritative session mutation APIs", () => {
     expect(engine.prompts).toHaveLength(0);
   });
 });
+
+describe("session goal APIs", () => {
+  async function goalHarness(sessionId: string) {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.sessions.set(sessionId, { id: sessionId, title: "Goal", directory: harness.config.workspaces[0]!.path, time: { created: 1, updated: 1 } });
+    const goalPath = `${harness.base}/workspace/ws_1/sessions/${sessionId}/goal`;
+    const call = async (method: string, path: string, body?: unknown) => {
+      const response = await fetch(path, { method, headers: harness.collaboratorHeaders, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      return { status: response.status, body: await response.json() as any };
+    };
+    const finishRun = () => {
+      engine.statuses.set(sessionId, { type: "idle" });
+      engine.messages.set(sessionId, [{ info: { id: `msg_done_${engine.prompts.length}`, sessionID: sessionId, role: "assistant", time: { created: Date.now(), completed: Date.now() }, finish: "stop" }, parts: [] }]);
+    };
+    return { engine, harness, goalPath, call, finishRun };
+  }
+
+  const createBody = { objective: "Ship CSV export", criteria: [{ text: "Export button downloads a CSV" }, { text: "Docs mention export", required: false }] };
+
+  test("creating a goal starts one run through the session start path with the goal envelope", async () => {
+    const sessionId = "ses_goal_create";
+    const { engine, goalPath, call } = await goalHarness(sessionId);
+    expect((await call("GET", goalPath)).body.item).toBeNull();
+
+    const created = await call("POST", goalPath, createBody);
+    expect(created.status).toBe(201);
+    expect(created.body.item).toMatchObject({ status: "active", execution: "running", continuationCap: 10, continuationStreak: 0 });
+    expect(created.body.run.runId).toEqual(expect.any(String));
+    expect(created.body.item.activeRunId).toBe(created.body.run.runId);
+    const prompt = engine.prompts.at(-1)?.body as { system?: string; parts?: Array<{ text?: string }> };
+    expect(prompt.system).toContain("## Active goal");
+    expect(prompt.system).toContain("Ship CSV export");
+    expect(prompt.system).toContain("<automatic_continuations_remaining>10</automatic_continuations_remaining>");
+    expect(prompt.parts?.[0]?.text).toContain("Ship CSV export");
+
+    // A second unfinished goal is rejected and returns the existing one.
+    const duplicate = await call("POST", goalPath, createBody);
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body.code).toBe("goal_exists");
+    expect((await call("GET", goalPath)).body.item.id).toBe(created.body.item.id);
+  });
+
+  test("a run ending returns the goal to idle without completing it, and continue starts the next run", async () => {
+    const sessionId = "ses_goal_continue";
+    const { harness, goalPath, call, finishRun } = await goalHarness(sessionId);
+    const created = (await call("POST", goalPath, createBody)).body.item;
+    finishRun();
+    await waitUntil(async () => {
+      await harness.server.reconcileActiveSessionRuns?.();
+      return (await call("GET", goalPath)).body.item.execution === "idle";
+    }, 3_000);
+    const idle = (await call("GET", goalPath)).body.item;
+    expect(idle).toMatchObject({ status: "active", activeRunId: null });
+
+    // Stale versions are rejected.
+    expect((await call("POST", `${goalPath}/${created.id}/continue`, { expectedVersion: created.version })).status).toBe(409);
+    const continued = await call("POST", `${goalPath}/${idle.id}/continue`, { expectedVersion: idle.version });
+    expect(continued.status).toBe(202);
+    expect(continued.body.item).toMatchObject({ execution: "running", continuationTotal: 1, continuationStreak: 0 });
+    expect(continued.body.run.ordinal).toBe(2);
+  });
+
+  test("continue while the session is busy fails without leaving the goal queued", async () => {
+    const sessionId = "ses_goal_busy";
+    const { goalPath, call } = await goalHarness(sessionId);
+    const created = await call("POST", goalPath, { ...createBody, start: false });
+    expect(created.body.item.execution).toBe("idle");
+    // Occupy the session with an ordinary run.
+    const ordinary = await call("POST", `${goalPath.replace(/\/goal$/, "")}/runs/start`, {
+      origin: "local-renderer", startCommandCorrelationId: "cmd_ordinary", prompt: { parts: [{ type: "text", text: "busy" }] },
+    });
+    expect(ordinary.status).toBe(202);
+    const blocked = await call("POST", `${goalPath}/${created.body.item.id}/continue`, { expectedVersion: created.body.item.version });
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.code).toBe("session_busy");
+    expect((await call("GET", goalPath)).body.item).toMatchObject({ execution: "idle", activeRunId: null });
+  });
+
+  test("pause, resume, edit, complete and cancel enforce lifecycle rules", async () => {
+    const sessionId = "ses_goal_lifecycle";
+    const { goalPath, call } = await goalHarness(sessionId);
+    let goal = (await call("POST", goalPath, { ...createBody, start: false })).body.item;
+    goal = (await call("POST", `${goalPath}/${goal.id}/pause`, { expectedVersion: goal.version })).body.item;
+    expect(goal.status).toBe("paused");
+    const pausedContinue = await call("POST", `${goalPath}/${goal.id}/continue`, { expectedVersion: goal.version });
+    expect(pausedContinue.status).toBe(409);
+    expect(pausedContinue.body.code).toBe("goal_invalid_transition");
+    goal = (await call("POST", `${goalPath}/${goal.id}/resume`, { expectedVersion: goal.version })).body.item;
+    expect(goal.status).toBe("active");
+    const edited = await call("PATCH", `${goalPath}/${goal.id}`, { expectedVersion: goal.version, objective: "Ship CSV and XLSX export" });
+    expect(edited.status).toBe(200);
+    goal = edited.body.item;
+    expect(goal.objective).toBe("Ship CSV and XLSX export");
+    const premature = await call("POST", `${goalPath}/${goal.id}/complete`, { expectedVersion: goal.version });
+    expect(premature.status).toBe(409);
+    expect(premature.body.code).toBe("goal_criteria_unmet");
+    goal = (await call("POST", `${goalPath}/${goal.id}/complete`, { expectedVersion: goal.version, override: true })).body.item;
+    expect(goal.status).toBe("completed");
+    expect((await call("POST", `${goalPath}/${goal.id}/cancel`, { expectedVersion: goal.version })).body.code).toBe("goal_terminal");
+    // After a terminal goal, a new one may be created.
+    expect((await call("POST", goalPath, { ...createBody, start: false })).status).toBe(201);
+    const history = await call("GET", `${goalPath}/${goal.id}/runs`);
+    expect(history.body.events.map((event: { event: string }) => event.event)).toContain("completed_by_user");
+  });
+
+  test("goals are rejected for non-local workspaces and validated on input", async () => {
+    const sessionId = "ses_goal_validation";
+    const { harness, goalPath, call } = await goalHarness(sessionId);
+    expect((await call("POST", goalPath, { objective: "x", criteria: [] })).status).toBe(400);
+    expect((await call("POST", goalPath, { objective: "x", criteria: [{ text: "only optional", required: false }] })).status).toBe(400);
+    harness.config.workspaces[0]!.sandboxBackend = "docker";
+    const sandbox = await call("POST", goalPath, createBody);
+    expect(sandbox.status).toBe(400);
+    expect(sandbox.body.code).toBe("goal_workspace_unsupported");
+  });
+
+  test("deleting the session removes its goal", async () => {
+    const sessionId = "ses_goal_delete";
+    const { engine, harness, goalPath, call } = await goalHarness(sessionId);
+    await call("POST", goalPath, { ...createBody, start: false });
+    expect((await fetch(`${harness.base}/workspace/ws_1/sessions/${sessionId}`, { method: "DELETE", headers: harness.collaboratorHeaders })).status).toBe(200);
+    engine.sessions.set(sessionId, { id: sessionId, title: "Recreated", directory: harness.config.workspaces[0]!.path, time: { created: 2, updated: 2 } });
+    expect((await call("GET", goalPath)).body.item).toBeNull();
+  });
+});

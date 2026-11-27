@@ -6,7 +6,7 @@ Define safe, durable, and bounded automatic continuation for unfinished session 
 
 ### Requirement: Eligible unfinished goals continue automatically
 
-The system SHALL evaluate an active unfinished goal for continuation after a goal-linked run reaches an authoritative terminal or idle state and after startup reconciliation. It SHALL admit continuation only when no user interaction, permission decision, budget limit, usage limit, active root run, or terminal goal state prevents execution.
+The system SHALL evaluate an active unfinished goal for continuation after a goal-linked run reaches an authoritative terminal or idle state and after startup reconciliation. It SHALL admit continuation only when no user interaction, permission decision, usage limit, continuation cap, active root run, or terminal goal state prevents execution.
 
 #### Scenario: Active goal has remaining criteria
 
@@ -52,7 +52,7 @@ The system SHALL route automatic continuation through the same authoritative mut
 
 ### Requirement: Every continuation receives a compact durable goal envelope
 
-Before dispatching a goal run, the system SHALL construct context from the current goal objective, criteria and status, latest durable checkpoint, next-action summary, continuation ordinal, blocker state, and remaining optional budget. It SHALL instruct the run to inspect authoritative workspace state and avoid repeating confirmed work.
+Before dispatching a goal run, the system SHALL construct context from the current goal objective, criteria and status, latest durable checkpoint, next-action summary, continuation ordinal, remaining automatic continuations before the cap, and blocker state. It SHALL instruct the run to inspect authoritative workspace state and avoid repeating confirmed work.
 
 #### Scenario: Continuation follows context compaction
 
@@ -90,7 +90,7 @@ The system SHALL distinguish provider or tool activity from meaningful goal prog
 
 ### Requirement: Automatic continuation is capped
 
-The system SHALL apply a finite maximum to consecutive automatic continuations and SHALL require explicit user continuation after the cap is reached. Reaching the cap SHALL NOT complete, cancel, or block the goal.
+The system SHALL apply a maximum of 10 consecutive automatic continuations by default and SHALL require explicit user continuation after the cap is reached. The count SHALL reset when the user explicitly continues or resumes the goal, and SHALL NOT reset on automatic continuations. Reaching the cap SHALL NOT complete, cancel, or block the goal.
 
 #### Scenario: Continuation cap is reached
 
@@ -98,27 +98,28 @@ The system SHALL apply a finite maximum to consecutive automatic continuations a
 - **THEN** execution changes to waiting for the user
 - **AND** the UI offers an explicit continue action with the goal and checkpoint preserved
 
-### Requirement: Optional goal budgets stop but do not complete work
+#### Scenario: User continues after the cap
 
-The system SHALL enforce a positive token budget only when the user explicitly supplies one, SHALL accumulate available usage for goal-linked runs monotonically, and SHALL stop admission when the budget is exhausted. Budget or account usage limits SHALL NOT be treated as completion or a model-declared blocker.
+- **WHEN** the user explicitly continues a goal that reached the cap
+- **THEN** the consecutive automatic-continuation count resets to zero
+- **AND** up to 10 further automatic continuations may be admitted
 
-#### Scenario: Goal has no explicit budget
+### Requirement: Account usage limits stop but do not complete work
 
-- **WHEN** the user creates a goal without a token budget
-- **THEN** the system does not invent one
-- **AND** continuation remains governed by usage availability and other safety gates
+The first release SHALL NOT support per-goal token budgets. When the account cannot admit another model run because of an external usage limit, the system SHALL stop admission and SHALL NOT treat the limit as completion or a model-declared blocker.
 
-#### Scenario: Explicit budget is exhausted
+#### Scenario: Goal is created
 
-- **WHEN** observed goal usage reaches the user-specified budget while criteria remain
-- **THEN** execution becomes budget-limited and no continuation is admitted
-- **AND** the goal remains unfinished
+- **WHEN** the user creates a goal
+- **THEN** no token budget is requested, stored, or enforced
+- **AND** continuation is bounded by the consecutive automatic-continuation cap and the other safety gates
 
 #### Scenario: Account usage is unavailable
 
 - **WHEN** the account cannot admit another model run because of an external usage limit
 - **THEN** execution becomes usage-limited
-- **AND** only an external reset or user-controlled change can make it eligible again
+- **AND** the goal remains unfinished
+- **AND** only an external reset or an explicit user continue can make it eligible again
 
 ### Requirement: Pending interaction suspends the continuation pump
 

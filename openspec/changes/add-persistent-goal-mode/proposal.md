@@ -5,12 +5,14 @@ JuggleWork currently treats each submitted prompt as an independent session run:
 ## What Changes
 
 - Add an explicit session goal that the user can create with an objective and testable success criteria; a session may have at most one unfinished goal.
-- Persist goal lifecycle, execution state, checkpoints, run attempts, optional user-specified budget, and a content-minimized event history in the server-owned runtime database.
+- Add a `目标` (Goal) entry to the composer plus menu as a sibling of `计划模式` (Plan mode). Goal runs use the ordinary execution agent; Plan mode keeps its current behavior.
+- Limit the first release to local workspaces.
+- Persist goal lifecycle, execution state, checkpoints, run attempts, the consecutive automatic-continuation count, and a content-minimized event history in the server-owned runtime database. Per-goal token budgets are out of scope for the first release.
 - Add structured model-facing goal operations for creating a goal only from explicit user intent, reading the active goal, reporting durable progress or a blocker, and declaring completion with evidence.
 - Re-inject a compact goal envelope on every goal run so automatic context compaction and process restarts do not erase the objective or cause completed work to be repeated.
 - Add a server-owned coordinator that can safely continue an active goal across multiple runs using durable, idempotent admission records and authoritative session state.
-- Stop automatic continuation for explicit pause or cancellation, required user interaction, usage or budget limits, repeated blockers, and confirmed no-progress conditions.
-- Add a persistent goal card to the session UI with objective, criteria progress, current activity, last progress time, budget state, and pause/resume/cancel controls.
+- Stop automatic continuation for explicit pause or cancellation, required user interaction, account usage limits, repeated blockers, confirmed no-progress conditions, and a default cap of 10 consecutive automatic continuations.
+- Add a persistent goal card to the session UI with objective, criteria progress, current activity, last progress time, continuations used against the cap, and pause/resume/cancel/continue controls.
 - Keep goal continuation within the session's existing permission and external-side-effect boundaries; goal mode grants no additional authority.
 
 ## Capabilities
@@ -18,7 +20,7 @@ JuggleWork currently treats each submitted prompt as an independent session run:
 ### New Capabilities
 
 - `persistent-session-goals`: User-visible creation, persistence, lifecycle, checkpoints, model protocol, progress presentation, and recovery of a session-scoped goal.
-- `session-goal-continuation`: Durable and idempotent automatic continuation, no-progress and blocker handling, budget enforcement, and coordination with authoritative session execution.
+- `session-goal-continuation`: Durable and idempotent automatic continuation, no-progress and blocker handling, the continuation cap, and coordination with authoritative session execution.
 
 ### Modified Capabilities
 

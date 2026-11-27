@@ -360,6 +360,43 @@ export type JuggleWorkSessionStartResult =
   | { disposition: "started"; run: JuggleWorkSessionRun }
   | { disposition: "steered"; admissionId: string };
 
+export type JuggleWorkGoalStatus = "active" | "paused" | "blocked" | "completed" | "cancelled";
+export type JuggleWorkGoalExecution = "idle" | "queued" | "running" | "waiting_user" | "retrying" | "usage_limited";
+export type JuggleWorkGoalCriterion = {
+  id: string;
+  text: string;
+  required: boolean;
+  status: "pending" | "met" | "waived";
+  evidence: string | null;
+};
+export type JuggleWorkSessionGoal = {
+  id: string;
+  workspaceId: string;
+  sessionId: string;
+  objective: string;
+  criteria: JuggleWorkGoalCriterion[];
+  status: JuggleWorkGoalStatus;
+  execution: JuggleWorkGoalExecution;
+  checkpoint: string | null;
+  continuationTotal: number;
+  continuationStreak: number;
+  continuationCap: number;
+  blockerReason: string | null;
+  activeRunId: string | null;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+};
+export type JuggleWorkGoalCriterionInput = { id?: string; text: string; required?: boolean };
+export type JuggleWorkGoalRunOptions = { model?: { providerID: string; modelID: string }; variant?: string };
+export type JuggleWorkGoalStartResult = {
+  item: JuggleWorkSessionGoal;
+  run: { ordinal: number; runId: string | null } | null;
+  /** Set when the goal was created but its first run could not start (for example, session busy). */
+  startError?: { code: string };
+};
+
 export type JuggleWorkSessionPrompt = {
   /** 云文档引用与面板激活标签，只含定位信息。 */
   cloudDocTurn?: { currentTenantId: string | null; references: unknown[]; activeDoc?: unknown };
@@ -2859,6 +2896,16 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       body: input,
       timeoutMs: 0,
     }),
+    getSessionGoal: (workspaceId: string, sessionId: string, requestOptions?: { signal?: AbortSignal }) =>
+      requestJson<{ item: JuggleWorkSessionGoal | null }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/goal`, { token, hostToken, signal: requestOptions?.signal }),
+    createSessionGoal: (workspaceId: string, sessionId: string, input: { objective: string; criteria: JuggleWorkGoalCriterionInput[]; start?: boolean; run?: JuggleWorkGoalRunOptions }) =>
+      requestJson<JuggleWorkGoalStartResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/goal`, { token, hostToken, method: "POST", body: input, timeoutMs: 0 }),
+    editSessionGoal: (workspaceId: string, sessionId: string, goalId: string, input: { expectedVersion: number; objective?: string; criteria?: JuggleWorkGoalCriterionInput[] }) =>
+      requestJson<{ item: JuggleWorkSessionGoal }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/goal/${encodeURIComponent(goalId)}`, { token, hostToken, method: "PATCH", body: input }),
+    updateSessionGoalLifecycle: (workspaceId: string, sessionId: string, goalId: string, action: "pause" | "resume" | "cancel" | "complete", input: { expectedVersion: number; override?: boolean }) =>
+      requestJson<{ item: JuggleWorkSessionGoal }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/goal/${encodeURIComponent(goalId)}/${action}`, { token, hostToken, method: "POST", body: input }),
+    continueSessionGoal: (workspaceId: string, sessionId: string, goalId: string, input: { expectedVersion: number; run?: JuggleWorkGoalRunOptions }) =>
+      requestJson<JuggleWorkGoalStartResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/goal/${encodeURIComponent(goalId)}/continue`, { token, hostToken, method: "POST", body: input, timeoutMs: 0 }),
     abortSessionRun: (
       workspaceId: string,
       sessionId: string,

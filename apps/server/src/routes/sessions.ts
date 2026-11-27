@@ -42,6 +42,8 @@ import {
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
 import { SessionPendingOperationError, type SessionPendingOperationStore } from "../session-pending-operations.js";
 import type { SessionModelPreferenceStore } from "../session-model-preferences.js";
+import type { GoalStore } from "../goal-store.js";
+import { registerGoalRoutes } from "./goals.js";
 import {
   SESSION_PENDING_OPERATION_IDLE_CONFIRM_MS,
   type SessionPendingOperationPump,
@@ -96,6 +98,8 @@ interface RegisterSessionRoutesOptions {
   ackLifecycleFeed?: import("../session-run-journal.js").SessionRunJournal["ackFeed"];
   sessionPendingOperations: SessionPendingOperationStore;
   sessionModelPreferences: SessionModelPreferenceStore;
+  /** Session goals; goal routes are registered only when provided. */
+  goals?: GoalStore;
   sessionPendingOperationPump: SessionPendingOperationPump;
   applySessionResponseLanguage?: (input: {
     workspaceId: string;
@@ -1611,6 +1615,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     const body = parseRunBody(startRunBodySchema, await readJsonBody(ctx.request));
     return startSessionRun(ctx, { sessionId, ...body, prompt: body.prompt as Record<string, unknown> });
   });
+
+  if (options.goals) {
+    registerGoalRoutes({
+      routes, config, goals: options.goals, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspace,
+      startSessionRun: (ctx, input) => startSessionRun(ctx, input),
+    });
+  }
 
   addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/pending/:pendingOperationId/cancel", "client", async (ctx) => {
     ensureWritable(config);

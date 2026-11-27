@@ -71,6 +71,8 @@ import {
   VIDEO_DURATION_DEFAULT_SECONDS,
   type ComposerVideoModelOption,
 } from "./composer/video-generation";
+import { emptyGoalDraft, GoalCard, goalDraftFromGoal, GoalSetupDialog, type GoalDraft } from "./goal-panel";
+import { isGoalUnfinished, useSessionGoal } from "./use-session-goal";
 import { createStopGuard, effectiveSessionRunning, effectiveThreadStatus, isSessionBusyError, shouldReconcileAfterCoordinatorEnded, shouldReportAbortFailure, shouldSettleStaleRunProjection } from "./session-run-recovery";
 import { useActiveSnapshotReconciliation } from "./active-snapshot-reconciliation";
 import { generationDraftAvailableInCache, imageModelsQueryOptions, isManagedMediaModel, managedMediaScope, mediaModelQueryScope, videoModelsQueryOptions } from "@/react-app/domains/connections/media-model-queries";
@@ -1615,6 +1617,79 @@ export function SessionSurface(props: SessionSurfaceProps) {
     await submitComposerDraft();
   }, [submitComposerDraft]);
 
+  // Goals are a local-workspace feature in the first release.
+  const goalsAvailable = !fileHost && !props.isRemoteWorkspace && !props.isSandboxWorkspace;
+  const [goalDialog, setGoalDialog] = useState<{ mode: "create" | "edit"; initial: GoalDraft } | null>(null);
+  const [goalError, setGoalError] = useState<string | null>(null);
+  const [dismissedGoalId, setDismissedGoalId] = useState<string | null>(null);
+  const sessionGoal = useSessionGoal({
+    client: props.client,
+    workspaceId: props.workspaceId,
+    sessionId: props.sessionId,
+    enabled: goalsAvailable,
+    onRunStarted: () => {
+      // The run was admitted by the server; mirror the normal send path so the
+      // transcript and running controls pick it up without waiting for SSE.
+      useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "busy" });
+      setAwaitingAssistantBaseline(renderedMessages.length);
+      void activeRunsQuery.refetch();
+      void snapshotQuery.refetch();
+    },
+  });
+  const goalRunOptions = useCallback(() => ({
+    model: props.selectedModel,
+    ...(props.modelVariant ? { variant: props.modelVariant } : {}),
+  }), [props.modelVariant, props.selectedModel]);
+  const goalRequestFailed = useCallback(() => setGoalError(t("goal.request_failed")), []);
+  const openGoal = useCallback(() => {
+    setGoalError(null);
+    const existing = sessionGoal.goal;
+    setGoalDialog(isGoalUnfinished(existing)
+      ? { mode: "edit", initial: goalDraftFromGoal(existing) }
+      : { mode: "create", initial: emptyGoalDraft() });
+  }, [sessionGoal.goal]);
+  const submitGoal = useCallback((payload: { objective: string; criteria: import("../../../../app/lib/jugglework-server").JuggleWorkGoalCriterionInput[] }) => {
+    setGoalError(null);
+    if (goalDialog?.mode === "edit") {
+      sessionGoal.edit.mutate(payload, { onSuccess: () => setGoalDialog(null), onError: goalRequestFailed });
+      return;
+    }
+    // Plan mode cannot modify files, so a goal would never make progress there.
+    if (props.selectedAgent?.trim().toLowerCase() === "plan") props.onSelectAgent(null);
+    sessionGoal.create.mutate({ ...payload, run: goalRunOptions() }, {
+      onSuccess: (result) => {
+        setGoalDialog(null);
+        setDismissedGoalId(null);
+        if (result.startError) setGoalError(t("goal.start_failed"));
+      },
+      onError: goalRequestFailed,
+    });
+  }, [goalDialog?.mode, goalRequestFailed, goalRunOptions, props.onSelectAgent, props.selectedAgent, sessionGoal.create, sessionGoal.edit]);
+  const visibleGoal = goalsAvailable && sessionGoal.goal && sessionGoal.goal.id !== dismissedGoalId ? sessionGoal.goal : null;
+  const goalPending = sessionGoal.lifecycle.isPending || sessionGoal.continueGoal.isPending || sessionGoal.create.isPending;
+  const goalCard = visibleGoal ? (
+    <GoalCard
+      goal={visibleGoal}
+      sessionRunning={chatStreaming}
+      pending={goalPending}
+      error={goalError}
+      onContinue={() => { setGoalError(null); sessionGoal.continueGoal.mutate(goalRunOptions(), { onError: goalRequestFailed }); }}
+      onPause={() => sessionGoal.lifecycle.mutate({ type: "pause" }, { onError: goalRequestFailed })}
+      onResume={() => sessionGoal.lifecycle.mutate({ type: "resume" }, { onError: goalRequestFailed })}
+      onEdit={openGoal}
+      onComplete={() => {
+        const unmet = visibleGoal.criteria.some((criterion) => criterion.required && criterion.status === "pending");
+        if (unmet && !window.confirm(t("goal.confirm_complete"))) return;
+        sessionGoal.lifecycle.mutate({ type: "complete", override: unmet }, { onError: goalRequestFailed });
+      }}
+      onCancel={() => {
+        if (!window.confirm(t("goal.confirm_cancel"))) return;
+        sessionGoal.lifecycle.mutate({ type: "cancel" }, { onError: goalRequestFailed });
+      }}
+      onDismiss={() => setDismissedGoalId(visibleGoal.id)}
+    />
+  ) : null;
+
   const handleCreatePresentation = useCallback(async (request: PresentationRequest) => {
     const turnId = await submitPresentationCreation(request, sendDraft);
     if (turnId) addPendingPresentation(props.workspaceId, props.sessionId, turnId);
@@ -2835,6 +2910,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
             onOpenModelPicker={props.onModelClick}
           />
         ) : null}
+        {goalsAvailable && goalDialog ? (
+          <GoalSetupDialog
+            open
+            mode={goalDialog.mode}
+            initial={goalDialog.initial}
+            continuationCap={sessionGoal.goal?.continuationCap ?? 10}
+            planModeSelected={props.selectedAgent?.trim().toLowerCase() === "plan"}
+            submitting={sessionGoal.create.isPending || sessionGoal.edit.isPending}
+            error={goalError}
+            onOpenChange={(open) => { if (!open) setGoalDialog(null); }}
+            onSubmit={submitGoal}
+          />
+        ) : null}
         <ReactSessionComposer
           restrictedHost={fileHost}
           officeGroups={officeGroups}
@@ -2845,6 +2933,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
           onOpenSettings={props.onOpenSettingsSection ? () => props.onOpenSettingsSection?.("mcps") : undefined}
           currentFile={currentFile}
           onCreatePresentation={fileHost || props.isRemoteWorkspace ? undefined : handleCreatePresentation}
+          onOpenGoal={goalsAvailable ? openGoal : undefined}
+          goalActive={isGoalUnfinished(sessionGoal.goal)}
           focusEligible={props.visible !== false && props.isControlTarget && !props.modelPickerOpen}
           draft={draft}
           promptSuggestion={promptSuggestions.suggestion}
@@ -2944,8 +3034,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
           isSandboxWorkspace={props.isSandboxWorkspace}
           onUploadInboxFiles={props.onUploadInboxFiles ?? handleUploadInboxFiles}
           topAccessory={
-            activeQuestion || showTaskProgress || gatedActivePermission || queuedDrafts.length > 0 ? (
+            goalCard || activeQuestion || showTaskProgress || gatedActivePermission || queuedDrafts.length > 0 ? (
               <div>
+                {goalCard}
                 {!fileHost && queuedDrafts.length > 0 ? (
                   <QueuedMessagesPanel
                     drafts={queuedDrafts}
