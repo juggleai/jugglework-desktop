@@ -808,3 +808,9 @@ Git closeout is documentation-only. Final push and fast-forward SHAs are reporte
 - [x] 48.7 Record the standing-policy skips for both immutable-target and Stable-feed real lower-version upgrade canaries and for mutable Cache-Control mutation and required-value validation. Public verification still ran. The observed `public, max-age=31536000` can leave older responses in client/CDN caches despite refresh and exact read-back. No installation, relaunch, retained state, legacy-feed continuity or fleet cache convergence was demonstrated.
 
 Git closeout is documentation-only. Final push and fast-forward SHAs are reported separately from the commit itself.
+
+## 49. Stable macOS ARM64 1.2.43 — candidate preparation
+
+- [x] 49.1 Synchronize App, Desktop and embedded Server to `1.2.43`; record isolated source validation in [the preparation record](./source-freeze-1.2.43.md).
+- [ ] 49.2 Build and verify the final signed and notarized native package from the frozen commit, including packaged updater configuration and independent packaged-media acceptance.
+- [ ] 49.3 Verify immutable publication and serialized Stable promotion against the approved `1.2.42` predecessor, then record authorized downstream rollout separately.

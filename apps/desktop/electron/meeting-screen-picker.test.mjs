@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { createMeetingScreenPicker } from './meeting-screen-picker.mjs';
 function fixture(options = {}) {
   const notices = [], answers = [];
+  /** @returns {any} */
   function window() {
     const webContents = Object.assign(new EventEmitter(), { mainFrame: {}, isDestroyed: () => false,
       send: (channel, value) => notices.push({channel, ...value}) });
