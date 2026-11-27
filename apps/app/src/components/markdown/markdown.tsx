@@ -106,7 +106,12 @@ function MarkdownBlockInner({
   const syncHtml = useMemo(() => {
     return renderMarkdownHtml(text, "chat", references);
   }, [text, references]);
-  const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; references: OpenTarget[]; html: string } | null>(null);
+  const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; referencesKey: string; html: string } | null>(null);
+  // 父组件每次重渲染都会产生新的 references 数组；按内容而不是引用比较，
+  // 否则已完成消息的高亮结果会被反复判为过期并退回纯文本，造成代码块闪烁。
+  const referencesKey = useMemo(() => references.map((target) => `${target.kind}:${target.value}`).join("\n"), [references]);
+  const referencesRef = useRef(references);
+  referencesRef.current = references;
 
   useEffect(() => {
     if (streaming || !hasFencedCodeBlock(text)) {
@@ -115,9 +120,9 @@ function MarkdownBlockInner({
     }
 
     let cancelled = false;
-    void renderHighlightedMarkdownHtml(text, "chat", references).then((html) => {
+    void renderHighlightedMarkdownHtml(text, "chat", referencesRef.current).then((html) => {
       if (!cancelled && html.trim()) {
-        setHighlightedHtml({ text, references, html });
+        setHighlightedHtml({ text, referencesKey, html });
       }
     }).catch(() => {
       if (!cancelled) {
@@ -127,9 +132,9 @@ function MarkdownBlockInner({
     return () => {
       cancelled = true;
     };
-  }, [streaming, text, references]);
+  }, [streaming, text, referencesKey]);
 
-  const html = !streaming && highlightedHtml?.text === text && highlightedHtml.references === references ? highlightedHtml.html : syncHtml;
+  const html = !streaming && highlightedHtml?.text === text && highlightedHtml.referencesKey === referencesKey ? highlightedHtml.html : syncHtml;
 
   // Re-apply search highlights after EVERY render (no dependency array on
   // purpose): motion.div re-sets dangerouslySetInnerHTML on unrelated
