@@ -1,0 +1,210 @@
+{
+  "schema": "com.juggleai.jugglework.desktop-release-result",
+  "schemaVersion": 1,
+  "version": "1.2.43",
+  "channel": "stable",
+  "platform": "mac",
+  "architecture": "arm64",
+  "sourceCommit": "d5ef39b346d310c38fb650a36299c200d592eb7e",
+  "evidence": {
+    "root": "release-evidence/jugglework-desktop/1.2.43",
+    "promotion": {
+      "path": "native-build.jWYgHd/qiniu-release-evidence.json",
+      "sha256": "2206bd7fb8aa28d59c106ac5fee92b3088e3a9c15a9c8cb825951cb15be47ae6"
+    },
+    "denOverseas": {
+      "path": "den-1.2.43-overseas-result-20261127T094226320196Z.json",
+      "sha256": "0423e6226a7df2f2bd9236d61de3c8ed39ac75ffaa50b1fcff329ebd00a8ef0f"
+    },
+    "denOverseasPostApplyReadOnlyVerification": {
+      "path": "den-1.2.43-overseas-post-apply-readonly-verification.json",
+      "sha256": "c58ad67a450ac460298f2129826a34d004ec72f18609a34435e49587dc2b4135"
+    },
+    "denOverseasReadOnlyAddendum": {
+      "path": "den-1.2.43-overseas-readonly-addendum-20261127T094901947691Z.json",
+      "sha256": "60278ab4068a862bdbcd6b9928dd4d19ca788715182c2268c174f1dc2f014ed7"
+    }
+  },
+  "promotion": {
+    "source": "actual local CLI",
+    "status": "verified",
+    "promotedAt": "2026-11-27T09:40:37.477Z",
+    "bucket": "jugglework",
+    "origin": "https://downloads.jugglework.cn",
+    "previousVersion": "1.2.42",
+    "expectedPreviousManifestSha256": "78f4a98a00fc762d6af91ac2f66f641f235339082b95f127c55157a8f53e28ce",
+    "lockKey": "jugglework/releases/locks/stable-mac.lock",
+    "lockAcquiredAt": "2026-11-27T09:40:27.617Z",
+    "lockReleased": true,
+    "cdnRefresh": "succeeded",
+    "verifiedImmutableObjects": 5,
+    "immutableVerification": "Qiniu size/ETag and public HTTPS MIME, length, Range/Content-Range, full GET SHA-256/SHA-512 and long-lived caching verified before and after promotion.",
+    "immutableManifestUrl": "https://downloads.jugglework.cn/jugglework/releases/v1.2.43/mac/latest-mac.yml",
+    "stableManifestUrl": "https://downloads.jugglework.cn/jugglework/releases/stable/mac/latest-mac.yml",
+    "manifestBytes": 706,
+    "manifestSha256": "4a5f220bd2eee3448ac79133e687c99291f9d6e4695f6ced45a3fc9ceb20ddf6",
+    "manifestETag": "FmMZvbAFqWRrHAJzT6E20y0RSFxO",
+    "stableReadBackAt": "2026-11-27T09:40:36.295Z",
+    "stableReadBackAttempts": 6,
+    "stableAndImmutableBytesEqual": true,
+    "manifestFullGetStatus": 200,
+    "manifestRangeStatus": 206,
+    "manifestContentRange": "bytes 0-0/706",
+    "observedMutableCacheControl": "public, max-age=31536000",
+    "olderVersionCacheRisk": true,
+    "publicVerificationTransport": {
+      "firstAttempt": {
+        "transport": "curl HTTPS with HTTP/2 requested",
+        "outcome": "failed",
+        "failedCheck": "full public GET of the immutable ZIP",
+        "curlExitCode": 92,
+        "bytesReceivedBeforeFailure": 26214400,
+        "effect": "The publication stage stopped with a stop record; no promotion followed from that attempt."
+      },
+      "recheck": {
+        "transport": "curl HTTPS forced to HTTP/1.1",
+        "mode": "read-only; upload not allowed",
+        "observations": 18,
+        "allExitCodesZero": true,
+        "fullGetBytesMatchSize": true,
+        "predecessorBytesAndAbsentLockRechecked": true
+      },
+      "note": "The HTTP/2 failure was not hidden or relabelled. Verification passed only on the separate HTTP/1.1 recheck, which does not diagnose the HTTP/2 fault. The later promotion-phase observations used HTTP/2-requested curl and all exited 0."
+    }
+  },
+  "trust": {
+    "bundleIdentifier": "com.juggleai.jugglework",
+    "teamIdentifier": "H7PDHSK3C7",
+    "deepStrictCodesign": "accepted",
+    "hardenedRuntime": "enabled",
+    "appSubmissionId": "40130d48-5a1b-422c-9fcb-a215b800c314",
+    "dmgSubmissionId": "a61c2818-dc03-41ec-8a17-5b9f80e35e31",
+    "appAndDmgNotarization": "accepted",
+    "appAndDmgStaples": "validated",
+    "appAndDmgGatekeeper": "accepted",
+    "notarizationException": null,
+    "independentPackagedMediaChecksPassed": 26,
+    "packagedMediaOrphans": false,
+    "packagedMediaNullDocumentDiagnostics": 7,
+    "productMainAcceptance": "not_performed",
+    "installedStateVerification": "not_performed"
+  },
+  "releasePolicy": {
+    "scope": "stable-mac-arm64-standing-policy",
+    "policyVersion": 1,
+    "minVersion": "1.2.35",
+    "currentCoordinates": {
+      "version": "1.2.43",
+      "channel": "stable",
+      "platform": "mac",
+      "architecture": "arm64",
+      "commit": "d5ef39b346d310c38fb650a36299c200d592eb7e",
+      "immutableManifestDigest": "4a5f220bd2eee3448ac79133e687c99291f9d6e4695f6ced45a3fc9ceb20ddf6",
+      "mutableManifestKey": "jugglework/releases/stable/mac/latest-mac.yml"
+    },
+    "reasons": {
+      "canary": "User standing authorization: skip only the absent lower-version real-client upgrade canary.",
+      "mutableCacheControl": "User standing authorization: skip only mutable Qiniu Cache-Control mutation and required-value validation."
+    }
+  },
+  "workflow": {
+    "authorization": "standing_policy",
+    "explicit": true,
+    "canary": "skipped_by_standing_policy",
+    "mutableCacheControlMutation": "skipped_by_standing_policy",
+    "mutableCacheControlValidation": "skipped_by_standing_policy"
+  },
+  "den": {
+    "overseas": {
+      "scriptResult": {
+        "status": "stopped",
+        "phase": "one-shot overseas apply and observation",
+        "reason": "application log window truncated or too large",
+        "detail": "The rollout script reads the application log with a 12 MiB cap. The read exceeded that cap during the post-restart observation (about 120 s in). The script recorded 'stopped' and exited with code 1. It performed no automatic retry or rollback.",
+        "applySubmitted": true,
+        "startedAtUTC": "2026-11-27T09:42:26.320470+00:00",
+        "finishedAtUTC": "2026-11-27T09:45:44.612062+00:00",
+        "restartInvokedAt": "2026-11-27T09:43:24.690897+00:00",
+        "atomicConfigReplacements": 1,
+        "supervisorRestarts": 1,
+        "restartedPid": 389903,
+        "lastObservationSampleAtUTC": "2026-11-27T09:45:15.372943+00:00",
+        "observationSamplesAllHttp200": true,
+        "observationSampleCount": 6,
+        "note": "The recorded script result stays 'stopped'. It is not relabelled as verified."
+      },
+      "postApplyReadOnlyVerification": {
+        "gate": "passed-readonly-preflight",
+        "blockers": [],
+        "productionMutationInvoked": false,
+        "chinaSSH": false,
+        "startedAtUTC": "2026-11-27T09:46:14.087922+00:00",
+        "finishedAtUTC": "2026-11-27T09:46:56.002718+00:00",
+        "latest": "1.2.43",
+        "minimum": "0.1.0",
+        "publishedCount": 30,
+        "allowedCount": 30,
+        "pid": 389903,
+        "binarySha256": "67e5ada241a89d0a5be14a863e7c01a54740dd340253c0a778995605db7401a4",
+        "supervisor": "RUNNING",
+        "localAndPublicHealthReadinessRuntimeConfigConsoleAppVersion": 200,
+        "loopback8021": true,
+        "criticalAndAdditionalHardCounts": 0
+      },
+      "readOnlyAddendum": {
+        "verdict": "failed",
+        "failedChecks": ["samePidAndStartNoSecondRestart"],
+        "passedChecks": 13,
+        "totalChecks": 14,
+        "writes": { "remote": false, "restart": false, "git": false, "site": false, "bucket": false, "chinaSSH": false },
+        "finishedAtUTC": "2026-11-27T09:49:12.630319+00:00",
+        "confirmed": {
+          "targetOnceInPublishedAndAllowed": true,
+          "listsAreBackupPlusTargetOnly": true,
+          "publishedAndAllowedCount": 30,
+          "nonVersionConfigBytesUnchanged": true,
+          "binaryUnchanged": true,
+          "minimumUnchanged": "0.1.0",
+          "backupPrivateAndChecksumsMatch": true,
+          "samePidAsRecordedRestart": true,
+          "sameProcessStartAsRecordedRestart": true,
+          "supervisorUptime": "0:05:34",
+          "loopback8021": true,
+          "publicOverseasContractMatchesLocal": true,
+          "chinaPublicContractUnchanged": true
+        },
+        "failedCheckExplanation": "That check also required the application log to keep the inode recorded at the restart anchor and to show exactly one control and one streaming startup line since the anchor. The log inode no longer matched the anchor, so the scan covered 0 bytes and counted 0 lines. This is consistent with log rotation but rotation was not directly verified. The restart count therefore could not be re-confirmed by this addendum. The recorded PID and process start time did match the restart recorded by the rollout script.",
+        "note": "The addendum is not reported as a pass. State confirmation rests on the 13 passing checks plus the post-apply read-only verification; the one-restart count rests on the script's own record."
+      },
+      "previousLatest": "1.2.42",
+      "latest": "1.2.43",
+      "minimum": "0.1.0",
+      "publishedCount": 30,
+      "allowedCount": 30,
+      "priorPublishedAndAllowedCount": 29,
+      "binaryAndNonVersionConfigBytesUnchanged": true,
+      "backupPrivate": true,
+      "logHttp5xxException": {
+        "authorization": "User standing authorization: overseas Desktop version releases, current and subsequent, record logged HTTP 5xx and do not block on those counts alone. Counts are reported as observed. China, other systems, health, config, panic, fatal, unknown-column, migration and restart gates are not exempt.",
+        "riskResolved": false,
+        "preApplyStrictSample": { "total": 0, "knownWorkerToken503": 0, "newOrUnclassified5xx": 0 },
+        "restartObservationBeforeStop": { "total": 1, "knownWorkerToken503": 1, "newOrUnclassified5xx": 0 },
+        "rollingBeforeApply": {
+          "throughUTC": "2026-11-27T09:42:33.693670+00:00",
+          "24h": { "workerToken503": 13, "other5xxLogLines": 14, "other5xxByStatus": { "500": 3, "502": 11 } },
+          "2h": { "workerToken503": 0, "other5xxLogLines": 5, "other5xxByStatus": { "500": 2, "502": 3 } }
+        },
+        "rollingAfterApplyReadOnly": {
+          "throughUTC": "2026-11-27T09:46:16.003956+00:00",
+          "24h": { "workerToken503": 14, "other5xxLogLines": 14, "other5xxByStatus": { "500": 3, "502": 11 } },
+          "2h": { "workerToken503": 1, "other5xxLogLines": 5, "other5xxByStatus": { "500": 2, "502": 3 } }
+        },
+        "criticalConfigFailureAndUnexpectedRestartCounts": 0,
+        "note": "Rolling windows overlap and are not additive. One more Worker-token 503 appears after apply in both windows than before, and the stopped script's observation window counted one; the evidence does not attribute them to the same event."
+      }
+    },
+    "china": { "latest": "1.2.37", "publicContractUnchanged": true, "readOnly": true }
+  },
+  "outOfScope": ["legacy origin writes", "website changes", "other platforms and channels", "new Den binary"],
+  "gitCompletion": "Final commit and remote ref verification are reported separately."
+}
