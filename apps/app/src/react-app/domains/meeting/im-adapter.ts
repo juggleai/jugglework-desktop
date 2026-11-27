@@ -4,6 +4,7 @@ export async function joinMeetingChatroom(
   id: string,
   receive: (message: ChatMessage) => void,
   signal?: (message: ChatMessage) => void,
+  shareDocs?: (message: ChatMessage) => void,
 ) {
   if (!juggleChatRuntime.isConnected())
     throw new Error("聊天连接尚未就绪，请稍后重试。");
@@ -17,6 +18,7 @@ export async function joinMeetingChatroom(
       ) {
         if (message.name === "jw:meeting-chat") receive(message);
         if (message.name === "jw:meeting-sync") signal?.(message);
+        if (message.name === "jw:meeting-share-docs") shareDocs?.(message);
       }
     },
   );
@@ -35,6 +37,10 @@ export async function joinMeetingChatroom(
   return {
     async signal(content: Record<string, unknown>) {
       return client.sendMessage({ conversationType: 3, conversationId: id, name: "jw:meeting-sync", content });
+    },
+    /** 发布共享人当前的完整状态；状态消息允许丢失，不重试。 */
+    async shareDocs(content: Record<string, unknown>) {
+      return client.sendMessage({ conversationType: 3, conversationId: id, name: "jw:meeting-share-docs", content });
     },
     async send(content: string) {
       return client.sendMessage({

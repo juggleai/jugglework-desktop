@@ -417,6 +417,12 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     onState(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:docs:state', handler); return () => ipcRenderer.removeListener('jugglework:docs:state', handler); },
     /** 在当前组织的 product 视图中执行文件上传（lookup／upload）。 */
     fileIntake: (input) => ipcRenderer.invoke('jugglework:docs:file-intake', bindDocsHost(input)),
+    /** 在会议窗口中打开文档视图；所属窗口由主进程固定为会议窗口。 */
+    meetingOpen: (input) => ipcRenderer.invoke('jugglework:docs:meeting-open', input),
+    /** 向会议文档视图下发视口、页内跳转或本地缩放。 */
+    meetingCommand: (input) => ipcRenderer.send('jugglework:docs:meeting-command', bindDocsHost(input)),
+    /** 监听会议文档视图上报的视口与共享人相对位置。 */
+    onMeetingEvent(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:docs:meeting-event', handler); return () => ipcRenderer.removeListener('jugglework:docs:meeting-event', handler); },
     /** 在当前页面滚动并高亮指定块。 */
     highlightBlocks: (input) => ipcRenderer.send('jugglework:docs:highlight-blocks', bindDocsHost(input)),
     /** 在当前组织 product 视图中执行 Docs AI 接口（search／read／edit／create）。 */

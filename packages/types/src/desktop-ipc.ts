@@ -627,6 +627,8 @@ export type ToonFactoryProjectOpenResult = ToonFactoryProjectState & {
 export type MeetingScreenSource = {
   id: string;
   kind: "screen" | "window";
+  /** 当前应用主窗口，固定排在列表首位。 */
+  isMainWindow?: boolean;
   name: string;
   thumbnail: string;
   appIcon: string;

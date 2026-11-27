@@ -107,6 +107,10 @@ ipcRenderer.on("jugglework:docs:highlight-blocks", (_event, message) => {
     location.origin,
   );
 });
+// 会议视口命令：只中继固定动作和受限载荷，宿主校验实例后才交给页面。
+ipcRenderer.on("jugglework:docs:meeting-command", (_event, message) => {
+  window.postMessage({ channel: "jugglework-docs-meeting-command", message }, location.origin);
+});
 window.addEventListener("message", (event) => {
   if (
     event.source !== window ||
@@ -128,6 +132,28 @@ window.addEventListener("message", (event) => {
   ipcRenderer.send("jugglework:docs:file-intake", message);
 });
 
+const MEETING_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** 会议消息只保留固定字段，其余内容一律丢弃。 */
+function safeMeeting(type, value) {
+  const num = (n) => (Number.isFinite(n) ? n : null);
+  if (type === "docs.sharer-relation") {
+    return {
+      direction: ["above", "below", "visible", "missing"].includes(value?.direction) ? value.direction : "missing",
+      heading: typeof value?.heading === "string" ? value.heading.slice(0, 80) : "",
+    };
+  }
+  if (!MEETING_ID.test(value?.workspaceId ?? "") || !MEETING_ID.test(value?.docId ?? "") ||
+    !["page", "edgeless"].includes(value?.mode)) return null;
+  const out = { workspaceId: value.workspaceId, docId: value.docId, mode: value.mode, userInput: value.userInput === true };
+  const a = value.anchor;
+  if (a && typeof a.blockId === "string" && a.blockId.length <= 128 && num(a.offset) !== null)
+    out.anchor = { blockId: a.blockId, offset: Math.min(1, Math.max(0, a.offset)) };
+  const e = value.edgeless;
+  if (e && num(e.centerX) !== null && num(e.centerY) !== null && num(e.zoom) !== null)
+    out.edgeless = { centerX: e.centerX, centerY: e.centerY, zoom: e.zoom };
+  return out;
+}
+
 // TIPS: 远程页面只上报状态，不暴露 Node、文件系统或任意宿主调用。
 window.addEventListener("message", (event) => {
   if (event.source !== window || event.origin !== window.location.origin)
@@ -145,6 +171,8 @@ window.addEventListener("message", (event) => {
       "docs.open-attachment",
       "docs.ai-reference",
       "docs.open-in-new-tab",
+      "docs.viewport",
+      "docs.sharer-relation",
     ].includes(message?.type)
   )
     return;
@@ -170,7 +198,11 @@ window.addEventListener("message", (event) => {
     ...(message.type === "docs.ready" ? { capabilities: {
       ...(message.capabilities?.contentState === 1 ? { contentState: 1 } : {}),
       ...(message.capabilities?.resume === 1 ? { resume: 1 } : {}),
+      ...(message.capabilities?.meetingViewport === 1 ? { meetingViewport: 1 } : {}),
     } } : {}),
+    ...(message.type === "docs.viewport" || message.type === "docs.sharer-relation"
+      ? { meeting: safeMeeting(message.type, message.meeting) }
+      : {}),
     ...(message.type === "docs.content-state" ? {
       targetKind: message.targetKind,
       docId: message.docId,

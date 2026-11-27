@@ -61,11 +61,15 @@ export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getM
       }
       if (pending !== current) throw new Error("共享选择已关闭。");
       current.allowed = new Set(sources.map(s => s.id));
+      // The JuggleWork main window is offered only when it is in this enumeration.
+      const mainSourceId = getMainWindow()?.getMediaSourceId?.();
+      const rank = source => source.id === mainSourceId ? 2 : source.id.startsWith("screen:") ? 1 : 0;
       let screenIndex = 0;
-      return [...sources].sort((a, b) => Number(b.id.startsWith("screen:")) - Number(a.id.startsWith("screen:"))).map(source => {
+      return [...sources].sort((a, b) => rank(b) - rank(a)).map(source => {
+        const isMain = source.id === mainSourceId;
         const kind = source.id.startsWith("screen:") ? "screen" : "window";
         const appIcon = kind === "window" && source.appIcon && !source.appIcon.isEmpty() ? source.appIcon.toDataURL({ scaleFactor: Math.max(1, ...(source.appIcon.getScaleFactors?.() || [1])) }) : "";
-        return { id: source.id, kind, name: kind === "screen" ? `桌面 ${++screenIndex}` : source.name,
+        return { id: source.id, kind, ...(isMain ? { isMainWindow: true } : {}), name: isMain ? "JuggleWork" : kind === "screen" ? `桌面 ${++screenIndex}` : source.name,
           thumbnail: source.thumbnail?.isEmpty() === false ? source.thumbnail.toDataURL() : "",
           appIcon, appKey: appIcon ? createHash("sha256").update(appIcon).digest("hex").slice(0, 16) : "" };
       });

@@ -3,6 +3,9 @@ import { exportMeetingDiagnostics } from "./diagnostics-export";
 import { bindRemoteAudio } from "./remote-audio";
 import { MeetingScreenPicker } from "./meeting-screen-picker";
 import { MeetingMembers } from "./meeting-members";
+import { MeetingDocStage } from "./meeting-doc-stage";
+import { MeetingShareBar } from "./meeting-share-bar";
+import { startDocShare, stopDocShare, switchDocShare, useDocShareStore } from "./doc-share-controller";
 import { MeetingChatToasts } from "./meeting-chat-toasts";
 import { MeetingCode } from "./meeting-code";
 import { MeetingInvitePicker, MeetingMemberAvatar } from "./meeting-invite-picker";
@@ -63,11 +66,16 @@ export function MeetingRoomHost() {
   const prefs = useMeetingUserPreferences();
   const [screenRequest, setScreenRequest] = useState<string | null>(null);
   const screenRequestRef = useRef<string | null>(null);
-  const closeScreenPicker = useCallback(() => {
+  const lastShareTab = useRef<"capture" | "docs">("capture");
+  const [shareDialog, setShareDialog] = useState<null | "capture" | "docs">(null);
+  const shareDialogRef = useRef<null | "capture" | "docs">(null);
+  const setDialog = (value: null | "capture" | "docs") => { shareDialogRef.current = value; setShareDialog(value); };
+  const cancelCapture = useCallback(() => {
     const id = screenRequestRef.current;
     screenRequestRef.current = null; setScreenRequest(null);
     if (id) void chooseMeetingScreenSource(id, null).catch(() => {});
   }, []);
+  const closeScreenPicker = useCallback(() => { cancelCapture(); shareDialogRef.current = null; setShareDialog(null); }, [cancelCapture]);
   const [leaving, setLeaving] = useState(false);
   const [text, setText] = useState("");
   const deviceRequest = useRef(0);
@@ -100,11 +108,14 @@ export function MeetingRoomHost() {
       const id = (event as CustomEvent<{ requestId: string }>).detail?.requestId;
       if (!id) return;
       if (!useMeetingStore.getState().meeting) { void chooseMeetingScreenSource(id, null).catch(() => {}); return; }
-      screenRequestRef.current = id; setScreenRequest(id);
+      // A capture request that arrives while the user is on the documents tab is cancelled at once.
+      if (shareDialogRef.current === "docs") { void chooseMeetingScreenSource(id, null).catch(() => {}); return; }
+      screenRequestRef.current = id; setScreenRequest(id); setDialog("capture");
     };
     const closed = (event: Event) => {
       if ((event as CustomEvent<{ requestId: string }>).detail?.requestId === screenRequestRef.current) {
         screenRequestRef.current = null; setScreenRequest(null);
+        if (shareDialogRef.current === "capture") setDialog(null);
       }
     };
     window.addEventListener("jugglework:meeting:screen-picker", open);
@@ -268,6 +279,12 @@ export function MeetingRoomHost() {
       </div>
     ) : null;
   const localTile = s.tiles.find(tile => tile.id === "local");
+  const screenSharing = s.tiles.some((t) => t.id === "share");
+  const share = m.share;
+  const docShareActive = share?.kind === "doc";
+  const docSharing = docShareActive && share.userId === uid;
+  const sharerName = share ? participantName(share.userId, m.participants[share.userId]?.name) : "";
+  const showDocs = docShareActive && !screenSharing;
   const compactContent = (
     <div className="meeting-ui meeting-compact">
       <div className="compact-speaking">正在讲话：</div>
@@ -321,8 +338,13 @@ export function MeetingRoomHost() {
           <button onClick={() => window.dispatchEvent(new Event("meeting:resume-audio"))}>播放会议声音</button>
         </div> : null}
         <div className="room-main">
-          <div className="stage-area">
-            <div className={`stage${speaker ? " stage-focus" : ""}`}>
+          <div className="stage-area" data-docs={showDocs}>
+            {showDocs && share ? <div className="doc-share-column">
+              <MeetingShareBar share={share} selfId={uid} sharerName={sharerName}
+                onChange={() => { setDialog("docs"); }} onError={setMessage} />
+              <MeetingDocStage ownerDocument={popup?.document} />
+            </div> : null}
+            <div className={`stage${speaker || showDocs ? " stage-focus" : ""}`} data-docs-rail={showDocs}>
               {s.tiles
                 .filter((t) => t.screen)
                 .map((t, i) => (
@@ -463,15 +485,20 @@ export function MeetingRoomHost() {
           </button>
           <button
             className="control"
-            aria-pressed={s.tiles.some((t) => t.id === "share")}
+            aria-pressed={screenSharing || docSharing}
             disabled={busy || s.phase !== "joined"}
             onClick={(event) => {
+              if (docSharing) { void run(stopDocShare); return; }
               const devices = event.currentTarget.ownerDocument.defaultView?.navigator.mediaDevices;
+              if (screenSharing) { void run(() => s.toggleShare(devices)); return; }
+              // The capture request needs this click's user gesture; the documents tab needs none.
+              if (lastShareTab.current === "docs") { setDialog("docs"); return; }
+              setDialog("capture");
               void run(() => s.toggleShare(devices));
             }}
           >
             <Icon name="screen" />
-            {s.tiles.some((t) => t.id === "share") ? "停止共享" : "共享屏幕"}
+            {screenSharing || docSharing ? "停止共享" : "共享"}
           </button>
           <button className="control" onClick={() => setInvite(true)} title="邀请参会成员">
             <Icon name="plus" />
@@ -505,8 +532,13 @@ export function MeetingRoomHost() {
       </section>
     </div>
   );
+  const sharingMainWindow = s.sharingMainWindow && s.tiles.some(t => t.id === "share");
   return (
     <>
+      {sharingMainWindow ? <div className="meeting-share-banner" role="status">
+        <span>正在共享此窗口</span>
+        <button onClick={() => void run(() => s.toggleShare())}>停止共享</button>
+      </div> : null}
       {s.tiles.filter(t => t.id !== "local" && t.id !== "share").map(tile =>
         <RemoteAudio key={tile.id} tile={tile} onBlocked={onAudioBlocked} />
       )}
@@ -524,7 +556,15 @@ export function MeetingRoomHost() {
           </div>} />
         </MeetingDialog>
       ) : null}
-      {screenRequest && !leaving ? <MeetingScreenPicker key={screenRequest} requestId={screenRequest} ownerDocument={popup?.document} onClose={closeScreenPicker} /> : null}
+      {shareDialog && !leaving ? <MeetingScreenPicker key={shareDialog === "docs" ? "docs" : screenRequest ?? "capture"}
+        requestId={screenRequest} tab={shareDialog === "docs" ? "docs" : "capture"} ownerDocument={popup?.document} onClose={closeScreenPicker}
+        onTabChange={(tab, devices) => {
+          lastShareTab.current = tab;
+          if (tab === "docs") { cancelCapture(); setDialog("docs"); return; }
+          setDialog("capture");
+          void run(() => s.toggleShare(devices));
+        }}
+        onShareDoc={async (workspaceId, docId) => { if (docSharing) await switchDocShare(workspaceId, docId); else await startDocShare(workspaceId, docId); }} /> : null}
       {invite ? (
         <MeetingInvitePicker
           ownerDocument={popup?.document}

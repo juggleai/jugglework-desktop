@@ -20,6 +20,8 @@ const IM_CONNECT_TIMEOUT_MS = 15_000;
 
 const CUSTOM_MESSAGES = [
   { name: "jw:meeting-sync", isCount: false, isStorage: false },
+  // 状态消息：共享人此刻的完整文档与视口，只投在线，不存储、不计数、不进会话。
+  { name: "jw:meeting-share-docs", isStatus: true, isCount: false, isStorage: false },
   { name: "jw:meeting-card", isCount: true, isStorage: true },
   { name: "jw:meeting-invite", isCount: true, isStorage: true },
   { name: "jw:meeting-chat", isCount: false, isStorage: false },

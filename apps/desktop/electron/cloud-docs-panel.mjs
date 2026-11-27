@@ -57,7 +57,7 @@ export function validateCloudDocsLaunch(input) {
  * 刷新恢复和启动预热默认启用，各自环境变量设为 0 后在下次进程启动时关闭。
  * @param {{getWindow:()=>any,getWindows?:()=>any[],onDocumentChanged?:(window:any,instanceId:string,document:{tenantId:string,workspaceId:string,docId:string,title:string})=>void,onOpenInNewTab?:(request:{sourceInstanceId:string,sourceServerOrigin:string,sourceUserId:string,document:{tenantId:string,workspaceId:string,docId:string,title:string}})=>void,attachments?:{open:(input:any)=>Promise<any>,clearScope:(scope:any)=>Promise<void>,clearContext?:(scope:any,contextId:string)=>Promise<void>},recentPath?:string,liveResume?:boolean,startupWarmup?:boolean}} options 宿主窗口、受限附件访问与独立标签入口
  */
-export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow()], onDocumentChanged, onOpenInNewTab, attachments, recentPath, liveResume = process.env.JUGGLEWORK_DOCS_LIVE_RESUME !== "0", startupWarmup = process.env.JUGGLEWORK_DOCS_STARTUP_WARMUP !== "0" }) {
+export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow()], getMeetingWindow = () => null, onDocumentChanged, onOpenInNewTab, attachments, recentPath, liveResume = process.env.JUGGLEWORK_DOCS_LIVE_RESUME !== "0", startupWarmup = process.env.JUGGLEWORK_DOCS_STARTUP_WARMUP !== "0" }) {
   const currents = new Map();
   const backgrounds = new Map();
   const retained = new Map();
@@ -91,14 +91,22 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     if (item && value.status) item.lastStatus = value.status;
     if (item?.warmup && (value.status === "unauthorized" || value.status === "error")) warmup.settled(value.instanceId, false);
     if (item?.detached || item?.warmup) return;
-    const win = item?.ownerWindow ?? getWindow();
+    const win = item?.input.meeting === true ? getWindow() : item?.ownerWindow ?? getWindow();
     if (win && !win.isDestroyed())
       win.webContents.send("jugglework:docs:state", value);
   };
   const ownerFor = event => getWindows().find(win => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame);
+  /** 会议窗口没有自己的渲染器：控制方只能是主窗口顶层 frame，所属窗口固定为当前会议窗口。 */
+  const meetingControl = event => {
+    const main = getWindow(), meeting = getMeetingWindow();
+    return !!main && !main.isDestroyed() && !!meeting && !meeting.isDestroyed() &&
+      event.sender === main.webContents && event.senderFrame === main.webContents.mainFrame ? meeting : null;
+  };
+  const meetingItem = () => items().find(item => item.input.meeting === true && item.ownerWindow === getMeetingWindow());
   const trusted = (event, input) => {
-    const owner = ownerFor(event);
     const item = input?.instanceId ? find(input) : null;
+    if (item?.input.meeting === true) return !!meetingControl(event) && item.ownerWindow === getMeetingWindow() && !item.detached && !item.warmup;
+    const owner = ownerFor(event);
     const binding = owner && hostLifetimes.get(owner);
     if (binding && input?.hostBinding &&
       (input.hostBinding === binding.retired || (binding.attached && input.hostBinding !== binding.attached))) return false;
@@ -350,6 +358,17 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
   async function open(input, ownerWindow = getWindow()) {
     const startedAt = performance.now();
     const win = ownerWindow;
+    // 会议视图不参与预热、刷新接管和启动记录，同一会议窗口只保留一个。
+    if (input.meeting === true) {
+      if (input.warmup || input.fullPage || input.background || input.retain || input.presentation?.mode !== "product" || win !== getMeetingWindow())
+        throw new Error("Forbidden");
+      const existing = meetingItem();
+      if (existing) {
+        existing.view.setVisible(false);
+        if (!await prepareClose(existing.input.instanceId)) throw new Error("docs_local_save_pending");
+        close(existing.input.instanceId);
+      }
+    }
     const current = currents.get(win?.id);
     const target = validateCloudDocsLaunch(input);
     const prewarming = input.warmup === true;
@@ -732,6 +751,31 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       if (!trusted(event, input) || ownerFor(event) !== getWindow()) throw new Error("Forbidden");
       return open(input, ownerFor(event));
     });
+    // 会议文档视图：所属窗口固定为会议窗口，只有主窗口顶层 frame 可以打开和控制。
+    ipcMain.handle("jugglework:docs:meeting-open", (event, input) => {
+      const owner = meetingControl(event);
+      if (!owner || !input) throw new Error("Forbidden");
+      return open({ ...input, meeting: true, retain: false, fullPage: false, background: false, warmup: false }, owner);
+    });
+    ipcMain.on("jugglework:docs:meeting-command", (event, input) => {
+      const item = find(input);
+      if (!item || item.input.meeting !== true || !trusted(event, input) || !item.ready || item.denied || !item.meetingViewport) return;
+      const id = /^[A-Za-z0-9_-]{1,64}$/;
+      let payload;
+      if (input.action === "apply-viewport") {
+        const v = input.payload?.viewport;
+        if (!id.test(v?.workspaceId ?? "") || !id.test(v?.docId ?? "") || !["page", "edgeless"].includes(v?.mode)) return;
+        payload = { follow: input.payload.follow === true, sharerName: typeof input.payload.sharerName === "string" ? input.payload.sharerName.slice(0, 20) : "", viewport: v };
+      } else if (input.action === "open-page") {
+        if (!id.test(input.payload?.docId ?? "")) return;
+        payload = { docId: input.payload.docId };
+      } else if (input.action === "zoom") {
+        const factor = Number(input.payload?.factor);
+        if (!Number.isFinite(factor)) return;
+        payload = { factor: Math.min(3, Math.max(0.5, factor)) };
+      } else return;
+      item.view.webContents.send("jugglework:docs:meeting-command", { instanceId: item.input.instanceId, action: input.action, payload });
+    });
     ipcMain.handle("jugglework:docs:status", (event, instanceId, hostBinding) => {
       if (!trusted(event, { instanceId, hostBinding })) throw new Error("Forbidden");
       const item = find({ instanceId }); return { ready: !!item?.ready && !item.denied, status: item?.lastStatus ?? (item ? "loading" : "error"), ...(documentFor(instanceId) ?? { docId: null }) };
@@ -830,7 +874,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
           ? input.instanceId !== item.input.instanceId
           : input?.tenantId !== item.input.tenantId) ||
         !/^[a-f0-9-]{36}$/i.test(input?.requestId ?? "") ||
-        !["search", "read", "edit", "create"].includes(input?.op) ||
+        !["search", "read", "edit", "create", "docs-recent", "docs-search"].includes(input?.op) ||
         typeof input?.params !== "object" ||
         input.params === null ||
         JSON.stringify(input.params).length > 300 * 1024
@@ -904,6 +948,14 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
             leftWidth: layout.leftWidth * item.view.webContents.getZoomFactor() / win.webContents.getZoomFactor(),
           },
         });
+      } else if (message.type === "docs.viewport" || message.type === "docs.sharer-relation") {
+        // 视口只在会议视图、页面声明能力后转发，且只交给主窗口里的会议状态。
+        const main = getWindow();
+        if (item.input.meeting !== true || !item.meetingViewport || !item.ready || item.denied || !message.meeting ||
+          message.tenantId !== item.input.tenantId || !main || main.isDestroyed()) return;
+        main.webContents.send("jugglework:docs:meeting-event", {
+          instanceId: item.input.instanceId, type: message.type, meeting: message.meeting,
+        });
       } else if (message.type === "docs.open-in-new-tab") {
         // TIPS: 菜单只能打开当前可见的真实路由，不能由文档提供其他目标或任意 URL。
         if (item.input.background || !item.view.getVisible() || item.input.presentation?.mode !== "product") return;
@@ -966,6 +1018,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
         item.readyWorkspaceId = message.workspaceId;
         item.contentStateSupported = message.capabilities?.contentState === 1;
         item.resumeSupported = message.capabilities?.resume === 1;
+        item.meetingViewport = message.capabilities?.meetingViewport === 1;
         item.ready = true;
         item.hasBeenReady = true;
         const document = documentFor(item.input.instanceId);

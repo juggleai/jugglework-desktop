@@ -5,6 +5,21 @@ export type MeetingParticipant = {
   joinedAt: string;
   lastSeenAt: string;
 };
+/**
+ * 会议当前共享槽
+ * @param id        共享 id，每次占用重新生成
+ * @param kind      共享类型：screen / doc
+ * @param userId    共享人
+ * @param sessionId 共享人的参会会话
+ * @param startedAt 占用时间
+ */
+export type MeetingShare = {
+  id: string;
+  kind: "screen" | "doc";
+  userId: string;
+  sessionId: string;
+  startedAt: string;
+};
 export type Meeting = {
   id: string;
   organizationId: string;
@@ -24,6 +39,8 @@ export type Meeting = {
   startedAt?: string;
   endedAt?: string;
   locked: boolean;
+  /** 当前共享槽，仅记录谁在共享，不含文档内容或位置。 */
+  share?: MeetingShare;
   invites: Record<string, string>;
   participants: Record<string, MeetingParticipant>;
 };

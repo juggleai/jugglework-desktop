@@ -12,15 +12,15 @@ export function findPositionedRailHint() {
     .find((hint) => !hint.hidden && hint.getClientRects().length > 0 && hint.parentElement?.style.opacity !== "0");
 }
 
-export function hasCloudDocsOccluder(host: DOMRect) {
-  const overlays = document.querySelectorAll<HTMLElement>([
+export function hasCloudDocsOccluder(host: DOMRect, doc: Document = document) {
+  const overlays = doc.querySelectorAll<HTMLElement>([
     '[role="dialog"]', '[role="alertdialog"]', '[aria-modal="true"]',
     '[role="menu"]', '[role="listbox"]',
     modalBackdrops,
     '[data-app-navigation-sidebar-preview]', '[data-session-list-preview="true"]',
   ].join(","));
   for (const overlay of overlays) {
-    const style = getComputedStyle(overlay);
+    const style = (doc.defaultView ?? window).getComputedStyle(overlay);
     if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" ||
       overlay.hidden || overlay.getClientRects().length === 0) continue;
     // TIPS: BaseUI modal 不保证输出 aria-modal；Backdrop 承担全局阻止背景交互的职责。

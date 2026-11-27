@@ -10,6 +10,7 @@ function fixture(options = {}) {
     return Object.assign(new EventEmitter(), {isDestroyed: () => false, webContents});
   }
   const main = window(), meeting = window();
+  main.getMediaSourceId = () => options.mainSourceId ?? 'window:404:0';
   const img = value => ({isEmpty: () => !value, toDataURL: () => value});
   let sources = [
     {id:'screen:1:0',name:'Display',thumbnail:img('desktop')},
@@ -79,4 +80,13 @@ for (const reason of ['closed','render-process-gone']) test(`request released wh
   const f=fixture(); f.start();
   (reason==='closed'?f.main:f.main.webContents).emit(reason);
   assert.deepEqual(f.answers,[null]); assert.equal(f.meeting.listenerCount('closed'),0);
+});
+test('main window source is pinned first only when it is enumerated', async () => {
+  const f=fixture({mainSourceId:'window:2:0'}), id=f.start(); const list=await f.picker.list(f.event,id);
+  assert.equal(list[0].id,'window:2:0'); assert.equal(list[0].name,'JuggleWork'); assert.equal(list[0].isMainWindow,true);
+  assert.equal(list.filter(item=>item.isMainWindow).length,1); assert.equal(list[1].name,'桌面 1');
+  await f.picker.choose(f.event,id,null);
+  const g=fixture(), gid=g.start(); const other=await g.picker.list(g.event,gid);
+  assert.equal(other.some(item=>item.isMainWindow),false); assert.equal(other[0].name,'桌面 1');
+  await g.picker.choose(g.event,gid,null);
 });

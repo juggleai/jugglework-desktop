@@ -1040,6 +1040,7 @@ const cloudDocAttachments = createCloudDocAttachments({
 });
 const cloudDocsPanel = createCloudDocsPanel({
   getWindow: () => mainWindow,
+  getMeetingWindow: () => meetingWindow,
   recentPath: path.join(app.getPath("userData"), "cloud-docs-recent.json"),
   getWindows: () => [mainWindow, ...fileWindows.windows()].filter(Boolean),
   onDocumentChanged: (window, instanceId, document) => fileWindows.updateCloudDocument(window, instanceId, document),
@@ -3573,7 +3574,7 @@ async function createMainWindow() {
     if (!["jugglework-meeting", "jugglework-meeting-mini"].includes(details.frameName)) return;
     if (details.frameName === "jugglework-meeting") {
       meetingWindow = child;
-      child.on("closed", () => { if (meetingWindow === child) { meetingWindow = null; meetingCompact = null; } });
+      child.on("closed", () => { cloudDocsPanel.closeWindow(child); if (meetingWindow === child) { meetingWindow = null; meetingCompact = null; } });
     } else {
       meetingMiniWindow = child;
       if (meetingWindow) meetingCompact = installMeetingCompactWindow(mainWindow, meetingWindow, child, (bounds) => screen.getDisplayMatching(bounds).workArea);

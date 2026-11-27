@@ -275,7 +275,7 @@ test('first unmute adds a real microphone over ZEGO silent placeholder', async (
 test('lifecycle polling ends media even when chat admission is pending', async () => {
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/store.ts',import.meta.url),'utf8');
  source=source.replace(/^import .*;$/gm,'');
- source='const {create,meetingAPI,meetingScope,meetingClosed,MeetingMedia,joinMeetingChatroom,acquireMediaSession,releaseMediaSession}=globalThis.__syncDeps;\n'+source;
+ source='const {create,meetingAPI,meetingScope,meetingClosed,MeetingMedia,joinMeetingChatroom,acquireMediaSession,releaseMediaSession,installDocShare,receiveShareDocs,reconcileDocShare,uninstallDocShare}=globalThis.__syncDeps;\n'+source;
  const output=transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
  const oldWindow=globalThis.window,oldInterval=globalThis.setInterval,oldClear=globalThis.clearInterval;
  let tick,releaseChat,disposed=0,renewals=0;
@@ -290,6 +290,7 @@ test('lifecycle polling ends media even when chat admission is pending', async (
  MeetingMedia:class {async join(){} dispose(){disposed++;} renew(){}},
  joinMeetingChatroom:()=>new Promise(r=>{releaseChat=r}),
  acquireMediaSession:()=>{},releaseMediaSession:()=>{},
+ installDocShare:()=>{},receiveShareDocs:()=>{},reconcileDocShare:()=>{},uninstallDocShare:()=>{},
  };
  try{
   const {useMeetingStore}=await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));
@@ -336,7 +337,7 @@ test('device state rejects stale sessions, duplicates and reordered signals', as
 test('successful leave still disposes media when an in-flight renewal replaces the lease', async () => {
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/store.ts',import.meta.url),'utf8');
  source=source.replace(/^import .*;$/gm,'');
- source='const {create,meetingAPI,meetingScope,meetingClosed,MeetingMedia,joinMeetingChatroom,acquireMediaSession,releaseMediaSession}=globalThis.__leaveRaceDeps;\n'+source;
+ source='const {create,meetingAPI,meetingScope,meetingClosed,MeetingMedia,joinMeetingChatroom,acquireMediaSession,releaseMediaSession,installDocShare,receiveShareDocs,reconcileDocShare,uninstallDocShare}=globalThis.__leaveRaceDeps;\n'+source;
  const output=transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
  const oldWindow=globalThis.window,oldInterval=globalThis.setInterval,oldClear=globalThis.clearInterval,oldNow=Date.now;
  let tick,finishLeave,disposed=0,renewals=0,now=1000;
@@ -350,6 +351,7 @@ test('successful leave still disposes media when an in-flight renewal replaces t
  MeetingMedia:class {async join(){} dispose(){disposed++;} renew(){}},
  joinMeetingChatroom:async()=>({leave:async()=>{},signal:async()=>{}}),
  acquireMediaSession:()=>{},releaseMediaSession:()=>{},
+ installDocShare:()=>{},receiveShareDocs:()=>{},reconcileDocShare:()=>{},uninstallDocShare:()=>{},
  };
  try {
   const {useMeetingStore,forceMeetingCleanup}=await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));

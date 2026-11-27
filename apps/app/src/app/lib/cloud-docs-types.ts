@@ -124,10 +124,28 @@ export interface CloudDocsBridge {
           fileData: ArrayBuffer;
         },
   ): Promise<CloudFileIntakeResult>;
+  /** 在会议窗口中打开文档视图，位置由会议界面通过 bounds 同步。 */
+  meetingOpen?(input: {
+    instanceId: string;
+    sourceServerOrigin: string;
+    sourceUserId: string;
+    tenantId: string;
+    bootstrapUrl: string;
+    docsOrigin: string;
+    launchGrant: string;
+    presentation: { instanceId: string; mode: "product" };
+  }): Promise<{ instanceId: string }>;
+  /** 向会议文档视图下发共享人视口、页内跳转或本地缩放。 */
+  meetingCommand?(input:
+    | { instanceId: string; action: "apply-viewport"; payload: { follow: boolean; sharerName?: string; viewport: CloudDocsMeetingViewport } }
+    | { instanceId: string; action: "open-page"; payload: { docId: string } }
+    | { instanceId: string; action: "zoom"; payload: { factor: number } }): void;
+  /** 监听会议文档视图上报的本页视口与共享人相对位置。 */
+  onMeetingEvent?(callback: (event: CloudDocsMeetingEvent) => void): () => void;
   /** 滚动并高亮当前页面中的指定块。 */
   highlightBlocks(input: { instanceId: string; docId: string; blockIds: string[] }): void;
   /** 在当前 product 视图中执行 Docs AI 接口。 */
-  api(input: { instanceId?: string; tenantId?: string; requestId: string; op: "search" | "read" | "edit" | "create"; params: Record<string, unknown> }): Promise<{ status: number; body: unknown }>;
+  api(input: { instanceId?: string; tenantId?: string; requestId: string; op: "search" | "read" | "edit" | "create" | "docs-recent" | "docs-search"; params: Record<string, unknown> }): Promise<{ status: number; body: unknown }>;
   /** 监听本地 Server 经主进程转来的云文档请求。 */
   onApiRequest(callback: (request: { requestId: string; tenantId: string; op: "search" | "read" | "edit" | "create" | "import"; params: Record<string, unknown> }) => void): () => void;
   /** 返回云文档请求结果。 */
@@ -135,6 +153,18 @@ export interface CloudDocsBridge {
   /** 监听页面发来的块选区引用。 */
   onAiReference(callback: (value: CloudDocsAiReference) => void): () => void;
 }
+
+/** 共享人视口：页面模式用块锚点，白板模式用画布坐标；不含正文或标题。 */
+export type CloudDocsMeetingViewport = {
+  workspaceId: string;
+  docId: string;
+  mode: "page" | "edgeless";
+  anchor?: { blockId: string; offset: number };
+  edgeless?: { centerX: number; centerY: number; zoom: number };
+};
+export type CloudDocsMeetingEvent =
+  | { instanceId: string; type: "docs.viewport"; meeting: CloudDocsMeetingViewport & { userInput: boolean } }
+  | { instanceId: string; type: "docs.sharer-relation"; meeting: { direction: "above" | "below" | "visible" | "missing"; heading: string } };
 
 /** 文件接入结果：lookup 返回 existing，upload 返回页面与警告。 */
 export type CloudFileIntakeResult = {

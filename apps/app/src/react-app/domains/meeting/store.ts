@@ -6,6 +6,7 @@ import { readMeetingDesktopConfig } from "@/app/lib/desktop";
 import { create } from "zustand";
 import { meetingAPI, meetingScope } from "./api";
 import { meetingClosed, type Meeting, type MeetingJoin } from "./types";
+import { installDocShare, receiveShareDocs, reconcileDocShare, uninstallDocShare } from "./doc-share-controller";
 import { MeetingMedia, type MediaTile } from "./zego-adapter";
 import { joinMeetingChatroom } from "./im-adapter";
 import { acquireMediaSession, releaseMediaSession } from "./media-session";
@@ -34,6 +35,7 @@ function announceState() {
 }
 
 function dispose() {
+  uninstallDocShare();
   generation++;
   stopWake?.();
   stopWake = undefined;
@@ -72,6 +74,8 @@ type MeetingState = {
   chatReady: boolean;
   error: string | null;
   memberDevices: Record<string, MemberDeviceState>;
+  /** 当前屏幕共享的是否为 JuggleWork 主窗口。 */
+  sharingMainWindow: boolean;
   join: (meeting: Meeting, mic: boolean, camera: boolean) => Promise<void>;
   leave: (end?: boolean) => Promise<void>;
   toggleDevice: (device: "mic" | "camera") => Promise<void>;
@@ -91,6 +95,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   chatReady: false,
   error: null,
   memberDevices: {},
+  sharingMainWindow: false,
   async join(meeting, mic, camera) {
     if (get().phase !== "idle") {
       if (get().meeting?.id === meeting.id) {
@@ -165,6 +170,13 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
         ).meeting;
       if (run !== generation) return;
       set({ meeting: current, phase: "joined", memberDevices: {} });
+      installDocShare({
+        meeting: () => useMeetingStore.getState().meeting,
+        self: () => lease && { userId: lease.userId, sessionId: lease.sessionId },
+        publish: content => chatroom ? chatroom.shareDocs(content) : Promise.reject(new Error("聊天室尚未连接。")),
+        claim: () => claimShare("doc"),
+        release: releaseShare,
+      });
       // Lifecycle convergence must not wait on IM/chatroom admission.
       lastRenewed = lastSnapshot = Date.now();
       timer = setInterval(() => {
@@ -263,8 +275,23 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     }
   },
   async toggleShare(devices) {
-    if (get().tiles.some((t) => t.id === "share")) media?.stopShare();
-    else await media?.startShare(devices);
+    const sharing = () => get().tiles.some((t) => t.id === "share");
+    if (sharing()) {
+      media?.stopShare();
+      set({ sharingMainWindow: false });
+      await releaseShare();
+      return;
+    }
+    await media?.startShare(devices);
+    // Claim only after capture succeeded, so a cancelled picker never holds the slot.
+    if (!sharing()) return;
+    const run = generation;
+    try {
+      await claimShare("screen");
+    } catch (error) {
+      if (run === generation) { media?.stopShare(); set({ sharingMainWindow: false }); }
+      throw error;
+    }
   },
   async send(text) {
     if (!chatroom) throw new Error("聊天室尚未连接。");
@@ -304,6 +331,8 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
           seq: typeof content.seq === "number" ? content.seq : undefined, accepted: !!next,
           mic: typeof content.mic === "boolean" ? content.mic : undefined, camera: typeof content.camera === "boolean" ? content.camera : undefined });
         if (next) set(state => ({ memberDevices: { ...state.memberDevices, [sender]: next } }));
+      }, (message) => {
+        if (run === generation) receiveShareDocs(message);
       });
       if (run !== generation) {
         await joined.leave();
@@ -326,6 +355,33 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     }
   },
 }));
+async function claimShare(kind: "screen" | "doc") {
+  if (!lease) return;
+  const next = (await meetingAPI.action(lease.meeting.id, "claim-share", { sessionId: lease.sessionId, shareKind: kind })).meeting;
+  const existing = useMeetingStore.getState().meeting;
+  if (!existing || next.version >= existing.version) useMeetingStore.setState({ meeting: next });
+}
+async function releaseShare() {
+  const current = useMeetingStore.getState().meeting;
+  if (!lease || current?.share?.userId !== lease.userId) return;
+  try {
+    const next = (await meetingAPI.action(lease.meeting.id, "release-share", { shareId: current.share.id })).meeting;
+    const existing = useMeetingStore.getState().meeting;
+    if (!existing || next.version >= existing.version) useMeetingStore.setState({ meeting: next });
+  } catch { /* The server also clears the slot when this participant leaves or goes silent. */ }
+}
+/** Reconcile the local screen stream with the server-owned share slot. */
+function reconcileShare(snapshot: Meeting) {
+  if (!lease) return;
+  const localShare = useMeetingStore.getState().tiles.some((t) => t.id === "share");
+  const mine = snapshot.share?.userId === lease.userId;
+  if (localShare && snapshot.share && (!mine || snapshot.share.kind !== "screen")) {
+    media?.stopShare();
+    useMeetingStore.setState({ sharingMainWindow: false });
+  } else if (!localShare && mine && snapshot.share?.kind === "screen") {
+    void releaseShare();
+  }
+}
 async function refresh(run: number) {
   if (!lease || refreshing || run !== generation) return;
   if (activeScope !== meetingScope()) {
@@ -348,8 +404,11 @@ async function refresh(run: number) {
     }
     lastSnapshot = Date.now();
     const existing = useMeetingStore.getState().meeting;
-    if (!existing || snapshot.version >= existing.version)
+    if (!existing || snapshot.version >= existing.version) {
       useMeetingStore.setState({ meeting: snapshot });
+      reconcileShare(snapshot);
+      reconcileDocShare(snapshot);
+    }
     // Read lifecycle frequently; renew admission only at the lease cadence.
     if (Date.now() - lastRenewed >= 20_000) {
       const next = await meetingDiagnosticStep("api.renew", { meetingId: snapshot.id }, () => meetingAPI.join(snapshot.id, lease!.sessionId));

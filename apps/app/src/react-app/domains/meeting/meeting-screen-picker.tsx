@@ -6,15 +6,19 @@ import { MeetingIcon as Icon } from "./meeting-icons";
 
 import { MeetingPermissionNotice, MeetingPermissionRestart } from "./permission-notice";
 import { ensureMeetingPermission } from "./media-permission";
+import { useMeetingStore } from "./store";
+import { MeetingDocPicker } from "./meeting-doc-picker";
 
 async function listSharedScreens(requestId: string) {
   await ensureMeetingPermission("screen");
   return listMeetingScreenSources(requestId);
 }
 
-export function MeetingScreenPicker({ requestId, ownerDocument, onClose,
+export function MeetingScreenPicker({ requestId, ownerDocument, onClose, onShareDoc, tab = "capture", onTabChange,
   listSources = listSharedScreens, chooseSource = chooseMeetingScreenSource,
-}: { requestId: string; ownerDocument?: Document; onClose: () => void;
+}: { requestId: string | null; ownerDocument?: Document; onClose: () => void;
+  onShareDoc?: (workspaceId: string, docId: string) => Promise<void>;
+  tab?: "capture" | "docs"; onTabChange?: (tab: "capture" | "docs", devices?: MediaDevices) => void;
   listSources?: typeof listMeetingScreenSources; chooseSource?: typeof chooseMeetingScreenSource }) {
   const [sources, setSources] = useState<MeetingScreenSource[]>([]);
   const [filter, setFilter] = useState("all");
@@ -40,6 +44,7 @@ export function MeetingScreenPicker({ requestId, ownerDocument, onClose,
     if (rail) rail.scrollBy({ left: direction * Math.max(144, rail.clientWidth * .75), behavior: "smooth" });
   }
   async function refresh() {
+    if (!requestId) { setLoading(false); setSources([]); setSelected(""); return; }
     const sequence = ++generation.current;
     setLoading(true); setError("");
     try {
@@ -64,11 +69,25 @@ export function MeetingScreenPicker({ requestId, ownerDocument, onClose,
   async function confirm() {
     if (!selection || submitting || loading) return;
     setSubmitting(true); setError("");
-    try { if (await chooseSource(requestId, selection.id)) onClose(); }
+    try {
+      if (requestId && await chooseSource(requestId, selection.id)) {
+        useMeetingStore.setState({ sharingMainWindow: selection.isMainWindow === true });
+        onClose();
+      }
+    }
     catch (cause) { setError(cause instanceof Error ? cause.message : "无法开始共享，请重试。"); }
     finally { setSubmitting(false); }
   }
-  return <MeetingDialog title="桌面与窗口" className="meeting-screen-dialog" ownerDocument={ownerDocument} onClose={onClose}>
+  const tabs = <div className="segmented screen-share-tabs" role="group" aria-label="共享类型">
+    <button aria-pressed={tab === "capture"} onClick={event => { if (tab !== "capture") onTabChange?.("capture", event.currentTarget.ownerDocument.defaultView?.navigator.mediaDevices); }}>桌面与窗口</button>
+    <button aria-pressed={tab === "docs"} onClick={() => { if (tab !== "docs") onTabChange?.("docs"); }}>云文档</button>
+  </div>;
+  if (tab === "docs") return <MeetingDialog title="共享" className="meeting-screen-dialog" ownerDocument={ownerDocument} onClose={onClose}>
+    {tabs}
+    <MeetingDocPicker onClose={onClose} onConfirm={onShareDoc} />
+  </MeetingDialog>;
+  return <MeetingDialog title="共享" className="meeting-screen-dialog" ownerDocument={ownerDocument} onClose={onClose}>
+    {tabs}
     <p className="screen-picker-hint">选择要共享的画面，其他参会者将只能看到你选择的内容</p>
     <div className="screen-filter-row">
       <button className="ghost icon-button screen-filter-nav" aria-label="向左浏览应用" disabled={!scrollable.left} onClick={() => scrollFilters(-1)}><Icon name="chevronLeft" /></button>
@@ -90,7 +109,8 @@ export function MeetingScreenPicker({ requestId, ownerDocument, onClose,
       <button className="ghost icon-button screen-filter-nav" aria-label="刷新共享列表" disabled={loading || submitting} onClick={() => void refresh()}><Icon name="refresh" /></button>
     </div>
     <div className="screen-source-list" aria-busy={loading}>
-      {loading && !sources.length ? <div className="screen-picker-empty" role="status"><Icon name="monitor" /><span>正在获取可共享的画面…</span></div> :
+      {!requestId ? <div className="screen-picker-empty" role="status"><Icon name="monitor" /><span>共享选择已结束</span><button onClick={event => onTabChange?.("capture", event.currentTarget.ownerDocument.defaultView?.navigator.mediaDevices)}>重新获取</button></div> :
+        loading && !sources.length ? <div className="screen-picker-empty" role="status"><Icon name="monitor" /><span>正在获取可共享的画面…</span></div> :
         !visible.length ? <div className="screen-picker-empty"><Icon name="window" /><span>{error ? "暂时无法获取画面" : "没有可共享的窗口"}</span><small>打开需要共享的窗口后，点击右上角刷新</small></div> :
         <div className="screen-source-grid" role="group" aria-label="选择共享画面">{visible.map(source =>
           <button key={source.id} className="screen-source" aria-pressed={selected === source.id} disabled={loading || submitting}
