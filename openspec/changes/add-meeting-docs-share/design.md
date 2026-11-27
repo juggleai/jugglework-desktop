@@ -295,7 +295,7 @@ sequenceDiagram
 | `state` | `sharing` 或 `ended`。`ended` 时省略 `doc` 与 `viewport` |
 | `doc.workspaceId`、`doc.pageId` | 共享人当前路由中的 Docs 不透明 ID，`[A-Za-z0-9_-]{1,64}` |
 | `doc.mode` | `page` 或 `edgeless` |
-| `viewport.anchor` | 页面模式：视口顶部所在块的 `blockId`，以及视口顶部在该块内的相对偏移 `offset`（0–1） |
+| `viewport.anchor` | 页面模式：视口顶部所在的最内层正文块的 `blockId`，以及视口顶部相对该块的偏移 `offset`（按块高归一化，-20–1；视口顶部在首个正文块之上即标题区时为负） |
 | `viewport.edgeless` | 白板模式：`{centerX,centerY,zoom}` 画布坐标 |
 
 - 单条不超过 1 KB，不含正文、标题、URL、选区文字或用户输入。

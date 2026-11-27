@@ -147,7 +147,7 @@ function safeMeeting(type, value) {
   const out = { workspaceId: value.workspaceId, docId: value.docId, mode: value.mode, userInput: value.userInput === true };
   const a = value.anchor;
   if (a && typeof a.blockId === "string" && a.blockId.length <= 128 && num(a.offset) !== null)
-    out.anchor = { blockId: a.blockId, offset: Math.min(1, Math.max(0, a.offset)) };
+    out.anchor = { blockId: a.blockId, offset: Math.min(1, Math.max(-20, a.offset)) };
   const e = value.edgeless;
   if (e && num(e.centerX) !== null && num(e.centerY) !== null && num(e.zoom) !== null)
     out.edgeless = { centerX: e.centerX, centerY: e.centerY, zoom: e.zoom };

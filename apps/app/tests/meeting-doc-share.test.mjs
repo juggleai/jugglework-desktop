@@ -25,6 +25,9 @@ test('parse rejects unknown versions, bad ids and non-finite coordinates', () =>
   assert.equal(parseShareState(state(-1)), null);
   const clamped = parseShareState(state(1, { viewport: { anchor: { blockId: 'b', offset: 9 } } }));
   assert.equal(clamped.viewport.anchor.offset, 1);
+  // 视口顶部在首块之上（标题区）时 offset 为负，保留以便接收方留出同样的标题区。
+  assert.equal(parseShareState(state(1, { viewport: { anchor: { blockId: 'b', offset: -2.5 } } })).viewport.anchor.offset, -2.5);
+  assert.equal(parseShareState(state(1, { viewport: { anchor: { blockId: 'b', offset: -99 } } })).viewport.anchor.offset, -20);
 });
 
 test('follower keeps only the newest state from the slot owner', () => {

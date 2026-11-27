@@ -357,18 +357,22 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
 }));
 async function claimShare(kind: "screen" | "doc") {
   if (!lease) return;
-  const next = (await meetingAPI.action(lease.meeting.id, "claim-share", { sessionId: lease.sessionId, shareKind: kind })).meeting;
-  const existing = useMeetingStore.getState().meeting;
-  if (!existing || next.version >= existing.version) useMeetingStore.setState({ meeting: next });
+  adoptSnapshot((await meetingAPI.action(lease.meeting.id, "claim-share", { sessionId: lease.sessionId, shareKind: kind })).meeting);
 }
 async function releaseShare() {
   const current = useMeetingStore.getState().meeting;
   if (!lease || current?.share?.userId !== lease.userId) return;
   try {
-    const next = (await meetingAPI.action(lease.meeting.id, "release-share", { shareId: current.share.id })).meeting;
-    const existing = useMeetingStore.getState().meeting;
-    if (!existing || next.version >= existing.version) useMeetingStore.setState({ meeting: next });
+    adoptSnapshot((await meetingAPI.action(lease.meeting.id, "release-share", { shareId: current.share.id })).meeting);
   } catch { /* The server also clears the slot when this participant leaves or goes silent. */ }
+}
+/** Keep the newest snapshot and align local sharing with its share slot right away. */
+function adoptSnapshot(next: Meeting) {
+  const existing = useMeetingStore.getState().meeting;
+  if (existing && next.version < existing.version) return;
+  useMeetingStore.setState({ meeting: next });
+  reconcileShare(next);
+  reconcileDocShare(next);
 }
 /** Reconcile the local screen stream with the server-owned share slot. */
 function reconcileShare(snapshot: Meeting) {
@@ -403,12 +407,7 @@ async function refresh(run: number) {
       return;
     }
     lastSnapshot = Date.now();
-    const existing = useMeetingStore.getState().meeting;
-    if (!existing || snapshot.version >= existing.version) {
-      useMeetingStore.setState({ meeting: snapshot });
-      reconcileShare(snapshot);
-      reconcileDocShare(snapshot);
-    }
+    adoptSnapshot(snapshot);
     // Read lifecycle frequently; renew admission only at the lease cadence.
     if (Date.now() - lastRenewed >= 20_000) {
       const next = await meetingDiagnosticStep("api.renew", { meetingId: snapshot.id }, () => meetingAPI.join(snapshot.id, lease!.sessionId));

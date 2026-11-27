@@ -111,7 +111,7 @@ async function openView(workspaceId: string, docId: string) {
     const outcome = await ready;
     if (token !== openToken) { void b.close(instanceId).catch(() => {}); return; }
     if (outcome !== "ready") deniedKey = key;
-    set({ view: outcome === "ready" ? { phase: "ready", instanceId, docId, workspaceId } : { phase: "denied" } });
+    set(outcome === "ready" ? { view: { phase: "ready", instanceId, docId, workspaceId }, error: undefined } : { view: { phase: "denied" } });
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause);
     // 只记录机器码，避免错误消息里的地址或凭据进入诊断。
@@ -127,7 +127,7 @@ async function hide() {
   deniedKey = "";
   const view = useDocShareStore.getState().view;
   if (view.phase === "ready") await bridge()?.close(view.instanceId).catch(() => {});
-  set({ view: { phase: "idle" }, relation: null, sharerElsewhere: false, interrupted: false, zoom: 1 });
+  set({ view: { phase: "idle" }, relation: null, sharerElsewhere: false, interrupted: false, zoom: 1, error: undefined });
 }
 
 /** 共享人的显示名，用于文档里的位置标记。 */
@@ -138,6 +138,8 @@ function sharerLabel() {
 }
 
 function applyLatest() {
+  // 本机正在发起共享时不跟随旧共享人，避免把刚选的文档切走。
+  if (starting) return;
   const latest = follower.latest;
   if (!latest || latest.state !== "sharing" || !latest.doc) return;
   const { workspaceId, pageId, mode } = latest.doc;
@@ -213,21 +215,28 @@ export function receiveShareDocs(message: { sender?: { id?: string }; content?: 
   if (accepted.doc?.mode === "page" || accepted.doc?.mode === "edgeless") applyLatest();
 }
 
-/** 共享人选择文档：占用共享槽，在会议窗口中打开，并开始发布状态。 */
+/** 由本机用户主动选择文档时打开；之前失败过的文档允许重试。 */
+async function openChosen(workspaceId: string, docId: string) {
+  deniedKey = "";
+  await show(workspaceId, docId);
+  const { view, error } = useDocShareStore.getState();
+  if (view.phase !== "ready" || view.docId !== docId)
+    throw new Error(view.phase === "denied" && error ? `无法打开所选文档（${error}）。` : "无法打开所选文档。");
+}
+
+/** 共享人选择文档：在会议窗口中打开，占用共享槽，并开始发布状态。 */
 export async function startDocShare(workspaceId: string, docId: string) {
   if (!host) throw new Error("会议尚未就绪。");
   starting = true;
   try {
-    await show(workspaceId, docId);
-    const { view, error } = useDocShareStore.getState();
-    if (view.phase !== "ready") throw new Error(view.phase === "denied" ? `无法打开所选文档${error ? `（${error}）` : ""}。` : "无法打开所选文档。");
+    await openChosen(workspaceId, docId);
     await host.claim();
   } finally { starting = false; }
 }
 
 /** 共享人更换文档：同一共享槽内切换，状态消息自然携带新文档。 */
 export async function switchDocShare(workspaceId: string, docId: string) {
-  await show(workspaceId, docId);
+  await openChosen(workspaceId, docId);
 }
 
 export async function stopDocShare() {

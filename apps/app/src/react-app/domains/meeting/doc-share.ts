@@ -63,7 +63,7 @@ export function parseShareState(value: unknown): MeetingShareDocsState | null {
   return {
     ...parsed,
     doc: { workspaceId: doc.workspaceId, pageId: doc.pageId, mode: doc.mode },
-    viewport: { ...(a ? { anchor: { blockId: a.blockId, offset: Math.min(1, Math.max(0, a.offset)) } } : {}), ...(e ? { edgeless: e } : {}) },
+    viewport: { ...(a ? { anchor: { blockId: a.blockId, offset: Math.min(1, Math.max(-20, a.offset)) } } : {}), ...(e ? { edgeless: e } : {}) },
   };
 }
 
