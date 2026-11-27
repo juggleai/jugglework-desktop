@@ -193,8 +193,8 @@ export function TaskDetailActions({ client, scope, result, completion, following
     write.mutate(change);
   };
   const open = (next: Panel, from?: HTMLButtonElement) => { opener.current = from ?? trigger.current; write.reset(); setPanel(next); };
-  const menuItem = (label: string, Icon: LucideIcon, disabled: boolean, action: () => void) => <DropdownMenuItem disabled={disabled} onClick={action} className="rounded-md px-3 py-2 font-normal focus:bg-gray-100! focus:text-gray-900! data-highlighted:bg-gray-100!">
-    <Icon aria-hidden="true" className="size-4 text-gray-500!" />{label}
+  const menuItem = (label: string, Icon: LucideIcon, disabled: boolean, action: () => void) => <DropdownMenuItem disabled={disabled} onClick={action} className="rounded-md px-3 py-2 font-normal focus:bg-dls-hover! data-highlighted:bg-dls-hover!">
+    <Icon aria-hidden="true" className="size-4 text-dls-secondary!" />{label}
   </DropdownMenuItem>;
   const unavailable = missing(relations.error) ? t("tasks.relations_unavailable") : relations.isError ? t("tasks.error_title") : !data ? t("tasks.loading") : !permissions.canEditContent ? t("tasks.relations_readonly") : null;
   const inspecting = panel === "predecessors" || panel === "successors" ? panel : null;
@@ -208,7 +208,7 @@ export function TaskDetailActions({ client, scope, result, completion, following
     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">{completion}{(data?.isMilestone ?? task.isMilestone) && <TaskMilestoneBadge />}{badges}</div>
     {following}
     <DropdownMenu onOpenChange={open => { if (open && relations.isError && !missing(relations.error)) void relations.refetch(); }}><DropdownMenuTrigger ref={trigger} aria-label={t("tasks.detail_actions")} render={<Button variant="ghost" size="icon" />}><MoreHorizontal aria-hidden="true" className="size-4" /></DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-auto min-w-48 rounded-lg border border-gray-200 bg-white p-1 text-gray-900 shadow-lg">
+      <DropdownMenuContent align="end" className="w-auto min-w-48 rounded-lg border border-border bg-dls-surface p-1 text-dls-text shadow-lg">
         <DropdownMenuGroup>
           {menuItem(t(pickerLabels["set-parent"]), GitBranch, !editable, () => open("set-parent"))}
           {editable && data?.parentTaskId && menuItem(t("tasks.detach_parent"), RefreshCw, false, () => submit({ action: "detach-parent" }))}
@@ -216,8 +216,8 @@ export function TaskDetailActions({ client, scope, result, completion, following
           {menuItem(t(pickerLabels["add-predecessor"]), CircleArrowLeft, !editable, () => open("add-predecessor"))}
           {menuItem(t(pickerLabels["add-successor"]), CircleArrowRight, !editable, () => open("add-successor"))}
         </DropdownMenuGroup>
-        {unavailable && <p className="max-w-52 px-3 py-1 text-xs text-gray-600">{unavailable}</p>}
-        <DropdownMenuSeparator className="my-1 bg-gray-200!" />
+        {unavailable && <p className="max-w-52 px-3 py-1 text-xs text-dls-secondary">{unavailable}</p>}
+        <DropdownMenuSeparator className="my-1 bg-border!" />
         <DropdownMenuGroup>
           {menuItem(t("tasks.history"), History, pending, () => onViewHistory(trigger.current))}
           {menuItem(t("tasks.delete_task_action"), Trash2, pending || !permissions.canDelete, () => open("delete"))}
