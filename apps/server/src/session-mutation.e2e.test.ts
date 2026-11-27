@@ -293,7 +293,7 @@ function startMockOpencode() {
   };
 }
 
-async function startHarness(enginePort: number) {
+async function startHarness(enginePort: number, logger?: { log: (level: string, message: string, attributes?: Record<string, unknown>) => void }) {
   const root = await mkdtemp(join(tmpdir(), "jugglework-session-mutation-"));
   const secondRoot = await mkdtemp(join(tmpdir(), "jugglework-session-mutation-second-"));
   roots.push(root);
@@ -334,7 +334,7 @@ async function startHarness(enginePort: number) {
     logFormat: "pretty",
     logRequests: false,
   };
-  const server = await startServer(config) as Served;
+  const server = await startServer(config, logger ? { logger: logger as never } : {}) as Served;
   stops.push(() => server.stop(true));
   const collaboratorHeaders = { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" };
   const enabled = await fetch(`http://127.0.0.1:${server.port}/remote-control/pending/enable`, {
@@ -2973,6 +2973,312 @@ describe("goal automatic continuation", () => {
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(engine.prompts).toHaveLength(3);
   });
+
+  test("a busy delegated child keeps the goal run alive and no continuation starts behind it", async () => {
+    const sessionId = "ses_goal_child_busy";
+    const { engine, harness, goalPath, call, endRun } = await autoHarness(sessionId);
+    engine.sessions.set("ses_goal_child", { id: "ses_goal_child", title: "Delegated", parentID: sessionId, directory: harness.config.workspaces[0]!.path, time: { created: 1, updated: 1 } });
+    const created = (await call("POST", goalPath, createBody)).body.item;
+    engine.statuses.set("ses_goal_child", { type: "busy" });
+    // The parent turn looks finished while its delegated child is still working.
+    await endRun();
+    await new Promise((resolve) => setTimeout(resolve, 2_600));
+    await harness.server.reconcileActiveSessionRuns?.();
+    expect(engine.prompts).toHaveLength(1);
+    expect(engine.aborts).toEqual([]);
+    expect((await call("GET", goalPath)).body.item).toMatchObject({ status: "active", execution: "running", activeRunId: created.activeRunId });
+
+    // Once the child finishes the parent settles and the goal continues exactly once.
+    engine.statuses.set("ses_goal_child", { type: "idle" });
+    await waitUntil(async () => engine.prompts.length === 2, 8_000);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(engine.prompts).toHaveLength(2);
+  }, 20_000);
+
+  test("child-only stall recovery aborts the child, not the goal root run, and starts no duplicate", async () => {
+    const sessionId = "ses_goal_child_stall";
+    const { engine, harness, goalPath, call } = await autoHarness(sessionId);
+    engine.sessions.set("ses_goal_stalled", { id: "ses_goal_stalled", title: "Stalled child", parentID: sessionId, directory: harness.config.workspaces[0]!.path, time: { created: 1, updated: 1 } });
+    const created = (await call("POST", goalPath, createBody)).body.item;
+    engine.statuses.set(sessionId, { type: "busy" });
+    engine.statuses.set("ses_goal_stalled", { type: "busy" });
+
+    const abort = await fetch(`${harness.base}/workspace/ws_1/sessions/${sessionId}/delegated-sessions/ses_goal_stalled/abort`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ abortCommandCorrelationId: "goal-child-stall" }),
+    });
+    expect(abort.status).toBe(202);
+    expect(engine.aborts).toEqual(["ses_goal_stalled"]);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(engine.prompts).toHaveLength(1);
+    expect((await call("GET", goalPath)).body.item).toMatchObject({ status: "active", execution: "running", activeRunId: created.activeRunId, stopReason: null });
+  });
+});
+
+describe("goal mode boundaries and recovery", () => {
+  const createBody = { objective: "Ship CSV export", criteria: [{ text: "Export downloads a CSV" }] };
+  const SECRET_OBJECTIVE = "Ship CSV export SECRET_OBJECTIVE_TEXT";
+  const SECRET_CRITERION = "Export works SECRET_CRITERION_TEXT";
+  const previous = process.env.JUGGLEWORK_GOAL_AUTO_CONTINUE;
+  afterEach(() => {
+    if (previous === undefined) delete process.env.JUGGLEWORK_GOAL_AUTO_CONTINUE; else process.env.JUGGLEWORK_GOAL_AUTO_CONTINUE = previous;
+  });
+
+  async function goalEnv(sessionId: string, logger?: { log: (level: string, message: string, attributes?: Record<string, unknown>) => void }) {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port, logger);
+    engine.sessions.set(sessionId, { id: sessionId, title: "Goal", directory: harness.config.workspaces[0]!.path, time: { created: 1, updated: 1 } });
+    const goalPath = `${harness.base}/workspace/ws_1/sessions/${sessionId}/goal`;
+    const call = async (method: string, path: string, body?: unknown) => {
+      const response = await fetch(path, { method, headers: harness.collaboratorHeaders, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      return { status: response.status, body: await response.json() as any };
+    };
+    const agent = (action: string, body: Record<string, unknown> = {}) => call("POST", `${harness.base}/workspace/ws_1/goal-agent/${action}`, { sessionId, ...body });
+    const endRun = async (options: { progress?: boolean; error?: unknown } = {}) => {
+      if (options.progress !== false) await agent("progress", { criteria: [], checkpoint: `checkpoint ${engine.prompts.length}`, madeProgress: true });
+      engine.statuses.set(sessionId, { type: "idle" });
+      engine.messages.set(sessionId, [{
+        info: { id: `msg_done_${engine.prompts.length}`, sessionID: sessionId, role: "assistant", time: { created: Date.now(), completed: Date.now() },
+          ...(options.error ? { error: options.error } : { finish: "stop" }) },
+        parts: [],
+      }]);
+      await harness.server.reconcileActiveSessionRuns?.();
+    };
+    return { engine, harness, goalPath, call, agent, endRun };
+  }
+
+  test("a goal run carries no permission, tool or agent override and never touches the session permission mode", async () => {
+    const sessionId = "ses_goal_authority";
+    const { engine, harness, goalPath, call } = await goalEnv(sessionId);
+    const before = await call("GET", `${harness.base}/workspace/ws_1/sessions/${sessionId}/permission-mode`);
+    expect(before.body.state).toBeNull();
+    await call("POST", goalPath, createBody);
+    const body = engine.prompts.at(-1)!.body as Record<string, unknown>;
+    // The request only adds the envelope and the tagged text part; nothing that could widen authority.
+    for (const key of ["tools", "agent", "permission", "permissions", "noReply"]) expect(body).not.toHaveProperty(key);
+    expect(Object.keys(body).sort()).toEqual(["messageID", "parts", "system"].sort());
+    const after = await call("GET", `${harness.base}/workspace/ws_1/sessions/${sessionId}/permission-mode`);
+    expect(after.body.state).toBeNull();
+    expect(after.body.grants).toEqual([]);
+    // The envelope states the boundary to the model as well.
+    expect((body as { system: string }).system).toContain("Goal mode grants no extra permissions");
+  });
+
+  test("a continuation behind a pending permission or question never starts, and approving does not skip the approval flow", async () => {
+    const sessionId = "ses_goal_authority_gate";
+    const { engine, harness, goalPath, call, endRun } = await goalEnv(sessionId);
+    await call("POST", goalPath, createBody);
+    engine.pendingQuestions.push({ id: "que_1", sessionID: sessionId, questions: [{ question: "Which delimiter?", header: "d", options: [] }] });
+    await endRun();
+    await waitUntil(async () => {
+      await harness.server.reconcileActiveSessionRuns?.();
+      return (await call("GET", goalPath)).body.item.activeRunId === null;
+    }, 8_000);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    expect(engine.prompts).toHaveLength(1);
+    expect((await call("GET", goalPath)).body.item).toMatchObject({ status: "active", execution: "idle" });
+    // The pending question stays pending: goal mode answered nothing on the user's behalf.
+    expect(engine.pendingQuestions).toHaveLength(1);
+    engine.pendingQuestions.length = 0;
+    await waitUntil(() => engine.prompts.length === 2, 6_000);
+  }, 15_000);
+
+  test("goal-agent calls from another workspace type or session cannot widen or move a goal", async () => {
+    const sessionId = "ses_goal_authority_scope";
+    const { harness, goalPath, call, agent } = await goalEnv(sessionId);
+    const created = (await call("POST", goalPath, createBody)).body.item;
+    const other = await call("POST", `${harness.base}/workspace/ws_1/goal-agent/progress`, {
+      sessionId: "ses_someone_else", criteria: [], checkpoint: "x", madeProgress: true,
+    });
+    expect(other.status).toBe(404);
+    // The model can never name a goal id or change lifecycle; unknown fields are rejected.
+    const smuggled = await agent("progress", { criteria: [], checkpoint: "x", madeProgress: true, goalId: created.id, status: "completed" });
+    expect(smuggled.status).toBe(400);
+    for (const action of ["pause", "cancel", "resume", "continue", "edit"]) {
+      expect((await agent(action)).status).toBe(404);
+    }
+    expect((await call("GET", goalPath)).body.item).toMatchObject({ status: "active", id: created.id });
+  });
+
+  test("goal content stays out of logs and of the event history, and field sizes are bounded", async () => {
+    const sessionId = "ses_goal_redaction";
+    const lines: string[] = [];
+    const { engine, harness, goalPath, call, agent, endRun } = await goalEnv(sessionId, {
+      log: (level, message, attributes) => lines.push(JSON.stringify({ level, message, attributes })),
+    });
+    const created = (await call("POST", goalPath, { objective: SECRET_OBJECTIVE, criteria: [{ text: SECRET_CRITERION }] })).body.item;
+    const criterionId = created.criteria[0].id;
+    await agent("progress", { criteria: [{ id: criterionId, status: "met", evidence: "SECRET_EVIDENCE_TEXT" }], checkpoint: "SECRET_CHECKPOINT_TEXT", madeProgress: true });
+    await agent("blocker", { reason: "SECRET_BLOCKER_TEXT", needsUser: true });
+    await endRun({ progress: false });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    const history = await call("GET", `${goalPath}/${created.id}/runs`);
+    expect(history.status).toBe(200);
+    const serializedHistory = JSON.stringify(history.body);
+    for (const secret of ["SECRET_OBJECTIVE_TEXT", "SECRET_CRITERION_TEXT", "SECRET_EVIDENCE_TEXT", "SECRET_CHECKPOINT_TEXT", "SECRET_BLOCKER_TEXT"]) {
+      expect(serializedHistory).not.toContain(secret);
+      expect(lines.join("\n")).not.toContain(secret);
+    }
+    // Events carry only status codes, counters and identifiers.
+    for (const event of history.body.events) {
+      expect(Object.keys(event).sort()).toEqual(["event", "execution", "occurredAt", "ordinal", "runId", "status"]);
+    }
+    // The prompt body is the only place the goal text legitimately travels.
+    expect(JSON.stringify(engine.prompts.at(-1)!.body)).toContain("SECRET_OBJECTIVE_TEXT");
+
+    // Oversized inputs are rejected or truncated, not stored whole.
+    const oversizedCreate = await call("POST", `${harness.base}/workspace/ws_1/sessions/ses_goal_redaction_2/goal`, { objective: "x".repeat(4_001), criteria: [{ text: "a" }] });
+    expect(oversizedCreate.status).toBe(400);
+    const hugeCheckpoint = await agent("progress", { criteria: [], checkpoint: "y".repeat(20_000), madeProgress: true });
+    expect([200, 400, 409]).toContain(hugeCheckpoint.status);
+    const stored = (await call("GET", goalPath)).body.item;
+    expect((stored.checkpoint ?? "").length).toBeLessThanOrEqual(8_000);
+  }, 15_000);
+
+  test("a context-compacted or restarted session rebuilds the same goal envelope, and the goal and its runs survive a Server restart", async () => {
+    process.env.JUGGLEWORK_GOAL_AUTO_CONTINUE = "0";
+    const sessionId = "ses_goal_restart";
+    const { engine, harness, goalPath, call, agent, endRun } = await goalEnv(sessionId);
+    const created = (await call("POST", goalPath, createBody)).body.item;
+    await agent("progress", { criteria: [{ id: created.criteria[0].id, status: "met", evidence: "ran export test" }], checkpoint: "Export done; verify docs", madeProgress: true });
+    await endRun({ progress: false });
+    await waitUntil(async () => (await call("GET", goalPath)).body.item.activeRunId === null, 3_000);
+    // Compaction wipes the transcript; the next run's envelope still comes from durable state.
+    engine.messages.set(sessionId, []);
+    const idle = (await call("GET", goalPath)).body.item;
+    await call("POST", `${goalPath}/${idle.id}/continue`, { expectedVersion: idle.version });
+    const system = (engine.prompts.at(-1)!.body as { system: string }).system;
+    expect(system).toContain("Export done; verify docs");
+    expect(system).toContain("[met]");
+
+    // Restart the Server against the same runtime database.
+    await harness.server.stop(true);
+    stops.pop();
+    const restarted = await startServer(harness.config) as Served;
+    stops.push(() => restarted.stop(true));
+    const afterRestart = await fetch(`http://127.0.0.1:${restarted.port}/workspace/ws_1/sessions/${sessionId}/goal`, { headers: harness.collaboratorHeaders });
+    const restored = (await afterRestart.json() as any).item;
+    expect(restored).toMatchObject({ id: created.id, status: "active", checkpoint: "Export done; verify docs", objective: createBody.objective });
+    expect(restored.criteria[0]).toMatchObject({ status: "met", evidence: "ran export test" });
+  }, 20_000);
+
+  test("a run lost across a restart is closed as orphaned and the goal waits for the user instead of repeating work", async () => {
+    const sessionId = "ses_goal_orphan";
+    const { engine, harness, goalPath, call } = await goalEnv(sessionId);
+    const created = (await call("POST", goalPath, createBody)).body.item;
+    expect(engine.prompts).toHaveLength(1);
+    await harness.server.stop(true);
+    stops.pop();
+    // The engine finished the run while the Server was down and its in-memory run record is gone.
+    engine.statuses.set(sessionId, { type: "idle" });
+    const restarted = await startServer(harness.config) as Served;
+    stops.push(() => restarted.stop(true));
+    const read = async () => (await (await fetch(`http://127.0.0.1:${restarted.port}/workspace/ws_1/sessions/${sessionId}/goal`, { headers: harness.collaboratorHeaders })).json() as any).item;
+    await waitUntil(async () => (await read()).activeRunId === null, 8_000);
+    // Startup recovery closes the run the Server no longer knows; the goal waits instead of repeating work.
+    const recovered = await read();
+    expect(recovered).toMatchObject({ id: created.id, status: "active", execution: "waiting_user" });
+    expect(["run_failed", "run_lost"]).toContain(recovered.stopReason);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(engine.prompts).toHaveLength(1);
+  }, 20_000);
+
+  test("a provider failure waits for the user; a usage limit waits as usage_limited; manual Continue resumes after the limit resets", async () => {
+    const sessionId = "ses_goal_provider";
+    const { engine, harness, goalPath, call, endRun } = await goalEnv(sessionId);
+    await call("POST", goalPath, createBody);
+    await endRun({ progress: false, error: { name: "APIError", data: { message: "You exceeded your current quota, please check your plan and billing details", statusCode: 429 } } });
+    await waitUntil(async () => {
+      await harness.server.reconcileActiveSessionRuns?.();
+      return (await call("GET", goalPath)).body.item.execution === "usage_limited";
+    }, 8_000);
+    const limited = (await call("GET", goalPath)).body.item;
+    expect(limited).toMatchObject({ status: "active", execution: "usage_limited", stopReason: "usage_limited", activeRunId: null });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    // Only an explicit Continue (after the external reset) starts the next run.
+    expect(engine.prompts).toHaveLength(1);
+    engine.statuses.set(sessionId, { type: "idle" });
+    const continued = await call("POST", `${goalPath}/${limited.id}/continue`, { expectedVersion: limited.version });
+    expect(continued.status).toBe(202);
+    expect(continued.body.item).toMatchObject({ execution: "running", stopReason: null, continuationStreak: 0 });
+    expect(engine.prompts).toHaveLength(2);
+  }, 20_000);
+
+  test("an ordinary provider failure is not mistaken for a usage limit", async () => {
+    const sessionId = "ses_goal_provider_plain";
+    const { engine, harness, goalPath, call, endRun } = await goalEnv(sessionId);
+    await call("POST", goalPath, createBody);
+    await endRun({ progress: false, error: { name: "APIError", data: { message: "upstream exploded", statusCode: 500 } } });
+    await waitUntil(async () => {
+      await harness.server.reconcileActiveSessionRuns?.();
+      return (await call("GET", goalPath)).body.item.execution === "waiting_user";
+    }, 8_000);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect((await call("GET", goalPath)).body.item).toMatchObject({ execution: "waiting_user", stopReason: "run_failed" });
+    expect(engine.prompts).toHaveLength(1);
+  }, 15_000);
+
+  test("one logical goal stays one presentation across several continuations: one run per ordinal, tagged requests, no repeated first request", async () => {
+    const sessionId = "ses_goal_one_presentation";
+    const { engine, goalPath, call, endRun } = await goalEnv(sessionId);
+    const created = (await call("POST", goalPath, createBody)).body.item;
+    for (let round = 1; round <= 3; round += 1) {
+      await endRun();
+      await waitUntil(async () => engine.prompts.length === round + 1, 8_000);
+      engine.statuses.set(sessionId, { type: "busy" });
+    }
+    const tags = engine.prompts.map((prompt) => ((prompt.body as { parts: Array<{ metadata: { jugglework_goal: { goalId: string; ordinal: number; trigger: string } } }> }).parts[0]!.metadata.jugglework_goal));
+    expect(tags).toEqual([
+      { goalId: created.id, ordinal: 1, trigger: "create" },
+      { goalId: created.id, ordinal: 2, trigger: "auto" },
+      { goalId: created.id, ordinal: 3, trigger: "auto" },
+      { goalId: created.id, ordinal: 4, trigger: "auto" },
+    ]);
+    // Exactly one creation request exists; every later request is tagged as internal continuation.
+    expect(tags.filter((tag) => tag.trigger === "create")).toHaveLength(1);
+    const runs = (await call("GET", `${goalPath}/${created.id}/runs`)).body.items;
+    expect(runs.map((run: { ordinal: number }) => run.ordinal).sort()).toEqual([1, 2, 3, 4]);
+    expect(new Set(runs.map((run: { idempotencyKey: string }) => run.idempotencyKey)).size).toBe(4);
+  }, 40_000);
+
+  test("an archived session is never continued automatically, and unarchiving lets the goal continue", async () => {
+    const sessionId = "ses_goal_archived";
+    const { engine, goalPath, call, endRun } = await goalEnv(sessionId);
+    await call("POST", goalPath, createBody);
+    engine.sessions.set(sessionId, { ...engine.sessions.get(sessionId)!, time: { created: 1, updated: 1, archived: Date.now() } } as never);
+    await endRun();
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    expect(engine.prompts).toHaveLength(1);
+    engine.sessions.set(sessionId, { ...engine.sessions.get(sessionId)!, time: { created: 1, updated: 1, archived: 0 } } as never);
+    await waitUntil(() => engine.prompts.length === 2, 6_000);
+  }, 20_000);
+
+  test("rollback: the continuation switch off keeps goals readable and editable, and ordinary sessions never see a goal", async () => {
+    process.env.JUGGLEWORK_GOAL_AUTO_CONTINUE = "0";
+    const sessionId = "ses_goal_rollback";
+    const { engine, harness, goalPath, call, endRun } = await goalEnv(sessionId);
+    await call("POST", goalPath, createBody);
+    await endRun();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(engine.prompts).toHaveLength(1);
+    const goal = (await call("GET", goalPath)).body.item;
+    const edited = await call("PATCH", `${goalPath}/${goal.id}`, { expectedVersion: goal.version, objective: "Ship CSV export v2" });
+    expect(edited.status).toBe(200);
+    // An ordinary session has no goal, and an ordinary run carries no goal envelope or tag.
+    const ordinary = "ses_ordinary_after_goal";
+    engine.sessions.set(ordinary, { id: ordinary, title: "Plain", directory: harness.config.workspaces[0]!.path, time: { created: 1, updated: 1 } });
+    expect((await call("GET", `${harness.base}/workspace/ws_1/sessions/${ordinary}/goal`)).body.item).toBeNull();
+    const started = await fetch(`${runPath(harness.base, ordinary)}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: "plain_run", prompt: { parts: [{ type: "text", text: "Just a task" }] } }),
+    });
+    expect(started.status).toBe(202);
+    const plain = engine.prompts.at(-1)!.body as { system?: string; parts: Array<{ metadata?: unknown }> };
+    expect(plain.system).toBeUndefined();
+    expect(plain.parts[0]!.metadata).toBeUndefined();
+  }, 15_000);
 });
 
 async function waitForIdle(call: (method: string, path: string) => Promise<{ body: any }>, goalPath: string) {

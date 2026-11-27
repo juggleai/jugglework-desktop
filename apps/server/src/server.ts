@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { createSessionCreationLedger } from "./session-create-idempotency.js";
 import { filterRemovedGlobalProviders } from "./local-provider-catalog.js";
 import { hasCurrentRunFinalResponse } from "./session-completion-evidence.js";
+import { isUsageLimitError, latestAssistantError } from "./goal-usage-limit.js";
 import { persistServerWorkspaceState } from "./routes/workspaces.js";
 import { homedir, hostname } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -1073,6 +1074,24 @@ export async function startServer(config: ServerConfig, options: {
     sessionRunJournal.close();
     throw error;
   }
+  /**
+   * A goal run that failed because the account hit a usage limit waits in
+   * `usage_limited` instead of a generic failure. Best effort: when the
+   * engine error cannot be read the goal keeps its `run_failed` stop.
+   */
+  async function markGoalUsageLimitedIfNeeded(workspaceId: string, sessionId: string) {
+    try {
+      if (!goalStore.unfinished(workspaceId, sessionId)) return;
+      const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
+      const messages = unwrapOpencodeResult(
+        await createWorkspaceOpencodeClient(config, workspace).session.messages({ sessionID: sessionId, limit: 10 }, { signal: AbortSignal.timeout(5_000) }),
+        "/session/message",
+      );
+      if (isUsageLimitError(latestAssistantError(messages))) goalStore.markUsageLimited(workspaceId, sessionId);
+    } catch {
+      // Keep the generic failure stop; the user can still Continue.
+    }
+  }
   const lastJournalProgressAtByRun = new Map<string, number>();
   let fileDeliveries: FileDeliveryService | undefined;
   let officeDocuments: OfficeDocuments | undefined;
@@ -1103,6 +1122,9 @@ export async function startServer(config: ServerConfig, options: {
         try {
           goalStore.observeRunTerminal(event.run.workspaceId, event.run.sessionId, event.run.runId,
             event.event === "run_terminal" ? (event.terminalReason ?? "completed") : "start_rolled_back");
+          if (event.event === "run_terminal" && event.terminalReason === "failed") {
+            void markGoalUsageLimitedIfNeeded(event.run.workspaceId, event.run.sessionId);
+          }
           // Reevaluate promptly instead of waiting for the next interval.
           void goalCoordinatorRef.current?.wake().catch(() => undefined);
         } catch (error) {
@@ -2002,6 +2024,16 @@ export async function startServer(config: ServerConfig, options: {
       if (!isRecord(statuses)) throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
       const status = statuses[goal.sessionId];
       return isRecord(status) && status.type !== "idle" ? "busy" : "idle";
+    },
+    async isSessionArchived(goal, signal) {
+      const workspace = await resolveWorkspaceWithoutBootstrap(config, goal.workspaceId);
+      const session = unwrapOpencodeResult(
+        await createWorkspaceOpencodeClient(config, workspace).session.get({ sessionID: goal.sessionId }, { signal }),
+        "/session/:id",
+      );
+      if (!isRecord(session)) throw new ApiError(502, "opencode_invalid_response", "OpenCode returned an invalid session");
+      const archived = isRecord(session.time) ? session.time.archived : undefined;
+      return typeof archived === "number" && archived > 0;
     },
     async hasPendingInteraction(goal) {
       const workspace = await resolveWorkspaceWithoutBootstrap(config, goal.workspaceId);

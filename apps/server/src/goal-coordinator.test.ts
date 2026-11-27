@@ -112,6 +112,25 @@ describe("goal coordinator", () => {
     await coordinator.close();
   });
 
+  test("an archived session is not continued, and an unreadable session fails closed", async () => {
+    let archived = true;
+    const { coordinator, dispatched, finishFirstRun } = await setup({ isSessionArchived: async () => archived });
+    finishFirstRun();
+    await coordinator.wake();
+    expect(dispatched).toHaveLength(0);
+    archived = false;
+    await coordinator.wake();
+    expect(dispatched).toHaveLength(1);
+    await coordinator.close();
+
+    const unreadable = await setup({ isSessionArchived: async () => { throw new Error("engine unavailable"); } });
+    unreadable.finishFirstRun();
+    await unreadable.coordinator.wake();
+    expect(unreadable.dispatched).toHaveLength(0);
+    expect(unreadable.store.get(unreadable.goal.id)).toMatchObject({ execution: "idle", continuationStreak: 0 });
+    await unreadable.coordinator.close();
+  });
+
   test("paused, blocked, cancelled and waiting goals are not continued", async () => {
     for (const stop of ["pause", "cancel", "blocker"] as const) {
       const { coordinator, dispatched, store, goal, finishFirstRun } = await setup();

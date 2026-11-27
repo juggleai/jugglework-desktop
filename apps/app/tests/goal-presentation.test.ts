@@ -48,3 +48,52 @@ test("prompt suggestions ignore goal continuation requests", () => {
   expect(promptSuggestionUserHistory([...goalOnly, real] as never).userCreatedAtBaseline).toBe(300);
   expect(promptSuggestionUserHistory([real, ...goalOnly.map((message) => ({ ...message, info: { ...message.info, time: { created: 400 } } }))] as never).userCreatedAtBaseline).toBe(300);
 });
+
+const assistantMessage = (id: string, created: number, text: string) => ({
+  info: { id, sessionID, role: "assistant", time: { created, completed: created + 1 }, finish: "stop" },
+  parts: [{ id: `${id}:text`, sessionID, messageID: id, type: "text", text, time: { start: created, end: created + 1 } }],
+});
+
+test("several continuations stay one goal presentation: one task bubble, one assistant group, no repeated tool output", async () => {
+  const { groupMessages, isMessageGroup } = await import("../src/components/chat/utils");
+  const { transcriptToText } = await import("../src/react-app/domains/session/surface/transcript-text");
+  const messages = snapshot([
+    userMessage("u1", 1, [goalPart("p1", "u1", "create", "Start working on the goal: Ship CSV export")]),
+    assistantMessage("a1", 2, "Wired the export button."),
+    userMessage("u2", 3, [goalPart("p2", "u2", "auto", "Continue working on the goal from the latest checkpoint.")]),
+    assistantMessage("a2", 4, "Added the header row."),
+    userMessage("u3", 5, [goalPart("p3", "u3", "auto", "Continue working on the goal from the latest checkpoint.")]),
+    assistantMessage("a3", 6, "Documented the export."),
+  ]);
+  expect(messages.map((message) => message.id)).toEqual(["u1", "a1", "a2", "a3"]);
+
+  const items = groupMessages(messages, "idle" as never);
+  const userBubbles = items.filter((item) => !isMessageGroup(item));
+  const groups = items.filter(isMessageGroup);
+  expect(userBubbles).toHaveLength(1);
+  expect(groups).toHaveLength(1);
+  expect(groups[0]!.messages).toHaveLength(3);
+
+  // Copy and export read the same presentation, so internal requests never show up in them.
+  const copied = transcriptToText(messages);
+  expect(copied.match(/^You$/gm)).toHaveLength(1);
+  expect(copied).not.toContain("Continue working on the goal from the latest checkpoint.");
+  for (const text of ["Wired the export button.", "Added the header row.", "Documented the export."]) {
+    expect(copied.split(text)).toHaveLength(2);
+  }
+});
+
+test("a continuation that follows a real user message does not merge that message away", async () => {
+  const { groupMessages, isMessageGroup } = await import("../src/components/chat/utils");
+  const messages = snapshot([
+    userMessage("u1", 1, [goalPart("p1", "u1", "create", "Start working on the goal: Ship CSV export")]),
+    assistantMessage("a1", 2, "Wired the export button."),
+    userMessage("u2", 3, [{ id: "p2", sessionID, messageID: "u2", type: "text", text: "Use semicolons", time: { start: 3, end: 3 } }]),
+    assistantMessage("a2", 4, "Switched to semicolons."),
+    userMessage("u3", 5, [goalPart("p3", "u3", "auto", "Continue working on the goal from the latest checkpoint.")]),
+    assistantMessage("a3", 6, "Documented the export."),
+  ]);
+  const items = groupMessages(messages, "idle" as never);
+  expect(items.filter((item) => !isMessageGroup(item))).toHaveLength(2);
+  expect(items.filter(isMessageGroup).map((group) => group.messages.length)).toEqual([1, 2]);
+});

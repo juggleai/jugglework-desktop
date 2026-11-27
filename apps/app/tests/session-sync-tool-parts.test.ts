@@ -1796,3 +1796,73 @@ describe("tool part mapper", () => {
     useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
   });
 });
+
+describe("goal continuation live sync", () => {
+  test("auto and manual goal continuations never create a task bubble, while the creation request and user steer stay", () => {
+    const workspaceId = "workspace-goal-live";
+    const sessionId = "session-goal-live";
+    const syncInput = { workspaceId, baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, sessionId);
+    const goalPart = (messageID: string, trigger: string, text: string) => ({
+      id: `${messageID}-part`, sessionID: sessionId, messageID, type: "text" as const, text,
+      metadata: { jugglework_goal: { goalId: "goal_1", ordinal: 2, trigger } },
+      time: { start: 1_700_000_010_000, end: 1_700_000_010_000 },
+    });
+    const userInfo = (id: string, created: number) => ({ type: "message.updated", properties: { info: { id, role: "user", sessionID: sessionId, time: { created } } } }) as any;
+    const transcript = () => getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? [];
+
+    try {
+      // Creation request: the user's own task stays visible.
+      __applySessionSyncEventForTest(syncInput, userInfo("goal-create", 1_700_000_010_000));
+      __applySessionSyncEventForTest(syncInput, { type: "message.part.updated", properties: { part: goalPart("goal-create", "create", "Start working on the goal: Ship CSV export") } } as any);
+      expect(transcript().find((message) => message.id === "goal-create")?.parts).toMatchObject([{ type: "text", text: "Start working on the goal: Ship CSV export" }]);
+
+      // Automatic and manual continuations, under both event orders, leave nothing behind.
+      for (const [id, trigger, partFirst] of [["goal-auto-a", "auto", false], ["goal-auto-b", "auto", true], ["goal-manual", "user_continue", false]] as const) {
+        const part = { type: "message.part.updated", properties: { part: goalPart(id, trigger, "Continue working on the goal from the latest checkpoint.") } } as any;
+        if (partFirst) __applySessionSyncEventForTest(syncInput, part);
+        __applySessionSyncEventForTest(syncInput, userInfo(id, 1_700_000_011_000));
+        if (!partFirst) __applySessionSyncEventForTest(syncInput, part);
+        expect({ id, present: transcript().some((message) => message.id === id) }).toEqual({ id, present: false });
+      }
+
+      // A real steer in the same session is untouched.
+      __applySessionSyncEventForTest(syncInput, userInfo("goal-steer", 1_700_000_012_000));
+      __applySessionSyncEventForTest(syncInput, { type: "message.part.updated", properties: { part: { id: "goal-steer-part", sessionID: sessionId, messageID: "goal-steer", type: "text", text: "Use semicolons" } } } as any);
+      expect(transcript().map((message) => message.id)).toEqual(["goal-create", "goal-steer"]);
+    } finally {
+      release();
+      cleanup();
+      useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+    }
+  });
+
+  test("an idle event and a finished goal tool call refresh the goal; missed events are recovered on invalidate", () => {
+    const workspaceId = "workspace-goal-refresh";
+    const sessionId = "session-goal-refresh";
+    const syncInput = { workspaceId, baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, sessionId);
+    const client = getReactQueryClient();
+    const goalKey = ["session-goal", workspaceId, sessionId] as const;
+    client.setQueryData(goalKey, { id: "goal_1" });
+    const stale = () => client.getQueryState(goalKey)?.isInvalidated === true;
+    try {
+      expect(stale()).toBe(false);
+      __applySessionSyncEventForTest(syncInput, { type: "session.idle", properties: { sessionID: sessionId } } as any);
+      expect(stale()).toBe(true);
+      client.setQueryData(goalKey, { id: "goal_1" });
+      expect(stale()).toBe(false);
+      __applySessionSyncEventForTest(syncInput, { type: "message.part.updated", properties: { part: {
+        id: "tool-1", sessionID: sessionId, messageID: "msg-1", type: "tool", callID: "c1", tool: "jugglework_goal_progress",
+        state: { status: "completed", input: {}, output: "ok", title: "goal", metadata: {}, time: { start: 1, end: 2 } },
+      } } } as any);
+      expect(stale()).toBe(true);
+    } finally {
+      release();
+      cleanup();
+      useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+    }
+  });
+});

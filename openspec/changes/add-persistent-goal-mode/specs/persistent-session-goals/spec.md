@@ -22,7 +22,7 @@ The system SHALL create a persistent goal only when the user explicitly selects 
 
 ### Requirement: Goal entry is a plus-menu peer of Plan mode
 
-The composer plus menu SHALL list `目标` (Goal) at the same level as `计划模式` (Plan mode). Selecting Goal SHALL open the goal setup surface and SHALL NOT select or change the session agent. Goal runs SHALL use the session's ordinary execution agent. Selecting Plan mode SHALL keep its existing behavior and SHALL NOT create a goal.
+The composer plus menu SHALL list `目标` (Goal) at the same level as `计划模式` (Plan mode). Selecting Goal SHALL switch the composer to goal mode, shown as a closable Goal chip with a goal-specific placeholder, as Plan mode shows its own chip, and SHALL NOT select or change the session agent. In goal mode the next message the user sends SHALL create the goal from that text. When the session already has an unfinished goal, selecting Goal SHALL open the goal editor instead. Goal runs SHALL use the session's ordinary execution agent. Selecting Plan mode SHALL keep its existing behavior and SHALL NOT create a goal.
 
 #### Scenario: User opens the plus menu
 
@@ -31,8 +31,9 @@ The composer plus menu SHALL list `目标` (Goal) at the same level as `计划�
 
 #### Scenario: Plan mode is active when the user creates a goal
 
-- **WHEN** Plan mode is selected and the user confirms a new goal
-- **THEN** goal runs use the ordinary execution agent rather than the Plan agent
+- **WHEN** Plan mode is selected and the user chooses Goal from the plus menu
+- **THEN** Plan mode is turned off and goal mode is shown in its place
+- **AND** goal runs use the ordinary execution agent rather than the Plan agent
 - **AND** the composer no longer shows the Plan mode badge
 
 ### Requirement: First release supports local workspaces only

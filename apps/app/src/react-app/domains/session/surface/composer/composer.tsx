@@ -7,7 +7,8 @@ import { useVoiceService } from "./use-voice-service";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import type { UIMessage } from "ai";
-import { AppWindowMac, ArrowUp, Check, FileCog, FileText, Flag, ImagePlus, Lightbulb, LoaderCircle, MessageCirclePlus, Mic, Minimize2, Paperclip, PenLine, Plus, Plug, Presentation, ScanSearch, Square, SquarePlay, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, ArrowUp, Check, FileCog, FileText, ImagePlus, Lightbulb, LoaderCircle, MessageCirclePlus, Mic, Minimize2, Paperclip, PenLine, Plus, Plug, Presentation, ScanSearch, Square, SquarePlay, Terminal, X, Zap } from "lucide-react";
+import { GoalIcon } from "@/components/icons/goal-icon";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
@@ -158,9 +159,16 @@ export type ComposerProps = {
   onOpenSettings?: () => void;
   currentFile?: string | null;
   onCreatePresentation?: (request: PresentationRequest) => void | Promise<void>;
-  /** Opens goal setup. The Goal plus-menu entry is shown only when this is set (local workspaces). */
+  /**
+   * Turns on goal mode for the next message. The Goal plus-menu entry is shown
+   * only when this is set (local workspaces).
+   */
   onOpenGoal?: () => void;
-  /** The session already has an unfinished goal; the Goal entry shows as selected. */
+  /** Goal mode is selected: the next message becomes the goal's objective. */
+  goalMode?: boolean;
+  /** Leaves goal mode without sending anything. */
+  onCloseGoalMode?: () => void;
+  /** The session already has an unfinished goal. */
   goalActive?: boolean;
   focusEligible: boolean;
   draft: string;
@@ -1564,7 +1572,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                   const selected = entry.kind === "agent"
                     ? entry.name === null ? !props.selectedAgent : props.selectedAgent === entry.name
                     : entry.kind === "goal"
-                      ? Boolean(props.goalActive)
+                      ? Boolean(props.goalMode)
                     : entry.kind === "image-generation"
                       ? Boolean(props.imageGeneration)
                       : entry.kind === "video-generation" && Boolean(props.videoGeneration);
@@ -1594,7 +1602,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                         {entry.kind === "image-generation" ? <ImagePlus size={18} strokeWidth={1.8} /> : null}
                         {entry.kind === "video-generation" ? <SquarePlay size={18} strokeWidth={1.8} /> : null}
                         {entry.kind === "agent" ? plusMenuAgentIcon(entry.name) : null}
-                        {entry.kind === "goal" ? <Flag size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
+                        {entry.kind === "goal" ? <GoalIcon size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
                         {entry.kind === "extension" ? extensionIcon(entry.extension, 18) : null}
                         {entry.kind === "plugin-file" ? <FileText size={18} strokeWidth={1.8} /> : null}
                         {entry.kind === "mcp" || entry.kind === "mcp-management" ? <Plug size={18} strokeWidth={1.8} /> : null}
@@ -1819,6 +1827,24 @@ export function ReactSessionComposer(props: ComposerProps) {
                 </div>
               </div>
             ) : null}
+            {props.goalMode ? (
+              <div className="mb-2 flex min-w-0 items-center" data-testid="composer-goal-mode-control">
+                <div className="flex h-8 items-center gap-1.5 rounded-xl bg-gray-3 px-2.5 text-xs font-medium text-gray-11">
+                  <GoalIcon size={15} strokeWidth={1.8} />
+                  <span>{t("composer.goal_badge")}</span>
+                  <button
+                    type="button"
+                    className="-mr-1 inline-flex size-6 items-center justify-center rounded-lg text-gray-9 transition-colors hover:bg-gray-4 hover:text-gray-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-7"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => props.onCloseGoalMode?.()}
+                    aria-label={t("composer.goal_mode_close")}
+                    title={t("composer.goal_mode_close")}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+            ) : null}
             {props.imageGeneration ? (
               <ImageGenerationControls
                 models={props.imageGenerationModels}
@@ -1912,7 +1938,9 @@ export function ReactSessionComposer(props: ComposerProps) {
               mentions={props.mentions}
               pastedText={props.pastedText}
               disabled={props.disabled}
-              placeholder={props.compact && props.compactPlaceholder ? props.compactPlaceholder : props.videoGeneration
+              placeholder={props.compact && props.compactPlaceholder ? props.compactPlaceholder : props.goalMode
+                ? t("composer.goal_placeholder")
+                : props.videoGeneration
                 ? t("composer.video_generation_placeholder")
                 : props.imageGeneration
                   ? t("composer.image_generation_placeholder")

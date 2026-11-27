@@ -71,8 +71,10 @@ import {
   VIDEO_DURATION_DEFAULT_SECONDS,
   type ComposerVideoModelOption,
 } from "./composer/video-generation";
-import { emptyGoalDraft, GoalCard, goalDraftFromGoal, GoalSetupDialog, type GoalDraft } from "./goal-panel";
+import { GoalCard, goalDraftFromGoal, GoalSetupDialog, type GoalDraft } from "./goal-panel";
+import { GOAL_OBJECTIVE_MAX_CHARS, goalComposerBlock } from "./use-session-goal";
 import { isGoalUnfinished, useSessionGoal } from "./use-session-goal";
+import { messageToReadableText, transcriptToText } from "./transcript-text";
 import { createStopGuard, effectiveSessionRunning, effectiveThreadStatus, isSessionBusyError, shouldReconcileAfterCoordinatorEnded, shouldReportAbortFailure, shouldSettleStaleRunProjection } from "./session-run-recovery";
 import { useActiveSnapshotReconciliation } from "./active-snapshot-reconciliation";
 import { generationDraftAvailableInCache, imageModelsQueryOptions, isManagedMediaModel, managedMediaScope, mediaModelQueryScope, videoModelsQueryOptions } from "@/react-app/domains/connections/media-model-queries";
@@ -292,39 +294,6 @@ export type SessionSurfaceProps = {
   onApplyEnvironmentChanges?: () => Promise<ApplyEnvironmentChangesResult>;
   quickNavigationLeftOffset?: number;
 };
-
-function messageToReadableText(message: UIMessage) {
-  const header = message.role === "user" ? "You" : message.role === "assistant" ? "JuggleWork" : message.role;
-  const body = message.parts
-    .flatMap((part) => {
-      if (part.type === "text") return [part.text];
-      if (part.type === "reasoning") return [part.text];
-      if (part.type === "file") {
-        const name = part.filename?.trim() || "file";
-        const url = part.url.startsWith("data:")
-          ? `data:${part.mediaType || "application/octet-stream"};base64,…`
-          : part.url;
-        return [`[file:${name}] ${url}`];
-      }
-      if (part.type === "dynamic-tool") {
-        if (part.state === "output-error") return [`[tool:${part.toolName}] ${part.errorText}`];
-        if (part.state === "output-available") return [`[tool:${part.toolName}] ${JSON.stringify(part.output)}`];
-        return [`[tool:${part.toolName}] ${JSON.stringify(part.input)}`];
-      }
-      return [];
-    })
-    .join("\n\n");
-  return `${header}\n${body}`.trim();
-}
-
-function transcriptToText(messages: UIMessage[]) {
-  return messages
-    .flatMap((message) => {
-      const text = messageToReadableText(message);
-      return text ? [text] : [];
-    })
-    .join("\n\n---\n\n");
-}
 
 function isSessionSurfaceMounted(sessionId: string) {
   for (const surface of document.querySelectorAll(SESSION_SURFACE_SELECTOR)) {
@@ -1613,13 +1582,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
   }, [fileHost, attachments, buildDraft, clearComposer, draft, effectiveImageGeneration.selection, effectiveVideoGeneration.selection, imageGeneration, props.onCreateNewSession, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, sendDraft, videoGeneration]);
 
-  const handleSend = useCallback(async () => {
-    await submitComposerDraft();
-  }, [submitComposerDraft]);
-
   // Goals are a local-workspace feature in the first release.
   const goalsAvailable = !fileHost && !props.isRemoteWorkspace && !props.isSandboxWorkspace;
-  const [goalDialog, setGoalDialog] = useState<{ mode: "create" | "edit"; initial: GoalDraft } | null>(null);
+  const [goalDialog, setGoalDialog] = useState<{ initial: GoalDraft } | null>(null);
+  const [goalModeBySession, setGoalModeBySession] = useState<Record<string, boolean>>({});
+  const goalMode = goalsAvailable && goalModeBySession[props.sessionId] === true;
+  const setGoalMode = useCallback((value: boolean) => {
+    setGoalModeBySession((current) => current[props.sessionId] === value ? current : { ...current, [props.sessionId]: value });
+  }, [props.sessionId]);
   const [goalError, setGoalError] = useState<string | null>(null);
   const [dismissedGoalId, setDismissedGoalId] = useState<string | null>(null);
   const sessionGoal = useSessionGoal({
@@ -1641,30 +1611,60 @@ export function SessionSurface(props: SessionSurfaceProps) {
     ...(props.modelVariant ? { variant: props.modelVariant } : {}),
   }), [props.modelVariant, props.selectedModel]);
   const goalRequestFailed = useCallback(() => setGoalError(t("goal.request_failed")), []);
+  // Goal entry from the + menu. With an unfinished goal it edits that goal;
+  // otherwise it switches the composer to goal mode, where the next message
+  // becomes the goal. Plan mode and generation modes cannot make progress on
+  // a goal, so they are turned off.
   const openGoal = useCallback(() => {
     setGoalError(null);
     const existing = sessionGoal.goal;
-    setGoalDialog(isGoalUnfinished(existing)
-      ? { mode: "edit", initial: goalDraftFromGoal(existing) }
-      : { mode: "create", initial: emptyGoalDraft() });
-  }, [sessionGoal.goal]);
-  const submitGoal = useCallback((payload: { objective: string; criteria: import("../../../../app/lib/jugglework-server").JuggleWorkGoalCriterionInput[] }) => {
-    setGoalError(null);
-    if (goalDialog?.mode === "edit") {
-      sessionGoal.edit.mutate(payload, { onSuccess: () => setGoalDialog(null), onError: goalRequestFailed });
+    if (isGoalUnfinished(existing)) {
+      setGoalDialog({ initial: goalDraftFromGoal(existing) });
       return;
     }
-    // Plan mode cannot modify files, so a goal would never make progress there.
     if (props.selectedAgent?.trim().toLowerCase() === "plan") props.onSelectAgent(null);
-    sessionGoal.create.mutate({ ...payload, run: goalRunOptions() }, {
+    setImageGeneration(null);
+    setVideoGeneration(null);
+    setGoalMode(true);
+  }, [props.onSelectAgent, props.selectedAgent, sessionGoal.goal, setGoalMode, setImageGeneration, setVideoGeneration]);
+  const submitGoalEdit = useCallback((payload: { objective: string; criteria: import("../../../../app/lib/jugglework-server").JuggleWorkGoalCriterionInput[] }) => {
+    setGoalError(null);
+    sessionGoal.edit.mutate(payload, { onSuccess: () => setGoalDialog(null), onError: goalRequestFailed });
+  }, [goalRequestFailed, sessionGoal.edit]);
+  // Sending in goal mode creates the goal from the typed text. The text holds
+  // the objective and its measurable outcomes, so one required criterion asks
+  // the agent to verify all of them; Edit refines the criteria afterwards.
+  const submitGoalFromComposer = useCallback(() => {
+    if (sessionGoal.create.isPending || props.taskSubmissionDisabled) return;
+    const block = goalComposerBlock({ text: draft, attachmentCount: attachments.length, officeGroupCount: officeGroups.length, sessionRunning: chatStreaming });
+    if (block === "empty") return;
+    if (block === "text_only") { toast.warning(t("goal.mode_text_only")); return; }
+    if (block === "too_long") { toast.warning(t("goal.objective_too_long", { max: GOAL_OBJECTIVE_MAX_CHARS })); return; }
+    if (block === "busy") { toast.info(t("goal.mode_session_busy")); return; }
+    const objective = draft.trim();
+    setGoalError(null);
+    sessionGoal.create.mutate({
+      objective,
+      criteria: [{ text: t("goal.default_criterion"), required: true }],
+      run: goalRunOptions(),
+    }, {
       onSuccess: (result) => {
-        setGoalDialog(null);
+        clearComposer();
+        setGoalMode(false);
         setDismissedGoalId(null);
         if (result.startError) setGoalError(t("goal.start_failed"));
       },
       onError: goalRequestFailed,
     });
-  }, [goalDialog?.mode, goalRequestFailed, goalRunOptions, props.onSelectAgent, props.selectedAgent, sessionGoal.create, sessionGoal.edit]);
+  }, [attachments.length, chatStreaming, clearComposer, draft, goalRequestFailed, goalRunOptions, officeGroups.length, props.taskSubmissionDisabled, sessionGoal.create, setGoalMode]);
+  // In goal mode a send creates the goal instead of a plain message.
+  const handleSend = useCallback(async () => {
+    if (goalMode) {
+      submitGoalFromComposer();
+      return;
+    }
+    await submitComposerDraft();
+  }, [goalMode, submitComposerDraft, submitGoalFromComposer]);
   const visibleGoal = goalsAvailable && sessionGoal.goal && sessionGoal.goal.id !== dismissedGoalId ? sessionGoal.goal : null;
   const goalPending = sessionGoal.lifecycle.isPending || sessionGoal.continueGoal.isPending || sessionGoal.create.isPending;
   const goalCard = visibleGoal ? (
@@ -1697,9 +1697,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   const handleSteer = useCallback(async () => {
     if (fileHost) return;
+    if (goalMode) { toast.info(t("goal.mode_session_busy")); return; }
     setSteering(true);
     await submitComposerDraft({ delivery: "steer", admissionId: `local-steer-${crypto.randomUUID()}` });
-  }, [fileHost, submitComposerDraft]);
+  }, [fileHost, goalMode, submitComposerDraft]);
 
   const handleRetryCloudSubmission = useCallback(() => {
     if (draft.trim() || attachments.length > 0) {
@@ -1714,6 +1715,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // sends it once the session reports idle.
   const handleQueue = useCallback(async () => {
     if (fileHost) { toast.info(t("file_window.session_busy")); return; }
+    // A busy session cannot start a goal; queuing the text would send it as a plain follow-up.
+    if (goalMode) { toast.info(t("goal.mode_session_busy")); return; }
     if (props.taskSubmissionDisabled) return;
     if ((imageGeneration && !effectiveImageGeneration.selection) || (videoGeneration && !effectiveVideoGeneration.selection)) return;
     const text = draft.trim();
@@ -2913,14 +2916,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
         {goalsAvailable && goalDialog ? (
           <GoalSetupDialog
             open
-            mode={goalDialog.mode}
             initial={goalDialog.initial}
-            continuationCap={sessionGoal.goal?.continuationCap ?? 10}
-            planModeSelected={props.selectedAgent?.trim().toLowerCase() === "plan"}
-            submitting={sessionGoal.create.isPending || sessionGoal.edit.isPending}
+            submitting={sessionGoal.edit.isPending}
             error={goalError}
             onOpenChange={(open) => { if (!open) setGoalDialog(null); }}
-            onSubmit={submitGoal}
+            onSubmit={submitGoalEdit}
           />
         ) : null}
         <ReactSessionComposer
@@ -2934,6 +2934,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
           currentFile={currentFile}
           onCreatePresentation={fileHost || props.isRemoteWorkspace ? undefined : handleCreatePresentation}
           onOpenGoal={goalsAvailable ? openGoal : undefined}
+          goalMode={goalMode}
+          onCloseGoalMode={() => setGoalMode(false)}
           goalActive={isGoalUnfinished(sessionGoal.goal)}
           focusEligible={props.visible !== false && props.isControlTarget && !props.modelPickerOpen}
           draft={draft}

@@ -1,0 +1,64 @@
+---
+title: "Goals"
+description: "Keep JuggleWork working on one outcome across several runs, with clear stopping points."
+---
+
+A goal tells JuggleWork to keep working on one outcome until it is done. You describe the outcome and the success criteria. JuggleWork runs, records what it verified, and continues on its own until every required criterion is met or it needs you.
+
+Goals are available only in **local** workspaces. Remote, cloud, and sandboxed workspaces do not show the Goal entry.
+
+## Set a goal
+
+1. Open the **+** menu in the composer and choose **Goal**. It sits next to **Plan mode**. A **Goal** chip appears above the input, and you can close it to leave goal mode. Plan mode and image or video generation are turned off, because a goal run has to be able to make changes.
+2. Describe the outcome and the measurable results you expect, for example "Ship CSV export: the export button downloads a valid CSV and the existing tests pass". Specific, checkable outcomes give the best results.
+3. Send the message. It becomes the goal, and the first run starts. Goal mode accepts plain text only, so if the message has attachments or document references, it stays in the composer and you are asked to remove them.
+
+A session has one unfinished goal at a time. The goal card above the composer shows the objective, how many required criteria are met, the latest checkpoint, and how many automatic runs have been used. With a goal already open, choosing **Goal** from the **+** menu opens the editor, where you can change the objective and success criteria.
+
+## How a goal runs
+
+- The first run starts when you confirm the goal. After a run ends normally, JuggleWork starts the next one automatically, starting from the saved checkpoint rather than the old conversation.
+- In each run the agent verifies the workspace, records a criterion as met only with evidence (a command and its result, a file path, a test name), and saves a checkpoint of what is done and what comes next. The goal is complete only when every required criterion is met. You can also mark it complete yourself.
+- Later runs appear as part of the same goal. They do not add new messages from you to the conversation.
+- You can still send normal messages in the session. An ordinary message is not a goal run and does not change the goal. Only **Edit** changes the objective or criteria.
+
+## When it stops and waits for you
+
+Automatic continuation stops, and the goal card says why, in these cases. The goal stays unfinished and nothing is lost.
+
+| Situation | What the goal card says |
+|---|---|
+| 10 automatic runs in a row | "Paused after 10 automatic runs." |
+| 3 runs in a row recorded no progress | "Paused: 3 runs in a row recorded no progress." |
+| The agent reports the same blocker 3 times | "Blocked: " followed by the reason |
+| The agent needs a decision, permission, or credential | "Needs you: " followed by the reason |
+| A run failed | "Paused: the last run failed." |
+| You stopped a run | "Paused: the last run was stopped." |
+| A run was interrupted, for example by a restart | "Paused: the last run was interrupted." |
+| The account usage limit was reached | "Paused: the account usage limit was reached." |
+| The next run could not be started 3 times | "Paused: the next run could not be started." |
+
+JuggleWork also does not continue while the session has a pending permission request or question, while another run is active, or while the session is archived.
+
+Press **Continue** to run again. **Continue** and **Resume** reset the count of consecutive automatic runs, so up to 10 more can follow. Stopping a run yourself never triggers an automatic restart. **Pause** keeps the goal and prevents any further runs until you resume it. **Cancel goal** ends it and keeps its history.
+
+## Goals, Plan mode, todos, and automations
+
+| | Purpose | Lasts |
+|---|---|---|
+| **Goal** | Keep working on one outcome across many runs, with success criteria | Until completed or cancelled |
+| **Plan mode** | Plan without changing files | One turn |
+| **Todo list** | The agent's own step list for the current run | One run |
+| **Automation** | Start new runs on a schedule or an event | Independent of any goal |
+
+The goal card and the todo list are separate. The goal card is the durable record of the outcome. The todo list only shows the steps of the current run.
+
+## Safety and privacy
+
+- Goal mode grants **no extra permissions**. Every approval, credential, publishing, deployment, deletion, and external-action rule still applies, and a request for approval pauses automatic continuation until you answer it.
+- Goals are stored on your machine. Logs and diagnostics record only status codes and counts, not your objective, criteria, checkpoints, or conversation.
+- If JuggleWork restarts while a run was in progress, it does not repeat that run. The goal waits for you, and the saved checkpoint shows where it stood.
+
+## Turn off automatic continuation
+
+Automatic continuation can be switched off without affecting goals, by setting `JUGGLEWORK_GOAL_AUTO_CONTINUE=0` for the local server. Existing goals stay readable and editable, and **Continue** still starts a run by hand.

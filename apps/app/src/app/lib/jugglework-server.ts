@@ -398,7 +398,8 @@ export type JuggleWorkGoalStopReason =
   | "run_failed"
   | "run_aborted"
   | "run_lost"
-  | "dispatch_failed";
+  | "dispatch_failed"
+  | "usage_limited";
 export type JuggleWorkGoalCriterionInput = { id?: string; text: string; required?: boolean };
 export type JuggleWorkGoalRunOptions = { model?: { providerID: string; modelID: string }; variant?: string };
 export type JuggleWorkGoalStartResult = {

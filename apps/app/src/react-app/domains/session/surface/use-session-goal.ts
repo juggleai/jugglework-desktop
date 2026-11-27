@@ -12,6 +12,35 @@ export function sessionGoalQueryKey(workspaceId: string, sessionId: string) {
   return ["session-goal", workspaceId, sessionId] as const;
 }
 
+/** Mirrors the server limit on a goal objective (apps/server goal-store). */
+export const GOAL_OBJECTIVE_MAX_CHARS = 4_000;
+
+export type GoalComposerBlock = "empty" | "busy" | "text_only" | "too_long";
+
+/**
+ * Decide whether the composer text can start a goal right now. Goal mode takes
+ * its objective from the message, so only plain text is accepted; anything else
+ * stays in the composer and the user is told why instead of losing it.
+ */
+export function goalComposerBlock(input: {
+  text: string;
+  attachmentCount: number;
+  officeGroupCount: number;
+  sessionRunning: boolean;
+}): GoalComposerBlock | null {
+  const text = input.text.trim();
+  if (!text) return "empty";
+  if (input.attachmentCount > 0 || input.officeGroupCount > 0) return "text_only";
+  if (text.length > GOAL_OBJECTIVE_MAX_CHARS) return "too_long";
+  if (input.sessionRunning) return "busy";
+  return null;
+}
+
+/** Prefix of every goal query in a workspace, for reconnect invalidation. */
+export function sessionGoalWorkspaceKey(workspaceId: string) {
+  return ["session-goal", workspaceId] as const;
+}
+
 /** Model-facing goal tools served by the jugglework-goal OpenCode plugin. */
 export function isGoalToolName(name: string | undefined): boolean {
   return typeof name === "string" && name.startsWith("jugglework_goal_");

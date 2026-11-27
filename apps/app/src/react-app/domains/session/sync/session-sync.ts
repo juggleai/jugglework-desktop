@@ -43,7 +43,7 @@ import {
 } from "../status/session-activity-store";
 import { notifyDesktopEvent as notifyMainDesktopEvent, type DesktopNotificationEvent } from "../../../shell/desktop-notifications";
 import { reconcileRunCompletionDiagnostic } from "./run-completion-diagnostics";
-import { isGoalToolName, sessionGoalQueryKey } from "../surface/use-session-goal";
+import { isGoalToolName, sessionGoalQueryKey, sessionGoalWorkspaceKey } from "../surface/use-session-goal";
 import {
   completeRunningSessionCompactions,
   getSessionCompactionFromMessage,
@@ -1857,6 +1857,8 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const activityStore = useSessionActivityStore.getState();
     const recordedFinishReason = activityStore.getFinishReason(workspaceId, props.sessionID);
     activityStore.setRunStatus(workspaceId, props.sessionID, idleStatus);
+    // A run ending moves a goal back to idle (or onward to its next run) on the server.
+    void queryClient.invalidateQueries({ queryKey: sessionGoalQueryKey(workspaceId, props.sessionID) });
     const tracked = isTrackedSession(entry, props.sessionID);
     if (tracked) {
       queryClient.setQueryData(statusKey(workspaceId, props.sessionID), idleStatus);
@@ -2117,6 +2119,10 @@ function startSync(input: SyncOptions) {
           if (!disposed && !connectionController.signal.aborted) {
             retryDelayMs = 1_000;
             reconcileTrackedSessions();
+            // Goal state changes on the server without renderer events (run
+            // endings, coordinator continuations). Events missed while the
+            // stream was down are recovered from the authoritative goal.
+            void getReactQueryClient().invalidateQueries({ queryKey: sessionGoalWorkspaceKey(input.workspaceId) });
             // Also close the initial list/subscription establishment gap.
             for (const listener of entry?.reconnectListeners ?? []) listener();
             void reconcileTrackedInteractions();

@@ -25,7 +25,8 @@ export type GoalStopReason =
   | "run_failed"
   | "run_aborted"
   | "run_lost"
-  | "dispatch_failed";
+  | "dispatch_failed"
+  | "usage_limited";
 export type GoalCriterionStatus = "pending" | "met" | "waived";
 export type GoalRunTrigger = "create" | "auto" | "user_continue";
 
@@ -559,6 +560,24 @@ export async function createGoalStore(options: { config?: ServerConfig; path?: s
         };
         write(next);
         recordEvent(next, "run_dispatch_failed", { ordinal });
+        return next;
+      });
+    },
+
+    /**
+     * The goal's last run failed because the account hit an external usage
+     * limit. The goal stays unfinished and waits in `usage_limited`; only an
+     * explicit user Continue (after the limit resets) starts the next run.
+     * Anything other than the failure this call is meant to refine is ignored.
+     */
+    markUsageLimited(workspaceId: string, sessionId: string): SessionGoal | null {
+      return transaction(() => {
+        const goal = unfinished(workspaceId, sessionId);
+        if (!goal || goal.status !== "active" || goal.activeRunId !== null) return null;
+        if (goal.execution !== "waiting_user" || goal.stopReason !== "run_failed") return null;
+        const next = { ...goal, execution: "usage_limited" as const, stopReason: "usage_limited" as const, version: goal.version + 1, updatedAt: now() };
+        write(next);
+        recordEvent(next, "usage_limited");
         return next;
       });
     },

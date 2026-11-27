@@ -32,30 +32,30 @@
 - [x] 4.6 Implement checkpoint and blocker fingerprints, three-turn repeated-blocker transition, bounded retry, and a consecutive automatic-continuation cap defaulting to 10 that resets only on explicit user continue or resume.
 - [x] 4.7 Atomically revoke queued admissions on pause or cancellation and prevent delayed dispatch or terminal events from reactivating a non-active goal.
 - [x] 4.8 Add coordinator tests for duplicate idle events, dispatch crashes, restart recovery, busy sessions, stale generations, pause/cancel races, interaction gates, continuation-cap reach and reset, no-progress loops, and orphaned runs.
-- [ ] 4.9 Add delegated-child integration tests proving recent child activity preserves the parent and child-only stall recovery does not duplicate or abort the goal root run.
+- [x] 4.9 Add delegated-child integration tests proving recent child activity preserves the parent and child-only stall recovery does not duplicate or abort the goal root run.
 
 ## 5. Session and Composer Experience
 
 - [x] 5.1 Add the `目标` plus-menu entry as a sibling of `计划模式`, shown only in local workspaces, and a localized goal setup surface for objective and required success criteria; clear a Plan mode selection when a goal is confirmed.
 - [x] 5.2 Add renderer API/query state for current goal, history, mutations, optimistic feedback, reconnect invalidation, and bounded active-goal refresh.
 - [x] 5.3 Add a persistent goal card with lifecycle/execution labels, criterion progress, checkpoint or blocker, last progress time, continuations used against the cap, and pause/resume/cancel/continue controls.
-- [ ] 5.4 Keep goal summary separate from current-run todos and preserve ordinary run indicators when an unfinished goal is idle between turns.
-- [ ] 5.5 Group internal continuation activity into the same goal presentation across live events, snapshots, automatic context compaction, copy, and export.
-- [ ] 5.6 Preserve the goal definition for ordinary steer, queued guidance, and unrelated questions; require an explicit edit action for objective or criteria changes.
-- [ ] 5.7 Add responsive, keyboard, accessibility, light/dark theme, Chinese, and English coverage for setup, active, paused, blocked, waiting, cap-reached, usage-limited, completed, and cancelled states.
+- [x] 5.4 Keep goal summary separate from current-run todos and preserve ordinary run indicators when an unfinished goal is idle between turns.
+- [x] 5.5 Group internal continuation activity into the same goal presentation across live events, snapshots, automatic context compaction, copy, and export.
+- [x] 5.6 Preserve the goal definition for ordinary steer, queued guidance, and unrelated questions; require an explicit edit action for objective or criteria changes.
+- [x] 5.7 Add responsive, keyboard, accessibility, light/dark theme, Chinese, and English coverage for setup, active, paused, blocked, waiting, cap-reached, usage-limited, completed, and cancelled states.
 
 ## 6. Reliability, Security, and Recovery Validation
 
-- [ ] 6.1 Verify goal mode never broadens session permissions or bypasses existing approval, connector, credential, publishing, deployment, deletion, or external-side-effect boundaries.
-- [ ] 6.2 Add redaction and size-limit tests proving diagnostic events and routine logs exclude goal content, transcript content, tool arguments, files, and credentials.
-- [ ] 6.3 Add end-to-end coverage for context compaction, Server/app restart, lost SSE events, authoritative snapshot recovery, provider failure, usage reset, and manual resume.
-- [ ] 6.4 Add end-to-end coverage proving one logical goal remains one presentation across multiple continuations and does not create duplicate user task bubbles or repeated file operations.
+- [x] 6.1 Verify goal mode never broadens session permissions or bypasses existing approval, connector, credential, publishing, deployment, deletion, or external-side-effect boundaries.
+- [x] 6.2 Add redaction and size-limit tests proving diagnostic events and routine logs exclude goal content, transcript content, tool arguments, files, and credentials.
+- [x] 6.3 Add end-to-end coverage for context compaction, Server/app restart, lost SSE events, authoritative snapshot recovery, provider failure, usage reset, and manual resume.
+- [x] 6.4 Add end-to-end coverage proving one logical goal remains one presentation across multiple continuations and does not create duplicate user task bubbles or repeated file operations.
 - [ ] 6.5 Run focused server and renderer suites, type checks, production builds, OpenSpec strict validation, and manual macOS and Windows goal lifecycle acceptance.
 
 ## 7. Rollout and Documentation
 
 - [x] 7.1 Gate creation and automatic continuation independently so storage/UI can ship before autonomous dispatch and rollback can stop new work without deleting goals.
-- [ ] 7.2 Document lifecycle semantics, the continuation cap and its reset rule, the local-workspace-only scope, recovery behavior, privacy boundaries, and the distinction between Goal mode, Plan mode, todos, and automations.
+- [x] 7.2 Document lifecycle semantics, the continuation cap and its reset rule, the local-workspace-only scope, recovery behavior, privacy boundaries, and the distinction between Goal mode, Plan mode, todos, and automations.
 - [ ] 7.3 Record rollout evidence and confirm ordinary non-goal sessions, remote-control queues, automations, and archived sessions remain behaviorally unchanged.
 
 ## P1 Delivery Notes
@@ -88,3 +88,16 @@ P1 (local workspaces only) ships the goal store, Goal API, plus-menu entry, setu
 - 7.1: creation and automatic continuation are independent. `JUGGLEWORK_GOAL_AUTO_CONTINUE=0` stops dispatch at runtime without deleting goals or blocking manual Continue.
 - Restart recovery: a `running` run the mutation coordinator no longer knows is closed as `orphaned`; a `queued` or `dispatching` run of unknown outcome is never re-dispatched automatically. Both wait for the user, who sees the checkpoint.
 - Not done in P3: usage-limit detection (`usage_limited` has no producer yet, so an account limit surfaces as a failed run), delegated-child stall integration test (4.9), and per-user toggle UI for the switch.
+
+## P4 Delivery Notes
+
+- 4.9: delegated-child tests show a busy child keeps the goal run alive with no continuation behind it, and child-only stall recovery aborts the child without aborting or duplicating the goal root run.
+- Usage limit: a run that failed with a hard account limit (402, `insufficient_quota`, plan or balance wording; transient 429 is excluded) waits in `usage_limited` instead of `run_failed`. Only an explicit Continue clears it. An archived session is never continued automatically.
+- 5.4 / 5.6: the goal card shows objective and criteria progress only and exposes no todo content; an unfinished goal stays visible between turns. Ordinary submissions, steer, and queued guidance make no goal calls; only the explicit edit call changes the objective or criteria.
+- 5.5 / 6.4: several continuations render as one task bubble and one assistant group with no repeated tool output; copy and export read the same presentation, so internal requests never appear in them. The server records one run per ordinal and never repeats the first request.
+- 5.7: the card is a labelled region, state changes are announced, controls have accessible names and focus rings, the control row wraps on narrow widths, and styling uses theme tokens only. All states have English and Chinese labels.
+- 6.1: a goal run carries no permission, tool, or agent override and never touches the session permission mode; a pending permission or question suspends continuation and approval still goes through the normal flow.
+- 6.2: events hold status codes and counters only; goal text, evidence, checkpoints and blockers stay out of logs and event history; oversized inputs are rejected or truncated.
+- 6.3: the goal envelope is rebuilt identically after compaction or a Server restart; goals and runs survive a restart; a run lost across a restart is closed as orphaned and waits for the user; a provider failure waits, a usage limit waits as `usage_limited`, and manual Continue resumes; missed renderer events are recovered by invalidating goal queries on idle and on stream reconnect.
+- 7.2: user documentation is `packages/docs/start-here/do-work-with-it/goals.mdx`.
+- Still open and not claimed: 6.5 manual macOS and Windows lifecycle acceptance, and 7.3 rollout evidence (behavior of ordinary sessions, remote-control queues, automations, and archived sessions on a real build). These need a human run on both platforms.

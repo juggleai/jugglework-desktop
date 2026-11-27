@@ -30,6 +30,12 @@ export type GoalCoordinatorOptions = {
   getSessionStatus: (goal: SessionGoal, signal: AbortSignal) => Promise<GoalSessionStatus>;
   /** True while the session (or a child) has an unanswered permission or question. */
   hasPendingInteraction: (goal: SessionGoal, signal: AbortSignal) => Promise<boolean>;
+  /**
+   * True when the session was archived. An archived session must not start new
+   * work on its own. Failing to read the session is reported as an error, which
+   * stops dispatch for this pass.
+   */
+  isSessionArchived?: (goal: SessionGoal, signal: AbortSignal) => Promise<boolean>;
   /** True when a mutation coordinator run is active for the session. */
   hasActiveRun: (goal: SessionGoal) => boolean;
   /** Whether the workspace still supports goals (local and not sandboxed). */
@@ -92,6 +98,7 @@ export function createGoalCoordinator(options: GoalCoordinatorOptions) {
     if (!(await options.isGoalWorkspace(goal))) return;
     if (options.hasActiveRun(goal)) return;
     const eligible = await guarded(async (signal) => {
+      if (options.isSessionArchived && await options.isSessionArchived(goal, signal)) return false;
       if (await options.getSessionStatus(goal, signal) !== "idle") return false;
       return !(await options.hasPendingInteraction(goal, signal));
     });

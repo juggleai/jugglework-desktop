@@ -303,4 +303,36 @@ describe("goal store", () => {
     expect(envelope).toContain("Export done; docs left");
     expect(envelope).toContain(`id=${goal.criteria[0]!.id} [met`);
   });
+
+  test("a usage limit stops the goal in usage_limited without completing it; only an explicit Continue clears it", async () => {
+    const { store } = await open();
+    const goal = store.create(base);
+    store.reserveRun(goal.id, { trigger: "create" });
+    store.markRunStarted(goal.id, 1, "run_1");
+    // Nothing to refine while the run is still going.
+    expect(store.markUsageLimited("ws", "ses")).toBeNull();
+    store.observeRunTerminal("ws", "ses", "run_1", "failed");
+    expect(store.get(goal.id)).toMatchObject({ execution: "waiting_user", stopReason: "run_failed" });
+    const limited = store.markUsageLimited("ws", "ses")!;
+    expect(limited).toMatchObject({ status: "active", execution: "usage_limited", stopReason: "usage_limited", activeRunId: null });
+    // Not eligible for automatic continuation, and idempotent.
+    expect(store.autoContinuationCandidates()).toEqual([]);
+    expect(store.markUsageLimited("ws", "ses")).toBeNull();
+    expect(errorCode(() => store.reserveRun(goal.id, { trigger: "auto" }))).toBe("goal_invalid_transition");
+    expect(store.events(goal.id).map((event) => event.event)).toContain("usage_limited");
+
+    const continued = store.reserveRun(goal.id, { trigger: "user_continue", expectedVersion: limited.version });
+    expect(continued.goal).toMatchObject({ execution: "queued", stopReason: null, continuationStreak: 0 });
+  });
+
+  test("a goal that failed for another reason, or finished normally, is never relabelled as usage limited", async () => {
+    const { store } = await open();
+    const goal = store.create(base);
+    store.reserveRun(goal.id, { trigger: "create" });
+    store.markRunStarted(goal.id, 1, "run_1");
+    store.reportProgress("ws", "ses", { criteria: [], checkpoint: "step", madeProgress: true });
+    store.observeRunTerminal("ws", "ses", "run_1", "completed");
+    expect(store.markUsageLimited("ws", "ses")).toBeNull();
+    expect(store.get(goal.id)).toMatchObject({ execution: "idle", stopReason: null });
+  });
 });
