@@ -82,6 +82,8 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       console.info("[cloud-docs-startup]", JSON.stringify(sample));
   };
   const items = () => [...new Set([...currents.values(), ...retained.values(), ...backgrounds.values()])];
+  // 视图被销毁（窗口关闭、渲染进程回收）后 Electron 会让 view.webContents 变为 undefined，不能直接调用其方法。
+  const viewGone = (item) => !item.view.webContents || item.view.webContents.isDestroyed();
   const active = (item) => !!item && (currents.get(item.ownerWindow.id) === item || retained.get(item.input.instanceId) === item || backgrounds.get(item.input.instanceId) === item);
   const find = (input) => input?.instanceId
     ? items().find((item) => item.input.instanceId === input.instanceId)
@@ -148,7 +150,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
 
   function warmupReady(instanceId, scope) {
     const item = find({ instanceId });
-    if (!item?.warmup || item.denied || item.view.webContents.isDestroyed() || item.origin !== scope.docsOrigin) return false;
+    if (!item?.warmup || item.denied || viewGone(item) || item.origin !== scope.docsOrigin) return false;
     // TIPS: 点击可接管仍在加载的同目标实例；setBounds 继续在 ready 前隐藏正文，不再等完后回退重建。
     if (!item.ready) return !item.hasBeenReady;
     const actual = contentTarget(item);
@@ -245,13 +247,13 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     }
     const win = old.ownerWindow;
     if (!old.input.background && win && !win.isDestroyed()) win.contentView.removeChildView(old.view);
-    if (!old.view.webContents.isDestroyed()) old.view.webContents.close();
+    if (!viewGone(old)) old.view.webContents.close();
   }
 
   /** 等待文档或表格各自的持久化确认，超时保留原视图。 */
   function prepareClose(instanceId) {
     const item = find({ instanceId });
-    if (!item || !item.hasBeenReady || item.view.webContents.isDestroyed()) return Promise.resolve(true);
+    if (!item || !item.hasBeenReady || viewGone(item)) return Promise.resolve(true);
     const requestId = randomUUID();
     return new Promise(resolve => {
       const timer = setTimeout(() => { intakes.delete(requestId); resolve(false); }, 30_000);
@@ -688,7 +690,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       if (!trusted(event, input) || !item?.ready || item.denied ||
         item.input.presentation?.mode !== "product" ||
         input?.instanceId !== item.input.instanceId ||
-        item.view.webContents.isDestroyed()) return;
+        viewGone(item)) return;
       const hint = input.hint;
       if (hint === null) {
         item.view.webContents.send("jugglework:docs:rail-hint", null);
@@ -783,7 +785,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     ipcMain.handle("jugglework:docs:snapshot", async (event, instanceId, hostBinding) => {
       if (!trusted(event, { instanceId, hostBinding })) throw new Error("Forbidden");
       const item = find({ instanceId });
-      if (!item?.ready || item.denied || item.input.background || item.view.webContents.isDestroyed()) return null;
+      if (!item?.ready || item.denied || item.input.background || viewGone(item)) return null;
       const image = await item.view.webContents.capturePage();
       return active(item) && trusted(event, { instanceId, hostBinding }) && !item.denied ? image.toDataURL() : null;
     });
