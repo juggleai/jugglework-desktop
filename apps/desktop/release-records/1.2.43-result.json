@@ -20,9 +20,13 @@
       "path": "den-1.2.43-overseas-post-apply-readonly-verification.json",
       "sha256": "c58ad67a450ac460298f2129826a34d004ec72f18609a34435e49587dc2b4135"
     },
-    "denOverseasReadOnlyAddendum": {
+    "denOverseasReadOnlyAddendumFirstRun": {
       "path": "den-1.2.43-overseas-readonly-addendum-20261127T094901947691Z.json",
       "sha256": "60278ab4068a862bdbcd6b9928dd4d19ca788715182c2268c174f1dc2f014ed7"
+    },
+    "denOverseasReadOnlyAddendumRerun": {
+      "path": "den-1.2.43-overseas-readonly-addendum-20261127T094929991047Z.json",
+      "sha256": "7f4b894082d0f6149e378014a19489630398a3e0218cb35d9abbc9a3493e4d43"
     }
   },
   "promotion": {
@@ -152,12 +156,56 @@
         "criticalAndAdditionalHardCounts": 0
       },
       "readOnlyAddendum": {
-        "verdict": "failed",
-        "failedChecks": ["samePidAndStartNoSecondRestart"],
-        "passedChecks": 13,
-        "totalChecks": 14,
-        "writes": { "remote": false, "restart": false, "git": false, "site": false, "bucket": false, "chinaSSH": false },
-        "finishedAtUTC": "2026-11-27T09:49:12.630319+00:00",
+        "runs": [
+          {
+            "order": 1,
+            "file": "den-1.2.43-overseas-readonly-addendum-20261127T094901947691Z.json",
+            "verdict": "failed",
+            "passedChecks": 13,
+            "totalChecks": 14,
+            "failedChecks": [
+              "samePidAndStartNoSecondRestart"
+            ],
+            "finishedAtUTC": "2026-11-27T09:49:12.630319+00:00",
+            "writes": {
+              "remote": false,
+              "restart": false,
+              "git": false,
+              "site": false,
+              "bucket": false,
+              "chinaSSH": false
+            },
+            "failureCause": "Verifier defect, not a product finding: the restart-count check required the active log to keep the inode recorded at the restart anchor and ignored log rotation. The inode no longer matched, so it scanned 0 bytes and counted 0 startup lines. The first-run evidence file is retained unchanged."
+          },
+          {
+            "order": 2,
+            "file": "den-1.2.43-overseas-readonly-addendum-20261127T094929991047Z.json",
+            "verdict": "passed",
+            "passedChecks": 14,
+            "totalChecks": 14,
+            "failedChecks": [],
+            "finishedAtUTC": "2026-11-27T09:49:43.033443+00:00",
+            "writes": {
+              "remote": false,
+              "restart": false,
+              "git": false,
+              "site": false,
+              "bucket": false,
+              "chinaSSH": false
+            },
+            "change": "Anchor lookup fixed to locate the anchor log by device and inode across the active log and its numbered rotations, then scan from the anchor offset through every newer file.",
+            "restartCount": {
+              "anchorLogLocatedByInode": true,
+              "anchorRotationIndex": 1,
+              "activeLogRotatedSinceRestart": true,
+              "filesScanned": 2,
+              "bytesScannedSinceAnchor": 501529,
+              "controlListeningLines": 1,
+              "streamingListeningLines": 1
+            }
+          }
+        ],
+        "onlyDifferenceBetweenRuns": "The samePidAndStartNoSecondRestart check. All other 13 checks and every other recorded field were identical in both runs.",
         "confirmed": {
           "targetOnceInPublishedAndAllowed": true,
           "listsAreBackupPlusTargetOnly": true,
@@ -168,13 +216,13 @@
           "backupPrivateAndChecksumsMatch": true,
           "samePidAsRecordedRestart": true,
           "sameProcessStartAsRecordedRestart": true,
-          "supervisorUptime": "0:05:34",
+          "supervisorUptime": "0:06:03",
+          "noSecondRestart": "Supported by the passing rerun: scanning from the restart anchor across the rotated and active application logs found exactly one control and one streaming startup line. The count matches the script's own single recorded restart.",
           "loopback8021": true,
           "publicOverseasContractMatchesLocal": true,
           "chinaPublicContractUnchanged": true
         },
-        "failedCheckExplanation": "That check also required the application log to keep the inode recorded at the restart anchor and to show exactly one control and one streaming startup line since the anchor. The log inode no longer matched the anchor, so the scan covered 0 bytes and counted 0 lines. This is consistent with log rotation but rotation was not directly verified. The restart count therefore could not be re-confirmed by this addendum. The recorded PID and process start time did match the restart recorded by the rollout script.",
-        "note": "The addendum is not reported as a pass. State confirmation rests on the 13 passing checks plus the post-apply read-only verification; the one-restart count rests on the script's own record."
+        "limits": "The addendum is read-only and runs after the script stopped. It covers the log from the restart anchor onward, not the earlier window the script could not read. It does not replace the stopped script result."
       },
       "previousLatest": "1.2.42",
       "latest": "1.2.43",
@@ -187,24 +235,69 @@
       "logHttp5xxException": {
         "authorization": "User standing authorization: overseas Desktop version releases, current and subsequent, record logged HTTP 5xx and do not block on those counts alone. Counts are reported as observed. China, other systems, health, config, panic, fatal, unknown-column, migration and restart gates are not exempt.",
         "riskResolved": false,
-        "preApplyStrictSample": { "total": 0, "knownWorkerToken503": 0, "newOrUnclassified5xx": 0 },
-        "restartObservationBeforeStop": { "total": 1, "knownWorkerToken503": 1, "newOrUnclassified5xx": 0 },
+        "preApplyStrictSample": {
+          "total": 0,
+          "knownWorkerToken503": 0,
+          "newOrUnclassified5xx": 0
+        },
+        "restartObservationBeforeStop": {
+          "total": 1,
+          "knownWorkerToken503": 1,
+          "newOrUnclassified5xx": 0
+        },
         "rollingBeforeApply": {
           "throughUTC": "2026-11-27T09:42:33.693670+00:00",
-          "24h": { "workerToken503": 13, "other5xxLogLines": 14, "other5xxByStatus": { "500": 3, "502": 11 } },
-          "2h": { "workerToken503": 0, "other5xxLogLines": 5, "other5xxByStatus": { "500": 2, "502": 3 } }
+          "24h": {
+            "workerToken503": 13,
+            "other5xxLogLines": 14,
+            "other5xxByStatus": {
+              "500": 3,
+              "502": 11
+            }
+          },
+          "2h": {
+            "workerToken503": 0,
+            "other5xxLogLines": 5,
+            "other5xxByStatus": {
+              "500": 2,
+              "502": 3
+            }
+          }
         },
         "rollingAfterApplyReadOnly": {
           "throughUTC": "2026-11-27T09:46:16.003956+00:00",
-          "24h": { "workerToken503": 14, "other5xxLogLines": 14, "other5xxByStatus": { "500": 3, "502": 11 } },
-          "2h": { "workerToken503": 1, "other5xxLogLines": 5, "other5xxByStatus": { "500": 2, "502": 3 } }
+          "24h": {
+            "workerToken503": 14,
+            "other5xxLogLines": 14,
+            "other5xxByStatus": {
+              "500": 3,
+              "502": 11
+            }
+          },
+          "2h": {
+            "workerToken503": 1,
+            "other5xxLogLines": 5,
+            "other5xxByStatus": {
+              "500": 2,
+              "502": 3
+            }
+          }
         },
         "criticalConfigFailureAndUnexpectedRestartCounts": 0,
         "note": "Rolling windows overlap and are not additive. One more Worker-token 503 appears after apply in both windows than before, and the stopped script's observation window counted one; the evidence does not attribute them to the same event."
       }
     },
-    "china": { "latest": "1.2.37", "publicContractUnchanged": true, "readOnly": true }
+    "china": {
+      "latest": "1.2.37",
+      "publicContractUnchanged": true,
+      "readOnly": true
+    }
   },
-  "outOfScope": ["legacy origin writes", "website changes", "other platforms and channels", "new Den binary"],
+  "outOfScope": [
+    "legacy origin writes",
+    "website changes",
+    "other platforms and channels",
+    "new Den binary"
+  ],
   "gitCompletion": "Final commit and remote ref verification are reported separately."
 }
