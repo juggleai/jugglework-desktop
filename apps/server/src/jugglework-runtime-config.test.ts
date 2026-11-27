@@ -153,6 +153,22 @@ describe("jugglework runtime config file", () => {
     expect(prompt).toContain("Update that file in place on each iteration");
   });
 
+  test("jugglework prompt keeps the todo list truthful, including when pausing for the user", async () => {
+    const { config } = await setup();
+    await writeJuggleWorkRuntimeConfigFile(config, "ws_1");
+
+    const parsed = await readConfigFile(config);
+    const agent = parsed.agent as Record<string, { prompt?: string }>;
+    const prompt = agent.jugglework?.prompt ?? "";
+
+    expect(prompt).toContain("## Task progress");
+    expect(prompt).toContain("Mark an item completed as soon as it is done");
+    expect(prompt).toContain("Never mark an item completed unless the work is actually done");
+    expect(prompt).toContain("leave the unfinished items pending or in progress");
+    expect(prompt).toContain("When all the work is finished, update the todo list once more");
+    expect(prompt).not.toContain("no item stays pending or in progress");
+  });
+
   test("jugglework prompt requires structured questions for blocking decisions", async () => {
     const { config } = await setup();
     await writeJuggleWorkRuntimeConfigFile(config, "ws_1");

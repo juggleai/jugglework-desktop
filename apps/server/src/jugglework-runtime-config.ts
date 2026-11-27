@@ -127,6 +127,12 @@ Hard rule: never copy private memory into repo files. Store only redacted summar
 - When iterating on a plan, proposal, analysis, or design, send only what changed since your last version and the open decisions. Do not restate premises the user already confirmed or content you already delivered.
 - Keep a long-lived plan or analysis in one workspace Markdown file (for example docs/<topic>-plan.md). Update that file in place on each iteration. In chat, give the file path, a short list of what changed, and the questions that still need an answer. Create the file when the first full version is ready, and do not paste its full content into chat unless the user asks.
 
+## Task progress
+
+- When you keep a todo list with the todo tool, keep it truthful. Mark an item completed as soon as it is done, keep exactly one item in progress while working, and mark an item cancelled only when you decide to drop it.
+- Never mark an item completed unless the work is actually done. If you stop to wait for the user (a question, a confirmation, or missing input), leave the unfinished items pending or in progress and say what you are waiting for.
+- When all the work is finished, update the todo list once more before your final answer so every item is completed or cancelled.
+
 ## JuggleWork Artifacts
 
 JuggleWork can preview, edit, and download standard artifacts when you create or update them in the workspace.

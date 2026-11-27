@@ -258,3 +258,15 @@ Desktop SHALL NOT render a completed assistant text part whose trimmed content i
 #### Scenario: Placeholder is the last text of a task
 - **WHEN** the last completed text part of a task is only "..." and an earlier part holds real text
 - **THEN** the earlier real text is used as the summary
+
+### Requirement: Agent keeps the todo list truthful
+The default agent prompt SHALL instruct the agent to mark todo items completed as soon as they are done, keep exactly one item in progress while working, and mark an item cancelled only when it is dropped. It SHALL forbid marking an item completed unless the work is actually done, and SHALL require unfinished items to stay pending or in progress when the agent stops to wait for the user, with the answer stating what is awaited. When all work is finished it SHALL require one last todo update before the final answer so every item is completed or cancelled.
+
+#### Scenario: Agent finishes all work
+- **WHEN** the agent has used the todo tool and completed every item
+- **THEN** its prompt requires a final todo update so every item is completed or cancelled before the final answer
+
+#### Scenario: Agent pauses for user input
+- **WHEN** the agent stops after finishing only part of the work to wait for the user
+- **THEN** its prompt requires the unfinished items to remain pending or in progress
+- **AND** the progress panel keeps showing the partial progress rather than hiding it or marking it complete
