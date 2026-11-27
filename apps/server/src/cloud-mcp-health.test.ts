@@ -10,6 +10,7 @@ import {
   JUGGLEWORK_CLOUD_EXPECTED_TOOLS,
   JUGGLEWORK_CLOUD_PLUGIN_CANARIES,
   readJuggleWorkCloudMcpHealth,
+  reconcileJuggleWorkCloudMcp,
 } from "./cloud-mcp-health.js";
 import { sanitizeDiagnosticValue } from "./diagnostic-sanitizer.js";
 import { diagnoseMcpToolDeniesFromConfigs } from "./mcp.js";
@@ -434,5 +435,59 @@ describe("cloud MCP health foundation", () => {
     expect(details).toContain("self signed certificate in certificate chain");
     const initializeStep = health.tools.direct.trace?.steps.find((step) => step.step === "initialize");
     expect(initializeStep?.ok).toBe(false);
+  });
+
+  test("successful reconcile probes health once and reports the applied delivery", async () => {
+    const root = await createRoot("jugglework-cloud-reconcile-");
+    const engine = startMockOpencode("ok");
+    const baseUrl = `http://127.0.0.1:${engine.port}`;
+    const directUrl = `${baseUrl}/cloud-mcp/mcp/agent`;
+    const testWorkspace: WorkspaceInfo = {
+      id: "ws_reconcile_once",
+      name: "Workspace reconcile",
+      path: root,
+      preset: "starter",
+      workspaceType: "local",
+      baseUrl,
+    };
+    const config = serverConfig(root, testWorkspace);
+    process.env.JUGGLEWORK_RUNTIME_DB = await createRuntimeDbPath("jugglework-cloud-reconcile-runtime-");
+
+    // 每次完整健康读取都会向引擎请求一次 tool ids；用它计数探测轮数。
+    let toolIdReads = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (new URL(url).pathname === "/experimental/tool/ids") toolIdReads += 1;
+        return originalFetch(input, init);
+      },
+      { preconnect: originalFetch.preconnect },
+    );
+
+    const health = await reconcileJuggleWorkCloudMcp({
+      config,
+      workspace: testWorkspace,
+      directory: root,
+      body: {
+        config: {
+          type: "remote",
+          url: directUrl,
+          enabled: true,
+          headers: { Authorization: "Bearer owt_reconcile_token" },
+          oauth: false,
+        },
+      },
+      createWorkspaceOpencodeClient: () => createOpencodeClient({ baseUrl }),
+      registerRuntimeMcp: async () => ({ status: "ok" as const, syncedNames: [], failures: [] }),
+    });
+
+    expect(health.usable).toBe(true);
+    expect(health.phase).toBe("ready");
+    expect(health.firstFailure).toBeNull();
+    // 投递状态必须反映 markReady 之后的结果，而不是第一次读取时的 pending。
+    expect(health.delivery.state).toBe("ready");
+    expect(health.delivery.appliedRevision).toBe(health.desired.revision);
+    expect(toolIdReads).toBe(1);
   });
 });

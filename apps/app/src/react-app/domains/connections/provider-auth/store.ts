@@ -1955,6 +1955,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       authorityKey?: string;
       connection?: DenOrgLlmProviderConnection;
       authorityId: string;
+      /**
+       * Skip the per-provider engine dispose and the reload-required mark.
+       * Only for a caller that applies the whole batch with ONE dispose
+       * afterwards (cloud provider sync). Without that final dispose the
+       * engine would keep serving the previous config.
+       */
+      deferEngineReload?: boolean;
     },
   ) {
     if (!optionsArg?.silent) {
@@ -2091,7 +2098,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         localProviderId,
         existingImported?.providerId ?? "",
       ]);
-      options.markOpencodeConfigReloadRequired();
+      if (!optionsArg?.deferEngineReload) options.markOpencodeConfigReloadRequired();
 
       const nextImportedProviders = {
         ...state.importedCloudProviders,
@@ -2100,7 +2107,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       await persistImportedCloudProviders(nextImportedProviders);
       assertCurrentAuthority();
 
-      await refreshProviders({ dispose: true });
+      if (!optionsArg?.deferEngineReload) {
+        await refreshProviders({ dispose: true });
+      }
       assertCurrentAuthority();
       refreshSnapshot();
       emitChange();
@@ -2686,7 +2695,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const failures: string[] = [];
     const processedLiveProviderIds = new Set<string>();
     let configChanged = false;
+    // 逐个 provider 的 dispose 已推迟到循环之后统一做一次。如果在那之前
+    // 抛错（授权失效、网络），已写入的配置没有 dispose 也没有重载标记，
+    // 引擎会一直用旧配置。try/finally 在这种情况下补一个重载标记，
+    // 让 reload-coordinator 在空闲时兜底应用。
+    let deferredConfigApplied = false;
+    let deferredConfigPending = false;
+    const markDeferredWrite = () => { deferredConfigPending = true; };
+    const newlyImported: Array<{ id: string; name: string; providerId: string; firstModelId?: string; firstModelName?: string }> = [];
+    let reloadedProviderList: ProviderListResponse | null = null;
 
+    try {
     for (const importedProvider of Object.values(importedProviders)) {
       const liveProvider = liveProviderMap.get(importedProvider.cloudProviderId);
       if (!liveProvider) {
@@ -2751,7 +2770,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         // remove-then-reconnect dance could leave the block deleted if the
         // reconnect aborted on a stale in-memory connected-providers guard,
         // so the workspace kept the first-import snapshot forever (#2346).
-        await connectCloudProviderInternal(liveProvider.id, { silent: true, authorityKey, authorityId });
+        markDeferredWrite();
+        await connectCloudProviderInternal(liveProvider.id, { silent: true, authorityKey, authorityId, deferEngineReload: true });
         configChanged = true;
       } catch (error) {
         // A transient import/write failure did not reach the engine reload, so
@@ -2769,7 +2789,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     const nextImportedProviders = state.importedCloudProviders;
-    const newlyImported: Array<{ id: string; name: string; providerId: string; firstModelId?: string; firstModelName?: string }> = [];
     for (const liveProvider of liveProviders) {
       if (processedLiveProviderIds.has(liveProvider.id)) {
         continue;
@@ -2779,7 +2798,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
 
       try {
-        await connectCloudProviderInternal(liveProvider.id, { silent: true, authorityKey, authorityId });
+        markDeferredWrite();
+        await connectCloudProviderInternal(liveProvider.id, { silent: true, authorityKey, authorityId, deferEngineReload: true });
         configChanged = true;
         const firstModel = liveProvider.models[0] ?? null;
         newlyImported.push({
@@ -2795,11 +2815,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
     }
 
-    let reloadedProviderList: ProviderListResponse | null = null;
     if (configChanged) {
       await refreshProviders({ dispose: true });
+      deferredConfigApplied = true;
       reloadedProviderList = await host.managedProviderInventory(workspaceId);
       assertCurrentAuthority();
+    }
+    } finally {
+      // 写过配置、但最终 dispose 没跑成（异常提前退出）：补标记，不吞原异常。
+      if (deferredConfigPending && !deferredConfigApplied) {
+        options.markOpencodeConfigReloadRequired({ workspaceId: target.juggleworkWorkspaceId });
+      }
     }
 
     // Runs whether or not this pass changed anything: the import that needs

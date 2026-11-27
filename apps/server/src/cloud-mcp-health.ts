@@ -2306,7 +2306,13 @@ export async function reconcileJuggleWorkCloudMcp(input: {
   }
 
   cloudMcpDeliveryState.markReady(input.workspace, input.directory, desiredRevision);
-  return readHealth();
+  // 第一次读取发生在 markReady 之前，其中只有 delivery 字段会因 markReady 改变；
+  // 探测结果（引擎状态、直连 tools/list、插件检查）与此无关。不再重复探测
+  // 一次（每次约 0.3 到 0.6 秒），直接用最新的投递快照覆盖 delivery。
+  return {
+    ...health,
+    delivery: cloudMcpDeliveryState.snapshot(input.workspace, input.directory, desiredRevision),
+  };
 }
 
 export async function reconcilePersistedJuggleWorkCloudMcp(input: {

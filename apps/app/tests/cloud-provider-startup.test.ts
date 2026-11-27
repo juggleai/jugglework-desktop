@@ -27,7 +27,7 @@ const DEN_BASE_URL = "https://cloud.startup.test";
 const ORG_ID = "org_startup_fixture";
 const TOKEN = "fixture-session-token";
 let managedHost: JuggleWorkServerClient | null = null;
-let syncDenClient: Pick<ReturnType<typeof actualDen.createDenClient>, "getSession" | "listOrgs" | "listOrgLlmProviders"> | null = null;
+let syncDenClient: Pick<ReturnType<typeof actualDen.createDenClient>, "getSession" | "listOrgs" | "listOrgLlmProviders"> & Partial<Pick<ReturnType<typeof actualDen.createDenClient>, "getOrgLlmProviderConnection">> | null = null;
 mock.module("../src/app/lib/den", () => ({
   ...actualDen,
   readDenSettings: (): DenSettings => ({
@@ -45,6 +45,12 @@ const actualScope = { ...await import("../src/app/lib/managed-provider-scope") }
 mock.module("../src/app/lib/managed-provider-scope", () => ({
   ...actualScope,
   managedProviderHost: async () => managedHost,
+}));
+// 目录是可选的元数据增强，加载失败返回 null；测试里禁止真实网络，固定为"无目录"。
+const actualCatalog = { ...await import("../src/react-app/domains/connections/provider-auth/deployment-model-catalog") };
+mock.module("../src/react-app/domains/connections/provider-auth/deployment-model-catalog", () => ({
+  ...actualCatalog,
+  loadDeploymentModelCatalog: async () => null,
 }));
 const { createProviderAuthStore } = await import("../src/react-app/domains/connections/provider-auth/store");
 type Store = ReturnType<typeof createProviderAuthStore>;
@@ -130,6 +136,7 @@ afterAll(() => {
   mock.restore();
   mock.module("../src/app/lib/den", () => actualDen);
   mock.module("../src/app/lib/managed-provider-scope", () => actualScope);
+  mock.module("../src/react-app/domains/connections/provider-auth/deployment-model-catalog", () => actualCatalog);
 });
 
 function gate() {
@@ -244,6 +251,7 @@ function fixture(importedProviders: Record<string, typeof imported> = { [provide
   return {
     create, workspaceId, root, hostClient, getConfig, patchConfig, removeProviderAuth, removeMcp, disconnect, availabilityChanged,
     runtimeProviders, credentials, expectPreserved,
+    markReloadCalls: () => markReload.mock.calls.length,
     baseline: () => readWorkspaceCloudImports(jugglework).providers,
     holdNextBaseline: () => { firstReadGate = gate(); return firstReadGate; },
   };
@@ -751,5 +759,118 @@ describe("cloud provider startup and session cleanup", () => {
     expect(authRemovalsWhileBlocked).toBe(0);
     f.expectPreserved();
     expect(store.getSnapshot().importedCloudProviders[provider.id]).toEqual(imported);
+  });
+});
+
+
+describe("cloud provider sync applies imported providers with one engine dispose", () => {
+  const second: DenOrgLlmProvider = {
+    ...provider,
+    id: "lpr_startup_fixture_2",
+    providerId: "startup-fixture-2",
+    name: "Startup fixture 2",
+  };
+
+  /** 两个尚未导入的云 provider；engine 的 dispose 通过 instance.dispose 计数。 */
+  function freshImportSync(options: { disposeFails?: boolean } = {}) {
+    const authorityId = "fixture-authority";
+    const f = fixture({});
+    const loaded = new Set<string>();
+    const dispose = mock(async () => {
+      if (options.disposeFails) throw new Error("engine unreachable");
+      return { data: true };
+    });
+    const providers = [provider, second];
+    const inventory = () => ({
+      all: providers.map((entry) => ({
+        id: `lpr_${entry.providerId}`,
+        name: entry.name,
+        source: "config",
+        models: { "fixture-model": {} },
+      })),
+      connected: providers.map((entry) => `lpr_${entry.providerId}`),
+      default: {},
+    });
+    const loadInventory = mock(async (_workspaceId: string) => (loaded.size > 0 ? inventory() : { all: [], connected: [], default: {} }));
+    const setProviderAuth = mock(async (..._args: unknown[]) => ({ ok: true }));
+    const reloadEngine = mock(async (..._args: unknown[]) => { loaded.add("applied"); return { ok: true }; });
+    managedHost = {
+      ...f.hostClient,
+      setProviderAuth,
+      setCloudProviderMirror: async () => ({ mirror: { key: "fixture-mirror", workspaceId: null } }),
+      upsertUserEnv: async () => ({ ok: true }),
+      managedProviderRevision: async () => ({ revision: authorityId }),
+      confirmManagedProviderAuthority: async () => ({ id: authorityId }),
+      setManagedProviderReadiness: async () => ({}),
+      fenceManagedProviderAuthority: async () => ({}),
+      managedProviderInventory: loadInventory,
+      reloadEngine,
+    } as unknown as JuggleWorkServerClient;
+    syncDenClient = {
+      getSession: async () => ({ id: "user_startup_fixture" }),
+      listOrgs: async () => ({ activeOrgId: ORG_ID, orgs: [{ id: ORG_ID }] }),
+      listOrgLlmProviders: async () => providers,
+      getOrgLlmProviderConnection: async (_org: string, id: string) => {
+        const match = providers.find((entry) => entry.id === id)!;
+        return { ...match, apiKey: "fixture-key", apiKeys: null };
+      },
+    } as unknown as typeof syncDenClient;
+    const client = {
+      global: { health: async () => ({ data: { healthy: true } }), dispose: dispose },
+      instance: { dispose },
+      config: { get: async () => ({ data: {} }) },
+      provider: { list: async () => ({ data: inventory() }) },
+    } as unknown as Client;
+    // 把 server 的 reloadEngine 当作"引擎已应用新配置"的信号。
+    const created = f.create({ hostClient: managedHost, client });
+    return { ...f, ...created, dispose, reloadEngine, loadInventory };
+  }
+
+  test("two new providers are imported with a single engine reload and no per-provider reload mark", async () => {
+    const f = freshImportSync();
+    await f.store.runCloudProviderSyncForReadiness("app_launch");
+    await nextTurn();
+    // 旧行为：每个 provider 一次 dispose + 一次最终 dispose = 3 次，且各打一次重载标记。
+    expect(f.reloadEngine.mock.calls.length).toBe(1);
+    expect(Object.keys(f.baseline()).sort()).toEqual([provider.id, second.id].sort());
+  });
+
+  test("connecting one provider outside a sync still disposes the engine and marks the reload", async () => {
+    const f = freshImportSync();
+    // 连接之后会在后台再触发一次同步，它自己也会 dispose；让同步在授权层面立即退出，
+    // 只观察手动连接这一步本身。
+    const baseDen = syncDenClient!;
+    syncDenClient = { ...baseDen, listOrgLlmProviders: async () => { throw new Error("sync disabled for this case"); } } as unknown as typeof syncDenClient;
+    await f.store.connectCloudProvider(provider.id);
+    await nextTurn();
+    // 手动连接不属于批量同步：自己 dispose 一次并打一次重载标记，不能被 deferEngineReload 影响。
+    expect(f.markReloadCalls()).toBe(1);
+    expect(f.reloadEngine.mock.calls.length).toBe(1);
+  });
+
+  test("a sync that throws after config writes but before the final dispose marks the workspace for reload", async () => {
+    const f = freshImportSync();
+    // 第二个 provider 的 Den 授权在写入第一个之后被撤销 → 抛出的是授权失效，
+    // 它会绕过 failures 收集直接冒泡出 for 循环（StaleCloudProviderAuthorityError）。
+    // 第一个 provider 的配置已写入但没有 dispose、也没有逐个打标记，必须由 finally 兜底。
+    const baseClient = syncDenClient!;
+    let connections = 0;
+    syncDenClient = {
+      ...baseClient,
+      getOrgLlmProviderConnection: async (org: string, id: string) => {
+        connections += 1;
+        if (connections === 2) {
+          // 模拟同步进行中账号被切换：授权键变化 → 后续 assertCurrentAuthority 抛 Stale。
+          hostWindow.localStorage.setItem(ORG_KEY, "org_switched_during_sync");
+        }
+        return baseClient.getOrgLlmProviderConnection!(org, id);
+      },
+    } as unknown as typeof syncDenClient;
+    expect(f.markReloadCalls()).toBe(0);
+    await f.store.runCloudProviderSyncForReadiness("app_launch");
+    await nextTurn();
+    expect(connections).toBe(2);
+    expect(f.reloadEngine.mock.calls.length).toBe(0);
+    expect(f.markReloadCalls()).toBeGreaterThan(0);
   });
 });
