@@ -56,18 +56,54 @@ export function sameBounds(
   );
 }
 
-/** 检查会覆盖原生视图的宿主浮窗；云文档另包含导航提示，并保留当前画面垫底。 */
-export function hasNativeBrowserOccluder(includeRailTooltips = false) {
-  // TIPS: 原生页面总在 DOM 上方，文件菜单和选择列表打开时也必须暂时隐藏，否则会遮住菜单下半部分。
-  const overlays = document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]' + (includeRailTooltips ? ', [data-app-rail-tooltip]' : ''));
-  for (const overlay of overlays) {
-    if (!(overlay instanceof HTMLElement)) {
-      continue;
-    }
+type NativeBrowserBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
-    if (overlay.offsetParent !== null || overlay.getClientRects().length > 0) {
-      return true;
-    }
+function visibleOverlay(element: Element): element is HTMLElement {
+  return element instanceof HTMLElement && (
+    element.offsetParent !== null || element.getClientRects().length > 0
+  );
+}
+
+export function rectanglesOverlap(left: NativeBrowserBounds, right: NativeBrowserBounds) {
+  return left.x < right.x + right.width &&
+    left.x + left.width > right.x &&
+    left.y < right.y + right.height &&
+    left.y + left.height > right.y;
+}
+
+/** 检查会覆盖原生视图的宿主浮窗；云文档另包含导航提示，并保留当前画面垫底。 */
+export function hasNativeBrowserOccluder(
+  targetBounds?: NativeBrowserBounds,
+  includeRailTooltips = false,
+) {
+  // Modal surfaces dim the whole renderer, so the native page must always be
+  // removed even when the dialog card itself does not intersect the panel.
+  const modals = document.querySelectorAll('[role="alertdialog"], [role="dialog"][aria-modal="true"]');
+  if ([...modals].some(visibleOverlay)) {
+    return true;
+  }
+
+  // Menus and listboxes are local floating surfaces. A WebContentsView only
+  // needs to yield when one actually enters its rectangle; hiding it for a
+  // model picker on the conversation side produces an unrelated blank panel.
+  const floating = document.querySelectorAll(
+    '[role="dialog"]:not([aria-modal="true"]), [role="menu"], [role="listbox"]' + (includeRailTooltips ? ', [data-app-rail-tooltip]' : ''),
+  );
+  for (const overlay of floating) {
+    if (!visibleOverlay(overlay)) continue;
+    if (!targetBounds) return true;
+    const rect = overlay.getBoundingClientRect();
+    if (rectanglesOverlap(targetBounds, {
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+    })) return true;
   }
   return false;
 }

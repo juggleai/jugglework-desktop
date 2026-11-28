@@ -245,7 +245,7 @@ function BrowserPanelContent({
     const syncBounds = () => {
       const bounds = computeBounds(content);
 
-      if (bounds.width < 1 || bounds.height < 1 || hasNativeBrowserOccluder()) {
+      if (bounds.width < 1 || bounds.height < 1 || hasNativeBrowserOccluder(bounds)) {
         if (shownRef.current) {
           browser.hide?.();
           shownRef.current = false;
