@@ -1,7 +1,6 @@
 import DOMPurify from "dompurify";
 import emojiKeywords from "emojilib";
 import { Marked, type MarkedExtension, type Tokens } from "marked";
-import { markedEmoji } from "marked-emoji";
 import markedShiki from "marked-shiki";
 import {
   transformerMetaHighlight,
@@ -121,12 +120,38 @@ function codeLanguageClass(lang: string | undefined) {
   return normalized ? ` class="language-${escapeAttribute(normalized)}"` : "";
 }
 
-function createEmojiAliases() {
+/**
+ * Shortcodes people write on purpose and that the rules below would drop.
+ * `:100:` is a real shortcode, while every other number is a time or a ratio.
+ */
+const EMOJI_SHORTCODE_ALLOWLIST = new Set(["100", "+1", "-1", "joy", "cry", "zap", "ok", "lol", "sob", "yum", "hug", "wow"]);
+
+/**
+ * `emojilib` lists every search keyword of an emoji, not only its shortcode.
+ * Between two colons those would also match ordinary text: `14:1:02` became
+ * `14🕐02` and `hh:mm:ss` became `hh🇲🇲ss`. Only shortcode-shaped names
+ * are accepted: no pure numbers, no one to three letter words, and nothing
+ * with spaces or punctuation such as `:)`.
+ */
+export function isEmojiShortcode(name: string) {
+  if (EMOJI_SHORTCODE_ALLOWLIST.has(name)) return true;
+  if (!/^[a-z][a-z0-9_]*$/.test(name)) return false;
+  return name.length > 3;
+}
+
+export function createEmojiAliases() {
   const aliases: Record<string, string> = {};
 
+  // An emoji's own name (its first keyword) wins over another emoji's search
+  // keyword, so `:fire:` is the flame and `:rocket:` the rocket, not the
+  // firefighter or the astronaut that merely list those words.
+  for (const [emoji, names] of Object.entries(emojiKeywords)) {
+    const own = names[0];
+    if (own && !aliases[own] && isEmojiShortcode(own)) aliases[own] = emoji;
+  }
   for (const [emoji, names] of Object.entries(emojiKeywords)) {
     for (const name of names) {
-      if (!aliases[name]) {
+      if (!aliases[name] && isEmojiShortcode(name)) {
         aliases[name] = emoji;
       }
     }
@@ -136,6 +161,45 @@ function createEmojiAliases() {
 }
 
 const emojiAliases = createEmojiAliases();
+
+const ASCII_WORD_CHARACTER = /[A-Za-z0-9]/;
+const SHORTCODE_NAME = /^:([^\s:]+):/;
+
+/**
+ * `:name:` is a shortcode only when it stands on its own. Glued to an English
+ * letter or digit on either side it is a colon-separated value (`key:value:x`,
+ * `14:01:02`, `hh:mm:ss`), so it is left as written. CJK text has no spaces, so
+ * a shortcode right after or before Chinese, Japanese or Korean text still works.
+ */
+export function isStandaloneShortcode(previous: string, next: string) {
+  if (previous && ASCII_WORD_CHARACTER.test(previous)) return false;
+  if (next && ASCII_WORD_CHARACTER.test(next)) return false;
+  return true;
+}
+
+const shortcodeEmojiExtension = {
+  extensions: [
+    {
+      name: "emoji",
+      level: "inline",
+      start(src) {
+        return src.indexOf(":") < 0 ? undefined : src.indexOf(":");
+      },
+      tokenizer(src, tokens) {
+        const match = SHORTCODE_NAME.exec(src);
+        if (!match) return undefined;
+        const emoji = Object.hasOwn(emojiAliases, match[1]) ? emojiAliases[match[1]] : undefined;
+        if (!emoji) return undefined;
+        const previous = tokens.at(-1)?.raw.slice(-1) ?? "";
+        if (!isStandaloneShortcode(previous, src.charAt(match[0].length))) return undefined;
+        return { type: "emoji", raw: match[0], name: match[1], emoji };
+      },
+      renderer(token) {
+        return escapeHtml(String(token.emoji));
+      },
+    },
+  ],
+} satisfies MarkedExtension<string, string>;
 
 function codeCopyButton() {
   return `<button type="button" data-jugglework-code-copy="" class="absolute right-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-background/95 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Copy code block" title="Copy code block">${CODE_COPY_ICON}${CODE_COPIED_ICON}<span data-jugglework-code-copy-label="" class="sr-only" aria-live="polite">Copy code block</span></button>`;
@@ -420,17 +484,11 @@ function createMarkdownParsers(presentation: MarkdownPresentation, references: O
   const profile = markdownProfileForPresentation(presentation);
   const markdownParser = new Marked<string, string>(createMarkedOptions(profile, false, references)).use(
     cjkStrongBoundaryExtension,
-    markedEmoji({
-      emojis: emojiAliases,
-      renderer: (token) => escapeHtml(token.emoji),
-    }),
+    shortcodeEmojiExtension,
   );
   const highlightedMarkdownParser = new Marked<string, string>(createMarkedOptions(profile, true, references)).use(
     cjkStrongBoundaryExtension,
-    markedEmoji({
-      emojis: emojiAliases,
-      renderer: (token) => escapeHtml(token.emoji),
-    }),
+    shortcodeEmojiExtension,
     markedShiki({
       async highlight(code, lang, props) {
         const language = parseShikiLanguage(lang);
