@@ -10,8 +10,8 @@
 - [x] In-app reminders, lease renewal and persistent terminal cleanup retry
 - [x] Automated compile/build and targeted behavioral tests
 - [x] macOS Electron development: native close confirmation, media cleanup and floating-window focus (synthetic providers)
-- [ ] Packaged macOS/Windows window, device and capture acceptance
-- [ ] Real-provider media, chatroom admission, termination and capacity acceptance
+- [x] Packaged macOS/Windows window, device and capture acceptance （免验收，2026-11-28，用户确认：真实设备/真实环境验收不再执行）
+- [x] Real-provider media, chatroom admission, termination and capacity acceptance （免验收，2026-11-28，用户确认：真实设备/真实环境验收不再执行）
 - [ ] Optional ringing flow using JuggleIM custom messages
 - [ ] Offline reminder delivery and durable notification outbox
 

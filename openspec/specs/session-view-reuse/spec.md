@@ -2,9 +2,7 @@
 
 ## Purpose
 Define how desktop entry points reuse the same session view, stores, and state transitions without duplicating conversation behavior.
-
 ## Requirements
-
 ### Requirement: 双入口复用一套会话模块与存储
 主窗口和文件窗口 SHALL 复用同一 SessionSurface、会话装配/控制代码及既有 Server/OpenCode 接口，不复制会话历史、发送业务或运行存储。本次 SHALL 不新增数据库表、schema 升级或 runtime DB 路径变更。
 
@@ -32,3 +30,17 @@ Define how desktop entry points reuse the same session view, stores, and state t
 #### Scenario: 窗口重新连接
 - **WHEN** 文件窗口断线后重新连接
 - **THEN** 重新读取同一会话的服务端状态，不用过期本地消息宣称运行或交互成功
+
+### Requirement: Retained session history pages remain session-scoped
+Retained and embedded session surfaces SHALL keep explicitly loaded older-history pages scoped to their workspace and session, SHALL preserve them across bounded snapshot refreshes, and SHALL cancel in-flight page reads when navigation supersedes that session.
+
+#### Scenario: User returns to a retained session
+- **WHEN** the user loads older pages, temporarily opens another retained app surface and returns before the session cache expires
+- **THEN** the same session may reuse its loaded older pages and saved reading position
+- **AND** another session cannot observe those pages
+
+#### Scenario: Embedded session target changes
+- **WHEN** an embedded session changes to a different workspace or session while an older-page request is pending
+- **THEN** the previous request is cancelled or ignored
+- **AND** only pages keyed to the new target may render
+

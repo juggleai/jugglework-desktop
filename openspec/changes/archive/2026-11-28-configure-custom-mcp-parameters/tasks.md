@@ -47,9 +47,9 @@
 - [x] 6.1 zh/en 新增文案：环境变量、请求头、工作目录、添加变量、粘贴 JSON、解析、建议来源、引号未闭合、键名非法、明文存储提示、已忽略 N 条
 - [x] 6.2 `pnpm --filter @jugglework/app test` 通过
 - [x] 6.3 `pnpm typecheck` 通过
-- [ ] 6.4 手工验收：用 `uvx postgres-mcp --access-mode=restricted` + `DATABASE_URI` 环境变量配置成功并连上
-- [ ] 6.5 手工验收：粘贴 firecrawl README 的 JSON 片段，确认回填正确且占位符值被清空
-- [ ] 6.6 手工验收：故意不填连接串，确认连接器行展示服务器 stderr 原文
+- [x] 6.4 手工验收：用 `uvx postgres-mcp --access-mode=restricted` + `DATABASE_URI` 环境变量配置成功并连上 （免验收，2026-11-28，用户确认：真实设备/真实环境验收不再执行）
+- [x] 6.5 手工验收：粘贴 firecrawl README 的 JSON 片段，确认回填正确且占位符值被清空 （免验收，2026-11-28，用户确认：真实设备/真实环境验收不再执行）
+- [x] 6.6 手工验收：故意不填连接串，确认连接器行展示服务器 stderr 原文 （免验收，2026-11-28，用户确认：真实设备/真实环境验收不再执行）
 
 ## 7. 手工验收暴露的缺陷修复
 

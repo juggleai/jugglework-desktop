@@ -41,4 +41,4 @@
 - [ ] 6.3 Add tests that no client call carries a draft ID and that Office references are rejected for drafts.
 - [ ] 6.4 Update `manual-session-creation.test.ts` and `workspace-sidebar-actions.test.ts` for the new entry function.
 - [ ] 6.5 Run the touched app test suites, App `pnpm typecheck`, and `openspec validate add-draft-new-task-page --strict`.
-- [ ] 6.6 Manually verify in the desktop app: "+" opens the draft page, no session appears before send, content persists across workspaces and Settings, and the first send creates and opens one session.
+- [x] 6.6 Manually verify in the desktop app: "+" opens the draft page, no session appears before send, content persists across workspaces and Settings, and the first send creates and opens one session. （免验收，2026-11-28，用户确认：真实设备/真实环境验收不再执行）

@@ -104,7 +104,7 @@
 - [x] 10.3 Preserve the ordinary chat model while carrying the explicit image provider/model and normalized parameters into `jugglework_image_generate`.
 - [x] 10.4 Add focused parsing, parameter mapping, deterministic instruction, visibility-state, and composer integration tests.
 - [x] 10.5 Render completed image artifacts inline with click-to-preview, download, native Save as, artifact-list integration, and focused parsing tests.
-- [ ] 10.6 Manually verify image generation with at least one configured provider and validate generated artifact rendering on macOS and Windows.
+- [x] 10.6 Manually verify image generation with at least one configured provider and validate generated artifact rendering on macOS and Windows. （免验收，2026-11-28，用户确认：真实设备/真实环境验收不再执行）
 
 ## 11. Composer Video Generation
 
@@ -112,7 +112,7 @@
 - [x] 11.2 Add a removable video-generation strip with explicit model selection and a combined aspect-ratio/duration popover.
 - [x] 11.3 Preserve the ordinary chat model and visible prompt while carrying deterministic video parameters into one `jugglework_video_generate` submission and job polling.
 - [x] 11.4 Add focused model parsing, ratio mapping, instruction, visibility, and composer integration tests.
-- [ ] 11.5 Manually verify the composer flow against at least one configured provider on macOS and Windows.
+- [x] 11.5 Manually verify the composer flow against at least one configured provider on macOS and Windows. （免验收，2026-11-28，用户确认：真实设备/真实环境验收不再执行）
 
 ## 12. Provider Mutation and Discovery Consistency
 

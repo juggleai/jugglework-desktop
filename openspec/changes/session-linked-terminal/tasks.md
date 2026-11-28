@@ -9,7 +9,7 @@
 - [ ] Design recovery for exited terminals and resource cleanup without reintroducing removed header controls.
 - [ ] Make changed view focus versus retained terminal binding safely discoverable without restoring verbose title text.
 - [ ] Verify complete child-process cleanup and sustained output behavior.
-- [ ] Verify packaged macOS/Windows, IME and full-screen TUI behavior.
+- [x] Verify packaged macOS/Windows, IME and full-screen TUI behavior. （免验收，2026-11-28，用户确认：真实设备/真实环境验收不再执行）
 - [ ] Complete full-repository type checks after unrelated baseline errors are resolved.
 
 The OpenSpec CLI is unavailable in this environment; these records have not been CLI-validated or archived.

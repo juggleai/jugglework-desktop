@@ -7,4 +7,4 @@
 
 ## 2. Packaged acceptance
 
-- [ ] 2.1 Against a test deployment, verify an installed Electron build receives 204 after foreground input and remains signed in when the activity endpoint is unavailable.
+- [x] 2.1 Against a test deployment, verify an installed Electron build receives 204 after foreground input and remains signed in when the activity endpoint is unavailable. （免验收，2026-11-28，用户确认：真实设备/真实环境验收不再执行）

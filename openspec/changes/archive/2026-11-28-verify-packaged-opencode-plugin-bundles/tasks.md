@@ -20,4 +20,4 @@
 ## 4. Verification
 
 - [x] 4.1 运行 verifier 聚焦测试、Server typecheck/build、Electron typecheck 和 diff whitespace 检查。
-- [ ] 4.2 在下一次真实签名 packaged candidate 中保留 final package verifier 通过证据；源码级通过不得冒充已完成原生发布验收。
+- [x] 4.2 在下一次真实签名 packaged candidate 中保留 final package verifier 通过证据；源码级通过不得冒充已完成原生发布验收。 （免验收，2026-11-28，用户确认：真实设备/真实环境验收不再执行）

@@ -26,4 +26,4 @@
 
 - [x] 4.1 Run focused App and Server tests, TypeScript checks and production builds.
 - [x] 4.2 Validate the OpenSpec change strictly and run `git diff --check` while preserving unrelated Calendar worktree changes.
-- [ ] 4.3 Manually verify a session with more than 340 raw messages opens at 140, loads 100-message pages upward and reaches its beginning without visual jumps.
+- [x] 4.3 Manually verify a session with more than 340 raw messages opens at 140, loads 100-message pages upward and reaches its beginning without visual jumps. （免验收，2026-11-28，用户确认：真实设备/真实环境验收不再执行）
