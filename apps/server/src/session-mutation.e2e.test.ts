@@ -46,7 +46,7 @@ async function waitUntil(predicate: () => boolean | Promise<boolean>, timeoutMs 
   throw new Error("Timed out waiting for condition");
 }
 
-function startMockOpencode() {
+function startMockOpencode(options?: { beforeDispose?: () => Promise<void> }) {
   const prompts: Array<{ sessionId: string; body: unknown; directory: string | null }> = [];
   const v2Prompts: Array<{ sessionId: string; body: { id?: string; delivery?: string; prompt?: unknown }; directory: string | null }> = [];
   const aborts: string[] = [];
@@ -159,7 +159,13 @@ function startMockOpencode() {
       }
       if (request.method === "GET" && url.pathname === "/config") return Response.json({});
       if (request.method === "POST" && url.pathname === "/instance/dispose") {
+        await options?.beforeDispose?.();
         disposes.push({ directory: url.searchParams.get("directory") });
+        return Response.json({ disposed: true });
+      }
+      if (request.method === "POST" && url.pathname === "/global/dispose") {
+        await options?.beforeDispose?.();
+        disposes.push({ directory: null });
         return Response.json({ disposed: true });
       }
 
@@ -2451,7 +2457,7 @@ describe("authoritative session mutation APIs", () => {
     await expect(terminal.json()).resolves.toEqual({ items: [] });
   });
 
-  test("reload fences the affected instance and global operations while a different local instance can reload", async () => {
+  test("managed reload fences the shared process until every active run is terminal", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
     const started = await fetch(`${runPath(harness.base, "ses_reload_gate")}/start`, {
@@ -2481,13 +2487,10 @@ describe("authoritative session mutation APIs", () => {
       expect(blocked.status).toBe(409);
       await expect(blocked.json()).resolves.toMatchObject({ code: "engine_reload_blocked_active_runs" });
     }
-    const second = harness.config.workspaces[1]!;
-    second.directory = harness.root;
-    expect((await reload("ws_2/engine/reload")).status).toBe(409);
-    delete second.directory;
+    // The bundled engine shares its Runner registry across directories, so a
+    // managed reload is process-wide even when the UI requested one workspace.
     expect(engine.disposes).toEqual([]);
-    expect((await reload("ws_2/engine/reload")).status).toBe(200);
-    expect(engine.disposes).toEqual([{ directory: second.path }]);
+    expect((await reload("ws_2/engine/reload")).status).toBe(409);
     expect(harness.server.listActiveSessionRuns?.()).toMatchObject([{ runId: run.runId }]);
 
     engine.messages.set("ses_reload_gate", [{ info: { id: "msg_reload", role: "assistant", finish: "stop", time: { created: Date.now(), completed: Date.now() } }, parts: [] }]);
@@ -2503,6 +2506,48 @@ describe("authoritative session mutation APIs", () => {
       headers: harness.collaboratorHeaders,
     });
     expect(reloaded.status).toBe(200);
+    expect(engine.disposes).toEqual([{ directory: null }]);
+  });
+
+  test("a prompt waits for managed reload readiness instead of entering the disposed Runner scope", async () => {
+    const disposeEntered = deferred<void>();
+    const releaseDispose = deferred<void>();
+    const engine = startMockOpencode({
+      beforeDispose: async () => {
+        disposeEntered.resolve();
+        await releaseDispose.promise;
+      },
+    });
+    const harness = await startHarness(engine.server.port);
+    registerTrustedOpencodeProcess(harness.config, {
+      baseUrl: `http://127.0.0.1:${engine.server.port}`,
+      identity: "reload-prompt-race-test",
+      isAlive: () => true,
+    });
+
+    const reloadPromise = fetch(`${harness.base}/workspace/ws_1/engine/reload`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+    });
+    await disposeEntered.promise;
+
+    const startPromise = fetch(`${runPath(harness.base, "ses_after_reload")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_after_reload",
+        prompt: { parts: [{ type: "text", text: "Start after reload" }] },
+      }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(engine.prompts).toEqual([]);
+
+    releaseDispose.resolve();
+    expect((await reloadPromise).status).toBe(200);
+    expect((await startPromise).status).toBe(202);
+    expect(engine.disposes).toEqual([{ directory: null }]);
+    expect(engine.prompts).toHaveLength(1);
   });
 
   test("workspace navigation preserves an authoritative active run without aborting or disposing", async () => {

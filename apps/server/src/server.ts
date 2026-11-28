@@ -2270,6 +2270,90 @@ function workspaceOpencodeHeaders(config: ServerConfig, workspace: WorkspaceInfo
   return headers;
 }
 
+// OpenCode 1.x keeps every session Runner inside the directory instance's
+// Effect scope. Instance disposal interrupts that scope, so accepting a prompt
+// concurrently with a reload can persist a turn that is immediately aborted.
+// Prompt admissions remain concurrent readers; lifecycle reload is the only
+// exclusive writer. The actual model run is outside this gate after the
+// prompt_async acknowledgement.
+class OpencodeLifecycleGate {
+  private readers = 0;
+  private writer = false;
+  private readonly queue: Array<{ kind: "read" | "write"; start: (release: () => void) => void }> = [];
+
+  async read<T>(task: () => Promise<T>): Promise<T> {
+    const release = await this.acquire("read");
+    try {
+      return await task();
+    } finally {
+      release();
+    }
+  }
+
+  async write<T>(task: () => Promise<T>): Promise<T> {
+    const release = await this.acquire("write");
+    try {
+      return await task();
+    } finally {
+      release();
+    }
+  }
+
+  private acquire(kind: "read" | "write"): Promise<() => void> {
+    return new Promise((resolve) => {
+      const start = (release: () => void) => resolve(release);
+      if (kind === "read" && !this.writer && !this.queue.some((entry) => entry.kind === "write")) {
+        this.readers += 1;
+        start(() => {
+          this.readers -= 1;
+          this.drain();
+        });
+        return;
+      }
+      if (kind === "write" && !this.writer && this.readers === 0 && this.queue.length === 0) {
+        this.writer = true;
+        start(() => {
+          this.writer = false;
+          this.drain();
+        });
+        return;
+      }
+      this.queue.push({ kind, start });
+    });
+  }
+
+  private drain(): void {
+    if (this.writer) return;
+    if (this.readers === 0 && this.queue[0]?.kind === "write") {
+      const next = this.queue.shift()!;
+      this.writer = true;
+      next.start(() => {
+        this.writer = false;
+        this.drain();
+      });
+      return;
+    }
+    while (this.queue[0]?.kind === "read") {
+      const next = this.queue.shift()!;
+      this.readers += 1;
+      next.start(() => {
+        this.readers -= 1;
+        this.drain();
+      });
+    }
+  }
+}
+
+const opencodeLifecycleGates = new WeakMap<ServerConfig, OpencodeLifecycleGate>();
+
+function opencodeLifecycleGate(config: ServerConfig): OpencodeLifecycleGate {
+  const current = opencodeLifecycleGates.get(config);
+  if (current) return current;
+  const created = new OpencodeLifecycleGate();
+  opencodeLifecycleGates.set(config, created);
+  return created;
+}
+
 async function dispatchSessionPromptAsync(
   config: ServerConfig,
   workspace: WorkspaceInfo,
@@ -2290,29 +2374,35 @@ async function dispatchSessionPromptAsync(
     const toolIds = Array.isArray(result.data) ? result.data.filter((value): value is string => typeof value === "string") : [];
     effectivePrompt = applyMcpWorkspacePolicyToPrompt(prompt, toolIds, policy.disabledServerNames);
   }
-  await beforeDispatch?.();
-  const response = await loopbackFetch(workspaceOpencodeUrl(config, workspace, path), {
-    method: "POST",
-    headers: workspaceOpencodeHeaders(config, workspace),
-    body: JSON.stringify(effectivePrompt),
-  });
-  if (!response.ok) {
-    throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
-      status: response.status,
-      body: parseOpencodeErrorBody(await response.text()),
-      path,
+  await opencodeLifecycleGate(config).read(async () => {
+    // The reservation callback must run while holding the same lock as an
+    // engine reload. This closes the check/use race where reload observed an
+    // idle engine, disposed its instance, and a new prompt entered the stale
+    // Runner scope before the replacement instance was ready.
+    await beforeDispatch?.();
+    const response = await loopbackFetch(workspaceOpencodeUrl(config, workspace, path), {
+      method: "POST",
+      headers: workspaceOpencodeHeaders(config, workspace),
+      body: JSON.stringify(effectivePrompt),
     });
-  }
-  if (noReply) {
-    const message: unknown = await response.json().catch(() => null);
-    if (!isRecord(message) || !isRecord(message.info) || message.info.role !== "user"
-      || message.info.sessionID !== sessionId || typeof message.info.id !== "string"
-      || (typeof effectivePrompt.messageID === "string" && message.info.id !== effectivePrompt.messageID)) {
-      throw new ApiError(502, "opencode_prompt_not_persisted", "OpenCode did not confirm the saved user message", { path });
+    if (!response.ok) {
+      throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
+        status: response.status,
+        body: parseOpencodeErrorBody(await response.text()),
+        path,
+      });
     }
-  } else if (requirePersistence) {
-    await waitForPersistedSessionPrompt(config, workspace, sessionId, effectivePrompt);
-  }
+    if (noReply) {
+      const message: unknown = await response.json().catch(() => null);
+      if (!isRecord(message) || !isRecord(message.info) || message.info.role !== "user"
+        || message.info.sessionID !== sessionId || typeof message.info.id !== "string"
+        || (typeof effectivePrompt.messageID === "string" && message.info.id !== effectivePrompt.messageID)) {
+        throw new ApiError(502, "opencode_prompt_not_persisted", "OpenCode did not confirm the saved user message", { path });
+      }
+    } else if (requirePersistence) {
+      await waitForPersistedSessionPrompt(config, workspace, sessionId, effectivePrompt);
+    }
+  });
 }
 
 type PersistedPromptPart =
@@ -5784,16 +5874,27 @@ function parseOpencodeErrorBody(input: string): unknown {
   }
 }
 
-async function reloadOpencodeEngine(
+async function reloadOpencodeEngineUnlocked(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   serverState?: EngineMcpServerState,
   options?: { scope?: "workspace" | "global"; assertIdle?: (scope: "workspace" | "global") => void },
 ): Promise<void> {
-  const scope = options?.scope ?? "workspace";
+  const requestedScope = options?.scope ?? "workspace";
+  const managed = Boolean(trustedOpencodeProcessIdentity(config, workspace));
+  // The bundled OpenCode process shares an InstanceStore and session Runner
+  // registry across directories. A directory-only dispose can leave a stale
+  // Runner scope behind (the next prompt is then interrupted before model
+  // streaming starts). A global dispose is the process-level cache boundary
+  // and is the closest safe equivalent to the full app restart that recovers
+  // this condition. External engines keep the caller-requested scope.
+  const scope = managed ? "global" : requestedScope;
   options?.assertIdle?.(scope);
   const activeState = activeEngineMcpServerState(config, serverState);
-  if (activeState) invalidateEngineMcpWorkspace(activeState, workspace.id);
+  if (activeState) {
+    if (scope === "global") clearEngineMcpServerEvidence(activeState);
+    else invalidateEngineMcpWorkspace(activeState, workspace.id);
+  }
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
   const baseUrl = connection.baseUrl?.trim() ?? "";
   if (!baseUrl) {
@@ -5801,8 +5902,8 @@ async function reloadOpencodeEngine(
   }
 
   const directory = resolveOpencodeDirectory(workspace);
-  async function disposeInstance(managed: boolean) {
-    const targetUrl = buildOpencodeReloadUrl(baseUrl, directory, options?.scope);
+  async function disposeInstance() {
+    const targetUrl = buildOpencodeReloadUrl(baseUrl, directory, scope);
     const headers: Record<string, string> = {};
     const auth = connection.authHeader ?? null;
     if (auth) headers.Authorization = auth;
@@ -5832,18 +5933,20 @@ async function reloadOpencodeEngine(
 
     // Instance disposal is lazy. Make the new instance read its config before
     // another workspace (or a background mirror write) can replace the file.
-    if (managed && scope === "workspace" && directory) {
+    if (managed && directory) {
       const configUrl = new URL(targetUrl);
       configUrl.pathname = "/config";
+      configUrl.search = "";
+      configUrl.searchParams.set("directory", directory);
       const ready = await loopbackFetch(configUrl.toString(), { headers, signal: AbortSignal.timeout(20_000) });
       await ready.body?.cancel();
       if (!ready.ok) throw new ApiError(502, "opencode_reload_failed", "OpenCode could not load the workspace configuration");
     }
   }
 
-  if (trustedOpencodeProcessIdentity(config, workspace)) {
+  if (managed) {
     try {
-      await writeJuggleWorkRuntimeConfigFile(config, workspace.id, () => disposeInstance(true));
+      await writeJuggleWorkRuntimeConfigFile(config, workspace.id, disposeInstance);
     } catch (error) {
       if (error instanceof ApiError) throw error;
       throw new ApiError(500, "opencode_runtime_config_refresh_failed", "Failed to apply the workspace runtime configuration", {
@@ -5851,7 +5954,7 @@ async function reloadOpencodeEngine(
       });
     }
   } else {
-    await disposeInstance(false);
+    await disposeInstance();
   }
 
   markJuggleWorkCloudMcpStale(workspace, directory);
@@ -5894,6 +5997,16 @@ async function reloadOpencodeEngine(
   } catch (error) {
     logPersistedCloudMcpReconcileError({ config, workspace, trigger: "engine_reload", error });
   }
+}
+
+async function reloadOpencodeEngine(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  serverState?: EngineMcpServerState,
+  options?: { scope?: "workspace" | "global"; assertIdle?: (scope: "workspace" | "global") => void },
+): Promise<void> {
+  await opencodeLifecycleGate(config).write(() =>
+    reloadOpencodeEngineUnlocked(config, workspace, serverState, options));
 }
 
 async function synchronizeHostMarketplaceMcpOverlay(

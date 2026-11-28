@@ -1275,7 +1275,7 @@ describe("runtime MCP engine sync", () => {
       });
       expect(reloadResponse.status).toBe(200);
 
-      const disposeIndex = mock.requests.findIndex((entry) => entry.pathname === "/instance/dispose");
+      const disposeIndex = mock.requests.findIndex((entry) => entry.pathname === "/global/dispose");
       const syncIndex = mock.requests.findIndex((entry) => entry.method === "POST" && entry.pathname === "/mcp");
       expect(disposeIndex).toBeGreaterThanOrEqual(0);
       expect(syncIndex).toBeGreaterThan(disposeIndex);
@@ -1355,8 +1355,11 @@ describe("runtime MCP engine sync", () => {
       ) as { provider?: Record<string, { models?: Record<string, unknown> }> };
       expect(Object.keys(after.provider?.lpr_cloud?.models ?? {})).toEqual(["model-cloud"]);
       expect(mock.requests.some((entry) =>
-        entry.method === "POST" &&
-        entry.pathname === "/instance/dispose" &&
+        entry.method === "POST" && entry.pathname === "/global/dispose"
+      )).toBe(true);
+      expect(mock.requests.some((entry) =>
+        entry.method === "GET" &&
+        entry.pathname === "/config" &&
         entry.search.includes(encodeURIComponent(secondaryRoot))
       )).toBe(true);
     } finally {
